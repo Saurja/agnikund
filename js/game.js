@@ -445,7 +445,7 @@ function demolish(s, b) {
   refund(s, def.cost, b.done ? 0.5 : 0.9);
   removeBuilding(s, b);
   emit(s, b.x, 0.5, b.z, 16, { spread: def.fw / 2, vx: 2, vyMin: 1, vyMax: 4, life: 0.9, colors: ['#8a8a8a', '#a77c4b', '#6b4a2e'], g: 9 });
-  sfx('thud', b.x, b.z);
+  sfx('demolish', b.x, b.z);
   fixJobOverflow(s);
 }
 function fixJobOverflow(s) {
@@ -551,7 +551,7 @@ function deliver(s, v, d) {
   const b = d && d.b && getB(s, d.b.id) ? d.b : null;
   if (v.carryAmt > 0 && v.carry) {
     addRes(s, v.carry, v.carryAmt, v.x, v.z);
-    if (d) putStock(s, b, v.carry, v.carryAmt);
+    if (d) { putStock(s, b, v.carry, v.carryAmt); sfx('drop_' + v.carry, v.x, v.z); } // logs clack, stones clunk, sacks thump
     if (b) b.stockPop = 0.35;
   }
   if (v.gold > 0) {
@@ -833,7 +833,7 @@ function completeBuilding(s, b) {
   s.stats.built++;
   s.buildVer++;
   if (!def.wall) toast(`${def.name} (${def.en}) is ready!`, 'good');
-  sfx(def.wall ? 'hammer' : 'bell', b.x, b.z);
+  sfx(def.wall ? 'hammer' : 'built', b.x, b.z);
   emit(s, b.x, def.ht * 0.6, b.z, def.wall ? 4 : 16, { spread: def.fw / 2, spreadY: def.ht / 3, vx: 0.8, vyMin: 0.5, vyMax: 2, life: 1.1, colors: ['#ffcc33', '#ff9933', '#fff3b0'], g: -0.5, add: true });
   if (!def.wall) emit(s, b.x, 0.15, b.z, 24, { spread: Math.max(def.fw, def.fd) / 2 + 0.3, vx: 1.6, vyMin: 0.2, vyMax: 1, life: 1.3, colors: ['#e0cfae', '#cdb894', '#f0e2c4'], g: -0.1 }); // dust as the scaffolding comes down
   const jobFor = jobOfBuilding(b.type);
@@ -1139,6 +1139,7 @@ function warriorAI(s, v, dt, phase, spd) {
         }
         v.atkCd = st.cd;
         sfx(v.job === 'brute' ? 'thud' : 'sword', v.x, v.z);
+        if (Math.random() < 0.15) sfx('warcry', v.x, v.z); // "Har Har!"
       }
     }
     return;
@@ -1375,7 +1376,10 @@ function spawnEnemy(s, type, a) {
     variant: randi(0, 3), aggro: !!def.wrecker || Math.random() < 0.2, burning: false, dead: false, diveT: 0, bob: rand(0, 6), thinkT: 0, tv: null, tb: null,
   };
   if (def.fly && def.swarm) e.y = 1.2 + rand(0, 0.8);
+  e.voiceT = rand(1.5, 6); // first growl / moan comes a moment after it appears
   s.enemies.push(e);
+  const ES = ENEMY_SFX[type];
+  if (ES && Math.random() < 0.6) sfx(ES.voice, e.x, e.z);
   if (def.bengali && !s.demo) tip('ghost_' + type, `${def.name} — ${def.en}! ${ENEMY_LORE[type]}`); // introduce each new ghost once
   return e;
 }
@@ -1384,6 +1388,7 @@ function hitEnemy(s, e, dmg, src) {
   e.hp -= dmg * (e.vuln || 1);
   e.hurtT = 0.15;
   const def = ENEMIES[e.type];
+  if (Math.random() < 0.25 && !def.fly) sfx(def.ghost || def.float ? 'd_ghost' : 'demonHurt', e.x, e.z);
   if (!def.boss && !def.fly && src && src.x != null) {
     const d = distXZ(e.x, e.z, src.x, src.z) || 1, k = def.cost >= 6 ? 0.04 : 0.15;
     e.x += ((e.x - src.x) / d) * k; e.z += ((e.z - src.z) / d) * k;
@@ -1404,7 +1409,7 @@ function killEnemy(s, e, byHand) {
   if (byHand || !e.burning) {
     s.stats.killed++;
     dropLoot(s, e);
-    sfx(def.boss ? 'bossDie' : 'demonDie', e.x, e.z);
+    sfx((ENEMY_SFX[e.type] && ENEMY_SFX[e.type].die) || 'demonDie', e.x, e.z);
     if (def.boss) { s.stats.bosses++; toast('Mahasura is vanquished! The village rejoices — Jai ho!', 'good', 8); }
   }
 }
@@ -1424,6 +1429,8 @@ function enemyAttack(s, e, target, kind) {
   const def = ENEMIES[e.type];
   e.atkCd = def.atkCd;
   e.atkAnim = 0.4;
+  const ES = ENEMY_SFX[e.type];
+  if (ES && ES.attack) sfx(ES.attack, e.x, e.z);
   const dmg = def.dmg * (s.festival ? 0.75 : 1);
   if (kind === 'villager') {
     damageVillager(s, target, dmg);
@@ -1473,7 +1480,7 @@ function thiefAI(s, e, def, spd, dt, df) {
     if (n > 0) {
       st[def.thief] -= n; s.res[def.thief] -= n; e.loot = n;
       floater(s, e.x, 1.8, e.z, '-' + n, RES[def.thief].color);
-      sfx('whoosh', e.x, e.z);
+      sfx('v_mechho', e.x, e.z); sfx('splash', e.x, e.z);
       toast(`A Mechho Bhoot stole ${n} grain! Catch him before he reaches the forest.`, 'danger', 5);
     }
     e.prey = null;
@@ -1497,12 +1504,25 @@ function nishiCall(s, e, dt, df) {
   if (!best) return;
   best.entranced = 5; best.callBy = e.id;
   e.atkAnim = 0.4;
-  sfx('nishi', e.x, e.z);
+  sfx('nishi', e.x, e.z); sfx('v_nishi', e.x, e.z);
   toast(`${best.name} hears the Nishi call their name and walks out into the night!`, 'danger', 5);
+}
+/** Growls, moans and footsteps while a demon roams (each sound is rate-limited in Sound.play). */
+function enemySounds(s, e, dt) {
+  const ES = ENEMY_SFX[e.type];
+  if (!ES || e.burning) return;
+  e.voiceT = (e.voiceT || 0) - dt;
+  if (e.voiceT <= 0) { e.voiceT = rand(5, 11); sfx(ES.voice, e.x, e.z); }
+  const sp = Math.hypot(e.vx || 0, e.vz || 0);
+  if ((ES.stomp || ES.step) && sp > 0.1) {
+    e.stepT = (e.stepT || 0) + sp * dt;
+    if (e.stepT > (ES.stomp ? 1.1 : 1.6)) { e.stepT = 0; sfx(ES.stomp ? 'stomp' : ES.step, e.x, e.z); }
+  }
 }
 function updateEnemy(s, e, dt) {
   const def = ENEMIES[e.type];
   e.animT += dt;
+  enemySounds(s, e, dt);
   if (e.atkCd > 0) e.atkCd -= dt;
   if (e.hurtT > 0) e.hurtT -= dt;
   if (e.atkAnim > 0) e.atkAnim -= dt;
@@ -1606,6 +1626,8 @@ function updateAmbient(s, dt) {
         a.tx = Math.cos(ang) * r; a.tz = Math.sin(ang) * r; a.t = rand(6, 14);
       }
       a.walk = !moveTo(a, a.tx, a.tz, 0.45, dt);
+      a.mooT = (a.mooT == null ? rand(8, 20) : a.mooT) - dt;
+      if (a.mooT <= 0) { a.mooT = rand(18, 40); sfx('moo', a.x, a.z); }
       const ar = Math.hypot(a.x, a.z);
       if (ar < 3.2) { a.x *= 3.2 / (ar || 1); a.z *= 3.2 / (ar || 1); }
     } else if (a.kind === 'peacock') {
@@ -1613,7 +1635,7 @@ function updateAmbient(s, dt) {
       if (a.hidden) { a.hidden = false; const ang = Math.random() * Math.PI * 2; a.x = Math.cos(ang) * (R + 3); a.z = Math.sin(ang) * (R + 3); a.tx = a.x; a.tz = a.z; }
       if (a.fan > 0) { a.fan -= dt; a.walk = false; continue; }
       if (a.t <= 0) {
-        if (Math.random() < 0.3) { a.fan = rand(3, 5); a.t = 0; continue; }
+        if (Math.random() < 0.3) { a.fan = rand(3, 5); a.t = 0; sfx('peacock', a.x, a.z); continue; }
         const ang = Math.atan2(a.z, a.x) + rand(-0.3, 0.3), r = rand(R + 1.5, R + 9);
         a.tx = Math.cos(ang) * r; a.tz = Math.sin(ang) * r; a.t = rand(4, 9);
       }

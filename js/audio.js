@@ -4,7 +4,85 @@
    bansuri phrases, dhol rhythms and sound effects.
    ========================================================= */
 
+/*
+ * Recorded sound effects (audio/sfx, all CC0 — see audio/CREDITS.txt).
+ * f: clip variants (one is picked at random) · vol: loudness · pitch: random playback-rate range
+ * verb: send to the reverb · gap: minimum seconds between two plays of this sound
+ * If a clip cannot be decoded (e.g. Ogg on an old Safari), the synthesised version in play() is used.
+ */
+const SFX = {
+  // work and village life
+  chop: { f: ['chop1.ogg', 'chop2.ogg', 'chop3.ogg'], vol: 0.55, pitch: [0.9, 1.1], gap: 0.06 },
+  mine: { f: ['mine1.ogg', 'mine2.ogg', 'mine3.ogg'], vol: 0.6, gap: 0.06 },
+  hammer: { f: ['hammer1.ogg', 'hammer2.ogg', 'hammer3.ogg'], vol: 0.5, gap: 0.08 },
+  treefall: { f: ['treefall.ogg'], vol: 0.8, pitch: [0.85, 1] },
+  place: { f: ['place.ogg'], vol: 0.7 },
+  built: { f: ['built.ogg'], vol: 0.45, verb: true, gap: 0.3 },
+  crash: { f: ['crash1.ogg', 'crash2.ogg'], vol: 0.8, gap: 0.2 },
+  demolish: { f: ['demolish.ogg'], vol: 0.7 },
+  anvil: { f: ['anvil.ogg'], vol: 0.6, verb: true },
+  coin: { f: ['coin1.ogg', 'coin2.ogg'], vol: 0.45, gap: 0.05 },
+  bell: { f: ['bell.ogg'], vol: 0.55, verb: true },
+  bellSoft: { f: ['built.ogg'], vol: 0.22, pitch: [1.15, 1.3], verb: true, gap: 0.5 },
+  drop_wood: { f: ['drop_wood1.ogg', 'drop_wood2.ogg'], vol: 0.5, gap: 0.1 },
+  drop_stone: { f: ['drop_stone1.ogg', 'drop_stone2.ogg'], vol: 0.55, gap: 0.1 },
+  drop_food: { f: ['drop_food1.ogg', 'drop_food2.ogg'], vol: 0.5, pitch: [0.7, 0.85], gap: 0.1 },
+  drop_gold: { f: ['drop_gold.ogg'], vol: 0.45, gap: 0.1 },
+  // combat
+  sword: { f: ['blade1.ogg', 'blade2.ogg', 'blade3.ogg'], vol: 0.42, gap: 0.05 },
+  bow: { f: ['bow1.wav', 'bow2.wav'], vol: 0.4, pitch: [1.05, 1.25], gap: 0.05 },
+  thunk: { f: ['arrow_hit1.ogg', 'arrow_hit2.ogg'], vol: 0.45, gap: 0.05 },
+  warcry: { f: ['warcry1.ogg', 'warcry2.ogg'], vol: 0.35, gap: 1.2 },
+  cannon: { f: ['explosion.ogg'], vol: 0.85, pitch: [0.72, 0.82], verb: true },
+  boom: { f: ['explosion.ogg'], vol: 0.55, pitch: [1, 1.15], gap: 0.1 },
+  a_club: { f: ['swing.wav', 'demon_attack1.ogg', 'demon_attack2.ogg'], vol: 0.42, pitch: [0.8, 1], gap: 0.15 },
+  demonHurt: { f: ['demon_hurt1.ogg', 'demon_hurt2.ogg'], vol: 0.3, gap: 0.3 },
+  demonDie: { f: ['demon_die1.ogg', 'demon_die2.ogg', 'demon_die3.ogg'], vol: 0.5, gap: 0.05 },
+  d_giant: { f: ['giant_die.ogg'], vol: 0.8, pitch: [0.75, 0.9], verb: true },
+  d_ghost: { f: ['ghost_vanish.ogg'], vol: 0.45, pitch: [0.8, 1.1], verb: true, gap: 0.1 },
+  d_aleya: { f: ['aleya_pop.ogg'], vol: 0.4, pitch: [1, 1.35], verb: true, gap: 0.05 },
+  stomp: { f: ['stomp.ogg'], vol: 0.55, pitch: [0.8, 1], gap: 0.12 },
+  // each demon's voice
+  v_bhoot: { f: ['bhoot_moan1.mp3', 'bhoot_moan2.mp3'], vol: 0.35, pitch: [0.9, 1.2], verb: true, gap: 1.6 },
+  v_rakshasa: { f: ['rakshasa_grunt1.ogg', 'rakshasa_grunt2.ogg', 'rakshasa_grunt3.ogg'], vol: 0.5, gap: 0.9 },
+  v_vetala: { f: ['vetala_screech1.ogg', 'vetala_screech2.ogg', 'vetala_screech3.ogg'], vol: 0.3, pitch: [0.95, 1.2], gap: 0.8 },
+  v_danav: { f: ['danav_roar1.ogg', 'danav_roar2.ogg', 'danav_roar3.ogg'], vol: 0.65, pitch: [0.75, 0.9], verb: true, gap: 1.5 },
+  v_boss: { f: ['boss_roar1.ogg', 'boss_roar2.ogg'], vol: 0.9, pitch: [0.6, 0.7], verb: true, gap: 2 },
+  v_aleya: { f: ['aleya_twinkle1.ogg', 'aleya_twinkle2.ogg', 'aleya_twinkle3.ogg'], vol: 0.3, pitch: [1, 1.4], verb: true, gap: 0.5 },
+  v_shakchunni: { f: ['shakchunni_shriek1.ogg', 'shakchunni_shriek2.ogg'], vol: 0.28, pitch: [0.78, 0.92], verb: true, gap: 2.5 },
+  bangles: { f: ['bangles1.ogg', 'bangles2.ogg', 'bangles3.ogg'], vol: 0.28, pitch: [1.1, 1.4], gap: 0.4 },
+  v_mechho: { f: ['mechho_slurp1.ogg', 'mechho_slurp2.ogg', 'mechho_slurp3.ogg'], vol: 0.45, gap: 0.8 },
+  splash: { f: ['splash1.ogg', 'splash2.ogg', 'splash3.ogg'], vol: 0.5, gap: 0.2 },
+  v_nishi: { f: ['nishi_whisper.ogg'], vol: 0.6, pitch: [0.8, 0.9], verb: true, gap: 2 },
+  v_skondhokata: { f: ['headless_moan1.ogg', 'headless_moan2.ogg', 'headless_moan3.ogg'], vol: 0.5, pitch: [0.7, 0.85], verb: true, gap: 1.5 },
+  // animals and the world
+  moo: { f: ['cow_moo.wav'], vol: 0.45, pitch: [0.9, 1.05], gap: 14 },
+  peacock: { f: ['peacock.ogg'], vol: 0.45, gap: 3 },
+  bird: { f: ['bird1.wav', 'bird2.wav'], vol: 0.18, pitch: [0.9, 1.15], gap: 1.5 },
+  owl: { f: ['owl.wav'], vol: 0.28, verb: true, gap: 6 },
+  frog: { f: ['frog.wav'], vol: 0.16, pitch: [0.85, 1.1], gap: 3 },
+  cricket: { f: ['cricket.wav'], vol: 0.1, pitch: [0.95, 1.1], gap: 0.8 },
+  thunder: { f: ['thunder.ogg'], vol: 0.75, pitch: [0.75, 1], verb: true, gap: 4 },
+};
+/** Looping ambience: each loop's loudness follows Sound.amb (set every frame from the game). */
+const AMB_LOOPS = { fire: 'loop_fire.ogg', night: 'loop_crickets.mp3', rain: 'loop_rain.ogg' };
+const AMB_VOL = { fire: 0.5, night: 0.3, rain: 0.45 };
+/** What each demon sounds like: its voice, the sound of its attack, its death and whether it stomps. */
+const ENEMY_SFX = {
+  bhoot: { voice: 'v_bhoot', die: 'd_ghost' },
+  rakshasa: { voice: 'v_rakshasa', attack: 'a_club', die: 'demonDie' },
+  vetala: { voice: 'v_vetala', attack: 'v_vetala', die: 'demonDie' },
+  danav: { voice: 'v_danav', attack: 'a_club', die: 'd_giant', stomp: true },
+  boss: { voice: 'v_boss', attack: 'a_club', die: 'bossDie', stomp: true },
+  aleya: { voice: 'v_aleya', die: 'd_aleya' },
+  shakchunni: { voice: 'v_shakchunni', attack: 'bangles', die: 'd_ghost', step: 'bangles' },
+  mechho: { voice: 'v_mechho', die: 'splash' },
+  nishi: { voice: 'v_nishi', die: 'd_ghost' },
+  skondhokata: { voice: 'v_skondhokata', attack: 'a_club', die: 'd_giant', stomp: true },
+};
+
 const Sound = {
+  buffers: {}, loops: {}, amb: { fire: 0, night: 0, day: 0, rain: 0 },
   ctx: null, master: null, sfxBus: null, musicBus: null, verb: null,
   muted: false, musicOn: true, noise: null, tanpura: [], last: {},
   mode: 'day', threat: 0, nextTan: 0, tanStep: 0, nextFlute: 0, nextDrum: 0, drumStep: 0,
@@ -33,7 +111,69 @@ const Sound = {
     this.nextFlute = ctx.currentTime + 4;
     this.nextDrum = ctx.currentTime + 1;
     this.initTracks();
+    this.loadSamples();
     setInterval(() => this.schedule(), 60);
+  },
+
+  /* ---------- recorded effects ---------- */
+  loadSamples() {
+    const files = new Set(Object.values(AMB_LOOPS));
+    for (const k in SFX) for (const f of SFX[k].f) files.add(f);
+    for (const f of files) {
+      fetch('audio/sfx/' + f)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+        .then((ab) => new Promise((res, rej) => this.ctx.decodeAudioData(ab, res, rej)))
+        .then((buf) => { this.buffers[f] = buf; })
+        .catch(() => { /* not playable here: the synthesised sound stands in */ });
+    }
+  },
+  /** Play a recorded effect; returns false when none is loaded so the synth can stand in. */
+  playSample(name, vol, pan) {
+    const def = SFX[name];
+    if (!def) return false;
+    let n = 0, pick = null;
+    for (const f of def.f) { const b = this.buffers[f]; if (b && Math.random() * ++n < 1) pick = b; } // random loaded variant
+    if (!pick) return false;
+    const src = this.ctx.createBufferSource();
+    src.buffer = pick;
+    const p = def.pitch || [0.94, 1.06];
+    src.playbackRate.value = p[0] + Math.random() * (p[1] - p[0]);
+    src.connect(this.out(pan, (def.vol || 0.5) * vol, def.verb));
+    src.start();
+    return true;
+  },
+  /** Ambience: fire crackle near the Agnikund, crickets at night, rain; plus birds, owls, frogs and thunder now and then. */
+  updateAmbience() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const on = !this.muted, now = ctx.currentTime;
+    for (const k in AMB_LOOPS) {
+      const buf = this.buffers[AMB_LOOPS[k]];
+      if (!buf) continue;
+      const target = on ? clamp(this.amb[k] || 0, 0, 1) * AMB_VOL[k] : 0;
+      let L = this.loops[k];
+      if (!L && target > 0.005) {
+        const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+        const g = ctx.createGain(); g.gain.value = 0;
+        src.connect(g); g.connect(this.sfxBus);
+        src.start(0, Math.random() * buf.duration);
+        L = this.loops[k] = { src, g };
+      }
+      if (L) {
+        L.g.gain.setTargetAtTime(target, now, 0.6);
+        if (target <= 0.001 && L.g.gain.value < 0.004) { try { L.src.stop(); } catch (e) { /* already stopped */ } this.loops[k] = null; }
+      }
+    }
+    if (!on) return;
+    const one = (name, every, chance) => {
+      const key = 'next_' + name;
+      if (now < (this[key] || 0)) return;
+      this[key] = now + every[0] + Math.random() * (every[1] - every[0]);
+      if (Math.random() < chance) this.playSample(name, 1, (Math.random() - 0.5) * 1.4);
+    };
+    if (this.amb.day > 0.3) one('bird', [3, 8], this.amb.day);
+    if (this.amb.night > 0.4) { one('owl', [16, 32], 0.8); one('frog', [7, 15], 0.7); one('cricket', [2, 5], 0.6); }
+    if (this.amb.rain > 0.5) one('thunder', [16, 38], 0.85);
   },
 
   /* ---------- recorded music (audio/ folder, see audio/CREDITS.txt) ---------- */
@@ -53,7 +193,7 @@ const Sound = {
       night: mk('audio/night_calm_tabla.mp3', 'night'),
       battle: mk(ogg ? 'audio/night_battle_ritual.ogg' : 'audio/night_india_rythm.mp3', 'battle'), // older Safari cannot play Ogg
     };
-    setInterval(() => this.updateTracks(), 100);
+    setInterval(() => { this.updateTracks(); this.updateAmbience(); }, 100);
   },
   /** Is a recorded track carrying the current mood? (if not, the synth plays instead) */
   trackFor(mode) { const a = this.tracks && this.tracks[mode]; return !!(a && !a._failed); },
@@ -154,7 +294,7 @@ const Sound = {
   play(name, x, z) {
     if (!this.ctx || this.muted) return;
     const now = this.ctx.currentTime;
-    const minGap = { chop: 0.06, mine: 0.06, hammer: 0.08, sword: 0.05, bow: 0.05, hurt: 0.08, thud: 0.08, coin: 0.05, thunk: 0.05, demonDie: 0.05, firehit: 0.15, whoosh: 0.2, harvest: 0.1 }[name] || 0;
+    const minGap = (SFX[name] && SFX[name].gap) || { chop: 0.06, mine: 0.06, hammer: 0.08, sword: 0.05, bow: 0.05, hurt: 0.08, thud: 0.08, coin: 0.05, thunk: 0.05, demonDie: 0.05, firehit: 0.15, whoosh: 0.2, harvest: 0.1 }[name] || 0;
     if (minGap && this.last[name] && now - this.last[name] < minGap) return;
     this.last[name] = now;
     let vol = 1, pan = 0;
@@ -165,6 +305,7 @@ const Sound = {
       vol = d < near ? 1 : clamp(1 - (d - near) / 40, 0.06, 1);
       pan = clamp((dx * Math.cos(c.yaw) - dz * Math.sin(c.yaw)) / 16, -1, 1) * 0.6;
     }
+    if (this.playSample(name, vol, pan)) return; // a recorded clip if we have one, otherwise the synth below
     const D = (v, verb) => this.out(pan, v * vol, verb);
     const t = now;
     switch (name) {

@@ -22,4 +22,4 @@ Music from [OpenGameArt.org](https://opengameart.org):
 - “Ritual” by brainiac256 — [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/)
 - “india rythm” by SouljahdeShiva — [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/)
 
-Details are in `audio/CREDITS.txt`. Sound effects are synthesised in the game. 3D rendering uses [three.js](https://threejs.org) r128 (MIT).
+Sound effects are CC0 packs from OpenGameArt.org by rubberduck, qubodup, artisticdude, AntumDeluge, Aj_ and Wolfgang_; a few are synthesised in the game. Full sources are in `audio/CREDITS.txt`. 3D rendering uses [three.js](https://threejs.org) r128 (MIT).

@@ -25,3 +25,28 @@ night_battle_ritual.ogg — "Ritual" by brainiac256
   Source: https://opengameart.org/content/ritual
   License: CC-BY 3.0 — https://creativecommons.org/licenses/by/3.0/
   Plays when the ghosts and demons appear.
+SOUND EFFECTS (audio/sfx) — all CC0 1.0 (public domain), from OpenGameArt.org
+https://creativecommons.org/publicdomain/zero/1.0/
+
+rubberduck
+  "80 CC0 creature SFX"            https://opengameart.org/content/80-cc0-creature-sfx
+  "80 CC0 creture SFX #2"          https://opengameart.org/content/80-cc0-creture-sfx-2
+  "80 CC0 RPG SFX"                 https://opengameart.org/content/80-cc0-rpg-sfx
+  "75 CC0 breaking / falling / hit sfx"  https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx
+  "40 CC0 water / splash / slime SFX"    https://opengameart.org/content/40-cc0-water-splash-slime-sfx
+  "100 CC0 SFX"                    https://opengameart.org/content/100-cc0-sfx
+  "100 CC0 SFX #2"                 https://opengameart.org/content/100-cc0-sfx-2
+qubodup
+  "Ghost Monster Voice Moaning & Growling"  https://opengameart.org/content/ghost-monster-voice-moaning-growling
+  "Sci-Fi Aliens and Cows Pack" (cow moo)   https://opengameart.org/content/sci-fi-aliens-and-cows-pack
+artisticdude
+  "Swishes Sound Pack"             https://opengameart.org/content/swishes-sound-pack
+AntumDeluge
+  "Fire Crackling"                 https://opengameart.org/content/fire-crackling
+  "Peacock Chirp"                  https://opengameart.org/content/peacock-chirp
+Aj_
+  "Bird, cricket, frog and mosquito sounds"  https://opengameart.org/content/birdcricketfrog-and-mosquito-sounds
+Wolfgang_
+  "Crickets Ambient Noise - loopable"        https://opengameart.org/content/crickets-ambient-noise-loopable
+
+Clips were renamed to say what they are used for (e.g. rakshasa_grunt1.ogg, drop_wood1.ogg).

@@ -336,6 +336,12 @@ const App = {
         this.battleT = foes ? 4 : Math.max(0, (this.battleT || 0) - dt); // stay in battle a few seconds after the last one falls
         Sound.mode = ph === 'day' || ph === 'dawn' ? (foes ? 'battle' : 'day') : this.battleT > 0 ? 'battle' : 'night';
         Sound.threat = boss ? 1 : clamp(near / 8, 0, 1);
+        // ambience: fire crackle when the camera is near the Agnikund, birds by day, crickets and owls at night, rain
+        const dark = darknessAt(S.t), cd = Math.hypot(R3.cam.x, R3.cam.z) + R3.cam.dist * 0.35;
+        Sound.amb.fire = clamp(1 - (cd - 8) / 22, 0, 1) * clamp(S.fire.intensity == null ? 1 : S.fire.intensity, 0.3, 1);
+        Sound.amb.day = ph === 'day' ? (S.weather === 'rain' ? 0.2 : 1) : 0;
+        Sound.amb.night = clamp(dark * 1.2 - 0.2, 0, 1) * (foes ? 0.5 : 1);
+        Sound.amb.rain = S.weather === 'rain' ? 1 : 0;
         R3.render(dt);
       }
     } catch (err) {
