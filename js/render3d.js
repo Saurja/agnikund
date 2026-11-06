@@ -61,19 +61,47 @@ const GRADE_SHADER = {
 function terrainBump(x, z) { return 0.22 * Math.sin(x * 0.31) * Math.cos(z * 0.27) + 0.14 * Math.sin(x * 0.11 + z * 0.13 + 1.7); }
 function heightAt(x, z) {
   const r = Math.hypot(x, z), edge = islandR(x, z);
-  const inland = clamp((r - 27) / 8, 0, 1);
+  const inland = clamp((r - 30) / 8, 0, 1);
   let h = terrainBump(x, z) * inland;
   if (r > edge - 3) h = lerp(h, -1.3, clamp((r - (edge - 3)) / 5, 0, 1));
   return h;
 }
 
-/* ---------- fighting poses ---------- */
-/** Ready stance between blows: knees bent, weapon up, shield forward, a light bounce. */
+/* ---------- villager poses ----------
+ * Joint values for the villager rig (see Models.villager). Angles in radians:
+ *   armL, armR, legL, legR: shoulder / hip pitch, negative swings forward and up · armLz etc.: spread outward
+ *   elb*: elbow bend (forearm forward) · knee*: knee bend (shin back) · lean: waist forward
+ *   twist: chest turns toward the right (weapon) side · sway: hip roll · headX nod, headY look right
+ *   toolR / toolL: where the tool in that hand points, measured from the body (0 forward, -π/2 up,
+ *   +π/2 down) so a spear stays upright and a shield faces front whatever the arm does; or gripR /
+ *   gripL: the wrist angle from the forearm, for swings where the blade follows the arm.
+ *   lie: 0 standing … 1 lying on the side, asleep.
+ */
+const VJ_REST = { hipY: V_HIP, hipTw: 0, legL: 0, legR: 0, legLz: 0, legRz: 0, kneeL: 0.05, kneeR: 0.05, armL: 0.02, armR: -0.02, armLz: 0.07, armRz: 0.07, elbL: 0.15, elbR: 0.18, lean: 0, twist: 0, sway: 0, headX: 0, headY: 0, lie: 0, toolR: null, gripR: 0, toolL: null, gripL: 0 };
+const VJ_EASE = ['hipY', 'hipTw', 'legL', 'legR', 'legLz', 'legRz', 'kneeL', 'kneeR', 'armL', 'armR', 'armLz', 'armRz', 'elbL', 'elbR', 'lean', 'twist', 'sway', 'headX', 'headY', 'lie', 'handR', 'handL'];
+/** How each tool is carried when not in use (body-space pitch, and the arm that carries it). */
+const TOOL_CARRY = {
+  sword:  { toolR: 1.05 }, axe: { toolR: 1.25 }, pick: { toolR: 1.25 }, hammer: { toolR: 1.35 }, sickle: { toolR: 0.9 }, spade: { toolR: 1.3 },
+  tongs:  { toolR: 1.1 }, mould: { toolR: 0, armR: -0.25, elbR: 0.7 }, sack: { toolR: 0 }, potli: { toolR: 0, armR: -0.2, elbR: 0.6 },
+  thali:  { toolR: 0, armR: -0.45, elbR: 1.25 }, herbs: { toolR: 0, armR: -0.35, elbR: 1.1 },
+  spear:  { toolR: -1.42, armR: -0.28, elbR: 0.95, armRz: 0.12 }, // upright at the side
+  gada:   { toolR: -2.55, armR: -0.45, elbR: 2.15, armRz: 0.18 }, // resting on the shoulder
+};
+const lerpN = (a, b, t) => a + (b - a) * t;
+/** A work stroke: slow wind-up to 1 by h, a quick strike back to 0, then a short follow-through. */
+function stroke(c, h) {
+  if (c < h) return Math.sin((c / h) * Math.PI * 0.5);
+  if (c < h + 0.13) return 1 - easeOutCubic((c - h) / 0.13);
+  return 0;
+}
 function fightStance(v, t) {
-  const b = Math.sin(t * 7 + v.id) * 0.012;
-  const J = { hipY: 0.33 + b, legL: 0.38, legR: -0.32, armR: -1.05, armRz: 0.25, armL: -0.75, armLz: -0.2, lean: 0.16, twist: -0.15, sway: 0 };
-  if (v.job === 'brute') Object.assign(J, { armR: -1.9, armL: -1.75, armRz: 0, armLz: 0, twist: 0 }); // gada held high in both hands
-  else if (v.job === 'spear') Object.assign(J, { armR: -1.35, armRz: 0.1, twist: -0.3 });
+  const b = Math.sin(t * 7 + v.id) * 0.01;
+  const J = Object.assign({}, VJ_REST, { hipY: V_HIP - 0.04 + b, legL: -0.38, kneeL: 0.42, legR: 0.3, kneeR: 0.38, lean: 0.14, twist: 0.22, headY: -0.18,
+    armR: -0.75, armRz: 0.22, elbR: 1.25, toolR: -0.95, armL: -0.65, armLz: 0.05, elbL: 1.25, toolL: 0 });
+  if (v.job === 'brute') Object.assign(J, { armR: -1.55, armL: -1.5, armRz: 0.05, armLz: -0.32, elbR: 1.15, elbL: 1.2, toolR: -2.1, toolL: null, gripL: 0, twist: 0.1 }); // the gada high in both hands
+  else if (v.job === 'spear') Object.assign(J, { armR: -0.55, elbR: 0.75, armRz: 0.12, toolR: -0.12, twist: 0.32 }); // the bhala levelled over the dhaal
+  else if (v.job === 'medic') Object.assign(J, { armR: -0.5, elbR: 1.0, toolR: 0, armL: -0.3, elbL: 0.8, toolL: null, twist: 0.05 });
+  else if (v.job === 'archer') Object.assign(J, { armL: -1.2, armLz: 0.55, elbL: 0.15, toolL: null, gripL: 0.15, armR: -1.0, armRz: -0.2, elbR: 1.6, toolR: null, gripR: 0, twist: 0.75, headY: -0.7, legL: -0.25, legR: 0.25 });
   return J;
 }
 /*
@@ -81,21 +109,21 @@ function fightStance(v, t) {
  * the strike snaps through in a few frames. Values per joint: [ready, wound, struck].
  */
 const SWING_POSES = {
-  slash:  { armR: [-1.0, -2.5, -0.55], armRz: [0.2, 0.9, -0.7], twist: [0, 0.55, -0.5], lean: [0.12, -0.05, 0.3], hipY: [0.34, 0.35, 0.31], legL: [0.3, 0.2, 0.5], legR: [-0.3, -0.2, -0.4], armL: [-0.7, -0.5, -0.9], sided: true },
-  thrust: { armR: [-1.0, -0.6, -1.7], armRz: [0.2, 0.35, 0], twist: [0, 0.45, -0.35], lean: [0.12, -0.05, 0.4], legL: [0.3, 0.1, 0.75], legR: [-0.3, -0.2, -0.55], hipY: [0.34, 0.35, 0.3], armL: [-0.7, -0.4, -0.5] },
-  smash:  { armR: [-1.9, -3.0, -0.3], armL: [-1.7, -2.9, -0.4], lean: [0.1, -0.3, 0.55], hipY: [0.34, 0.37, 0.29], legL: [0.3, 0.2, 0.5], legR: [-0.3, -0.2, -0.45] },
-  bash:   { armL: [-0.7, -0.5, -1.6], armLz: [-0.2, -0.5, 0.1], twist: [0, 0.5, -0.55], lean: [0.12, 0, 0.38], armR: [-1.0, -1.2, -0.8], legL: [0.3, 0.2, 0.7], legR: [-0.3, -0.2, -0.5] },
-  slam:   { armR: [-1.9, -3.1, -0.15], armL: [-1.7, -3.0, -0.25], lean: [0.1, -0.2, 0.6], hipY: [0.34, 0.36, 0.24], legL: [0.3, -0.5, 0.7], legR: [-0.3, 0.5, -0.6] },
-  lunge:  { armR: [-1.3, -0.9, -1.65], twist: [0, 0.3, -0.3], lean: [0.12, 0.2, 0.55], legL: [0.3, 0.6, 1.0], legR: [-0.3, -0.6, -0.8], hipY: [0.34, 0.31, 0.28], armL: [-0.7, -0.3, -0.4] },
-  shoot:  { armR: [-1.5, -1.5, -1.5], armL: [-1.35, -1.45, -1.35], armRz: [0, -0.4, 0.12], twist: [0, 0.25, -0.05], lean: [-0.04, -0.08, 0.02] },
-  volley: { armR: [-1.5, -2.3, -2.2], armL: [-1.35, -2.2, -2.1], armRz: [0, -0.4, 0.1], lean: [-0.04, -0.2, -0.1] },
-  pulse:  { armR: [-0.9, -2.9, -1.3], armL: [-0.9, -2.9, -1.3], armRz: [0, 0.35, 1.0], armLz: [0, -0.35, -1.0], lean: [0.05, -0.15, 0.1], hipY: [0.35, 0.37, 0.34] },
+  slash:  { armR: [-0.75, -2.7, -0.55], armRz: [0.22, 0.65, -0.45], elbR: [1.25, 1.45, 0.15], gripR: [1.0, 0.95, 1.15], twist: [0.22, 0.65, -0.5], lean: [0.14, -0.05, 0.32], hipY: [0.43, 0.44, 0.4], legL: [-0.38, -0.25, -0.6], kneeL: [0.42, 0.3, 0.55], armL: [-0.65, -0.5, -0.85], sided: true },
+  thrust: { armR: [-0.55, -0.5, -1.5], elbR: [0.75, 1.55, 0.05], toolR: [-0.12, -0.12, 0.02], armRz: [0.12, 0.3, -0.05], twist: [0.32, 0.6, -0.3], lean: [0.14, -0.05, 0.42], legL: [-0.38, -0.2, -0.8], kneeL: [0.42, 0.3, 0.6], legR: [0.3, 0.2, 0.55], hipY: [0.43, 0.44, 0.39], armL: [-0.65, -0.45, -0.5] },
+  smash:  { armR: [-1.55, -3.0, -0.6], armL: [-1.5, -2.95, -0.6], elbR: [1.15, 1.35, 0.1], elbL: [1.2, 1.4, 0.15], gripR: [1.0, 1.0, 1.25], armLz: [-0.32, -0.3, -0.3], lean: [0.1, -0.3, 0.58], hipY: [0.43, 0.45, 0.37], kneeL: [0.42, 0.2, 0.75], kneeR: [0.38, 0.2, 0.7], legL: [-0.38, -0.2, -0.6] },
+  bash:   { armL: [-0.65, -0.35, -1.5], elbL: [1.25, 1.6, 0.25], armLz: [0.05, 0.2, -0.1], twist: [0.22, 0.55, -0.55], lean: [0.14, 0, 0.4], legL: [-0.38, -0.2, -0.85], kneeL: [0.42, 0.3, 0.6], armR: [-0.75, -0.9, -0.6] },
+  slam:   { armR: [-1.55, -3.1, -0.3], armL: [-1.5, -3.0, -0.3], elbR: [1.15, 1.3, 0.05], elbL: [1.2, 1.3, 0.1], gripR: [1.0, 1.05, 1.35], armLz: [-0.32, -0.3, -0.3], lean: [0.1, -0.2, 0.65], hipY: [0.43, 0.45, 0.32], legL: [-0.38, -0.7, -0.75], kneeL: [0.42, 1.0, 0.9], legR: [0.3, 0.4, -0.5], kneeR: [0.38, 0.8, 0.95] },
+  lunge:  { armR: [-0.55, -0.5, -1.55], elbR: [0.75, 1.4, 0.0], toolR: [-0.12, -0.1, 0.05], twist: [0.32, 0.45, -0.3], lean: [0.14, 0.2, 0.55], legL: [-0.38, -0.6, -1.15], kneeL: [0.42, 0.9, 1.15], legR: [0.3, 0.6, 0.85], kneeR: [0.38, 0.3, 0.1], hipY: [0.43, 0.4, 0.33], armL: [-0.65, -0.3, -0.4] },
+  shoot:  { armR: [-1.05, -1.45, -1.25], armRz: [-0.2, -0.28, 0.25], elbR: [1.6, 2.35, 1.1], armL: [-1.25, -1.45, -1.4], twist: [0.75, 0.95, 0.9], lean: [-0.02, -0.06, 0.02] },
+  volley: { armR: [-1.05, -2.0, -1.9], armRz: [-0.2, -0.3, 0.2], elbR: [1.6, 2.35, 1.1], armL: [-1.25, -2.0, -1.95], twist: [0.75, 0.95, 0.9], lean: [-0.02, -0.25, -0.12], headX: [0, -0.35, -0.3] },
+  pulse:  { armR: [-0.5, -2.9, -1.3], armL: [-0.3, -2.9, -1.3], elbR: [1.0, 0.3, 0.2], elbL: [0.8, 0.3, 0.2], armRz: [0, 0.3, 1.0], armLz: [0, 0.3, 1.0], lean: [0.05, -0.15, 0.1], hipY: [0.45, 0.47, 0.44], headX: [0, -0.4, 0] },
   // ultimates
-  whirl:  { armR: [-1.0, -1.57, -1.57], armRz: [0.2, 1.25, 1.25], armL: [-0.7, -1.57, -1.57], armLz: [-0.2, -1.25, -1.25], lean: [0.12, 0.05, 0.12], legL: [0.3, 0.35, 0.35], legR: [-0.3, -0.35, -0.35] },
-  leap:   { armR: [-1.9, -3.1, -0.2], armL: [-1.7, -3.0, -0.3], lean: [0.1, -0.3, 0.7], hipY: [0.34, 0.36, 0.22], legL: [0.3, -0.7, 0.8], legR: [-0.3, 0.7, -0.7] },
+  whirl:  { armR: [-0.75, -0.3, -0.3], armRz: [0.22, 1.4, 1.4], elbR: [1.25, 0.15, 0.15], gripR: [1.0, 0.25, 0.25], armL: [-0.65, -0.3, -0.3], armLz: [0.05, 1.4, 1.4], elbL: [1.25, 0.2, 0.2], lean: [0.14, 0.05, 0.12], kneeL: [0.42, 0.4, 0.4], kneeR: [0.38, 0.4, 0.4] },
+  leap:   { armR: [-1.55, -3.1, -0.25], armL: [-1.5, -3.0, -0.3], elbR: [1.15, 1.25, 0.05], elbL: [1.2, 1.25, 0.1], gripR: [1.0, 1.0, 1.35], armLz: [-0.32, -0.3, -0.3], lean: [0.1, -0.3, 0.72], hipY: [0.43, 0.45, 0.3], legL: [-0.38, -0.9, -0.8], kneeL: [0.42, 1.3, 1.0], legR: [0.3, 0.5, -0.6], kneeR: [0.38, 1.1, 1.0] },
   barrage: null, // uses the thrust, once per blow
-  astra:  { armR: [-1.5, -2.5, -2.3], armL: [-1.35, -2.4, -2.2], armRz: [0, -0.55, 0.1], lean: [-0.04, -0.3, -0.12], legL: [0.2, 0.45, 0.45], legR: [-0.2, -0.4, -0.4] },
-  sanjeevani: { armR: [-0.9, -3.0, -1.0], armL: [-0.9, -3.0, -1.0], armRz: [0, 0.2, 1.3], armLz: [0, -0.2, -1.3], lean: [0.05, -0.25, 0.05], hipY: [0.35, 0.4, 0.35] },
+  astra:  { armR: [-1.05, -2.1, -1.95], armRz: [-0.2, -0.3, 0.2], elbR: [1.6, 2.45, 1.1], armL: [-1.25, -2.15, -2.05], twist: [0.75, 1.0, 0.95], lean: [-0.02, -0.3, -0.15], legL: [-0.25, -0.55, -0.5], kneeL: [0.3, 0.6, 0.55], legR: [0.25, 0.45, 0.45], headX: [0, -0.4, -0.35] },
+  sanjeevani: { armR: [-0.5, -3.0, -1.0], armL: [-0.3, -3.0, -1.0], elbR: [1.0, 0.2, 0.2], elbL: [0.8, 0.2, 0.2], armRz: [0, 0.2, 1.3], armLz: [0, 0.2, 1.3], lean: [0.05, -0.25, 0.05], hipY: [0.45, 0.5, 0.45], headX: [0, -0.5, -0.1] },
 };
 SWING_POSES.barrage = SWING_POSES.thrust;
 function attackPose(v, a) {
@@ -109,7 +137,8 @@ function attackPose(v, a) {
   const wind = p < h ? Math.sin((p / h) * Math.PI * 0.5) : 1;
   const strike = p < h ? 0 : easeOutCubic((p - h) / Math.min(0.32, 1 - h));
   const side = S2.sided ? a.side || 1 : 1;
-  const J = Object.assign(fightStance(v, v.animT), { twist: 0, armRz: 0, armLz: 0 });
+  const J = fightStance(v, v.animT);
+  if (S2.gripR) J.toolR = null; // the blade follows the wrist through the swing
   for (const key in S2) {
     if (key === 'sided') continue;
     const [r, w, s] = S2[key];
@@ -118,7 +147,128 @@ function attackPose(v, a) {
   }
   if (a.kind === 'slam' && p < h) J.hipY += Math.sin((p / h) * Math.PI) * 0.34; // the leap
   if (a.kind === 'leap' && p < h) J.hipY += Math.sin((p / h) * Math.PI) * 1.1; // Hanuman's leap: high through the air
+  J.drawn = (a.kind === 'shoot' || a.kind === 'volley' || a.kind === 'astra') && p < h; // the bowstring is pulled until the release
   return J;
+}
+/** Work strokes for each trade (anim 'work'), keyed by job. */
+function workPose(v, J, t) {
+  const id = v.id || 0;
+  const job = v.job, tool = JOBS[job] && JOBS[job].tool;
+  if (tool === 'axe') { // a two-handed overhead chop into the trunk
+    const w = stroke((t * 1.1 + id * 0.13) % 1, 0.62);
+    Object.assign(J, { armR: lerpN(-1.25, -2.6, w), armL: lerpN(-1.15, -2.45, w), elbR: lerpN(0.25, 1.3, w), elbL: lerpN(0.35, 1.4, w), armRz: lerpN(0.05, 0.3, w), armLz: lerpN(-0.38, -0.12, w),
+      gripR: lerpN(1.3, 1.6, w), twist: lerpN(-0.2, 0.5, w), lean: lerpN(0.3, -0.12, w), legL: -0.28, kneeL: 0.3, legR: 0.22, kneeR: 0.25, hipY: V_HIP - 0.03, headX: lerpN(0.15, -0.1, w) });
+  } else if (tool === 'pick') { // the gainti high over the head and down on the rock
+    const w = stroke((t * 0.95 + id * 0.17) % 1, 0.6);
+    Object.assign(J, { armR: lerpN(-0.85, -2.9, w), armL: lerpN(-0.75, -2.75, w), elbR: lerpN(0.1, 1.1, w), elbL: lerpN(0.2, 1.2, w), armLz: -0.3, armRz: 0.05, gripR: lerpN(1.25, 1.55, w),
+      lean: lerpN(0.42, -0.15, w), kneeL: lerpN(0.4, 0.1, w), kneeR: lerpN(0.35, 0.1, w), legL: -0.25, legR: 0.2, hipY: V_HIP - lerpN(0.05, 0.0, w), headX: 0.2 });
+  } else if (tool === 'hammer') { // quick hammer taps; every other Mistri kneels to it
+    const w = stroke((t * 1.9 + id * 0.31) % 1, 0.55);
+    Object.assign(J, { armR: lerpN(-1.0, -1.65, w), elbR: lerpN(0.7, 1.95, w), gripR: 1.75, armL: -0.95, elbL: 0.95, armLz: -0.15, lean: 0.2, headX: 0.25, kneeL: 0.12, kneeR: 0.12 });
+    if (id % 2) Object.assign(J, { hipY: 0.27, legR: -1.5, kneeR: 1.5, legL: 0.15, kneeL: 1.85, lean: 0.3, armR: lerpN(-0.75, -1.45, w), gripR: 1.95 });
+  } else if (tool === 'sickle') { // crouched in the crop: grab a fistful, sweep the sickle through
+    const w = stroke((t * 1.0 + id * 0.21) % 1, 0.5);
+    Object.assign(J, { hipY: 0.28, legL: -1.2, legR: -1.15, kneeL: 2.05, kneeR: 2.0, legLz: 0.32, legRz: 0.32, lean: 0.6, armL: -1.15, elbL: 0.35, armLz: lerpN(-0.15, 0.05, w),
+      armR: lerpN(-0.85, -1.25, w), armRz: lerpN(-0.25, 0.45, w), elbR: 0.5, gripR: 0.25, headX: 0.35 });
+  } else if (tool === 'spade') { // foot on the spade, lever the clay up
+    const w = stroke((t * 0.8 + id * 0.19) % 1, 0.55);
+    Object.assign(J, { legL: -0.55, kneeL: lerpN(0.7, 0.3, w), legR: 0.22, kneeR: 0.2, armR: lerpN(-0.7, -1.2, w), armL: lerpN(-0.9, -1.4, w), elbR: lerpN(0.6, 0.95, w), elbL: lerpN(0.55, 0.9, w),
+      armLz: -0.25, lean: lerpN(0.42, 0.15, w), toolR: lerpN(1.25, 0.85, w), headX: 0.3 });
+  } else if (tool === 'mould') { // squatting at the drying yard, pressing clay into the mould
+    const w = Math.sin(t * 3 + id) * 0.5 + 0.5;
+    Object.assign(J, { hipY: 0.28, legL: -1.2, legR: -1.15, kneeL: 2.05, kneeR: 2.0, legLz: 0.35, legRz: 0.35, lean: 0.45, armR: lerpN(-0.95, -1.15, w), armL: lerpN(-0.95, -1.15, w), elbR: lerpN(0.35, 0.85, w), elbL: lerpN(0.35, 0.85, w), armRz: -0.1, armLz: -0.1, toolR: 0, headX: 0.4 });
+  } else if (tool === 'tongs') { // working the bellows and turning the bloom
+    const w = Math.sin(t * 4 + id);
+    Object.assign(J, { armR: -0.85 + w * 0.25, armL: -0.85 - w * 0.25, elbR: 0.8 - w * 0.3, elbL: 0.8 + w * 0.3, lean: 0.3, kneeL: 0.3, kneeR: 0.3, hipY: V_HIP - 0.03, toolR: 0.8, headX: 0.25 });
+  } else if (tool === 'thali') { // aarti: circling the lamp before the deity, the other hand ringing a bell
+    const a = t * 2.4 + id;
+    Object.assign(J, { armR: -1.15 + Math.sin(a) * 0.25, armRz: 0.12 + Math.cos(a) * 0.22, elbR: 1.0, toolR: 0, armL: -0.55, elbL: 1.6 + Math.sin(t * 14) * 0.08, armLz: -0.1, lean: 0.04, headX: 0.08 });
+  } else if (tool === 'sack') { // calling out prices, holding up a sack of grain
+    Object.assign(J, { armR: -0.9, elbR: 0.85, toolR: 0, armL: -0.55 + Math.sin(t * 1.6 + id) * 0.3, elbL: 1.2, armLz: 0.25, headY: Math.sin(t * 0.7 + id) * 0.4, twist: Math.sin(t * 0.7 + id) * 0.15 });
+  } else if (tool === 'herbs' || tool === 'potli') { // kneeling by a patient, rubbing in the herbs
+    Object.assign(J, { hipY: 0.27, legL: -1.45, kneeL: 1.45, legR: 0.12, kneeR: 1.9, lean: 0.35, armR: -0.95 + Math.sin(t * 3) * 0.12, armL: -0.95 - Math.sin(t * 3) * 0.12, elbR: 0.5, elbL: 0.5, armLz: -0.12, armRz: -0.05, toolR: 0, headX: 0.35 });
+  } else { // a helping hand: lift, carry and set down materials
+    const w = Math.sin(((t * 0.75 + id * 0.27) % 1) * Math.PI * 2) * 0.5 + 0.5;
+    Object.assign(J, { armR: lerpN(-1.4, -0.65, w), armL: lerpN(-1.4, -0.65, w), elbR: lerpN(0.3, 1.4, w), elbL: lerpN(0.3, 1.4, w), armRz: -0.1, armLz: -0.1, lean: lerpN(0.38, 0.05, w), kneeL: lerpN(0.55, 0.12, w), kneeR: lerpN(0.55, 0.12, w), hipY: V_HIP - lerpN(0.06, 0, w), headX: 0.2 });
+  }
+}
+/**
+ * The pose for one villager this frame. o is the renderer's record (walk phase, speed).
+ */
+function villagerPose(v, o, t) {
+  const anim = v.anim, tool = JOBS[v.job] && JOBS[v.job].tool, id = v.id || 0;
+  const J = Object.assign({}, VJ_REST);
+  const carry = TOOL_CARRY[tool];
+  if (carry) Object.assign(J, carry);
+  if (tool === 'bow') Object.assign(J, { armL: -0.15, elbL: 0.55, toolL: -1.3 });
+  if (v.job === 'warrior' || v.job === 'spear') Object.assign(J, { armL: -0.2, elbL: 0.9, toolL: 0 }); // the dhaal on the forearm, face out
+  const defender = isDefender(v);
+  if (anim === 'walk') {
+    const run = (o.spd || 0) > 3.1 || (v.combatT > 0 && !defender);
+    const A = run ? 0.72 : 0.5, ph = o.ph || 0, sn = Math.sin(ph), cs = Math.cos(ph);
+    J.legL = -sn * A; J.legR = sn * A; // the left leg leads when sn > 0
+    J.kneeL = 0.1 + Math.max(0, cs) * (run ? 1.25 : 0.85); J.kneeR = 0.1 + Math.max(0, -cs) * (run ? 1.25 : 0.85);
+    J.hipY = V_HIP - 0.012 - Math.abs(sn) * (run ? 0.03 : 0.018);
+    J.sway = sn * 0.035; J.hipTw = -sn * 0.1; J.twist = sn * 0.12; J.lean = run ? 0.22 : 0.06; J.headX = run ? -0.1 : 0.02;
+    if (!carry || !(carry.armR)) { J.armR = -J.legR * 0.8 * (run ? 1.2 : 1); J.elbR = (run ? 1.3 : 0.28) + Math.max(0, -J.armR) * 0.45; }
+    if (tool !== 'bow' && v.job !== 'warrior' && v.job !== 'spear') { J.armL = -J.legL * 0.8 * (run ? 1.2 : 1); J.elbL = (run ? 1.3 : 0.28) + Math.max(0, -J.armL) * 0.45; }
+    if (v.carryAmt > 0) { // both hands on the tokri straps, the tool over the shoulder
+      Object.assign(J, { armR: -0.35, elbR: 1.95, armRz: -0.12, armL: -0.35, elbL: 1.95, armLz: -0.12, lean: 0.14 });
+      if (J.toolR != null) J.toolR = -2.3;
+    }
+    if (v.combatT > 0 && defender) { // charging with the weapon up
+      const F = fightStance(v, t);
+      for (const k of ['armR', 'armRz', 'elbR', 'toolR', 'gripR', 'armL', 'armLz', 'elbL', 'toolL', 'gripL']) J[k] = F[k];
+      J.lean = 0.25;
+    }
+  } else if (anim === 'work') workPose(v, J, t);
+  else if (anim === 'shoot') { Object.assign(J, fightStance(v, t)); Object.assign(J, { armR: -1.45, armRz: -0.28, elbR: 2.3, twist: 0.92, armL: -1.45, armLz: 0.95, headY: -0.85, lean: -0.03 }); J.drawn = true; }
+  else if (anim === 'sit') { // cross-legged by the fire (women kneel-sit), hands on the knees
+    if (v.look && v.look.g === 'f') Object.assign(J, { hipY: 0.15, legL: -1.25, legR: -1.25, kneeL: 2.6, kneeR: 2.6, legLz: 0.1, legRz: 0.1, lean: 0.12 });
+    else Object.assign(J, { hipY: 0.14, legL: -1.4, legR: -1.4, kneeL: 2.35, kneeR: 2.35, legLz: 0.85, legRz: 0.85, lean: 0.12 });
+    Object.assign(J, { armL: -0.55, armR: -0.55, elbL: 0.75, elbR: 0.75, armLz: 0.15, armRz: 0.15, headX: 0.12 + Math.sin(t * 0.5 + id) * 0.05, headY: Math.sin(t * 0.31 + id * 1.7) * 0.35 });
+    if (J.toolR != null) J.toolR = 0.4;
+    if (id % 3 === 0) Object.assign(J, { armR: -0.9, elbR: 1.6, armRz: 0.05, headX: 0.05, headY: 0.5 + Math.sin(t * 0.8 + id) * 0.2 }); // chatting with a neighbour
+  } else if (anim === 'sleep') { // curled on the side by the fire
+    Object.assign(J, { lie: 1, hipY: V_HIP - 0.02, legL: -0.95, legR: -0.8, kneeL: 1.45, kneeR: 1.3, armR: -1.35, elbR: 1.9, armRz: 0.1, armL: -0.7, elbL: 1.0, armLz: 0.1, lean: 0.25, headX: 0.25, toolR: 1.3, toolL: null, gripL: 0 });
+  } else if (anim === 'fight') Object.assign(J, fightStance(v, t));
+  else if (anim === 'heal') {
+    if (v.job === 'vaidya') workPose(v, J, t);
+    else Object.assign(J, { armR: -1.3, elbR: 0.45, toolR: -0.35, armL: -1.05 + Math.sin(t * 4) * 0.1, elbL: 0.55, armLz: 0.1, lean: 0.16, kneeL: 0.18, kneeR: 0.18, hipY: V_HIP - 0.01, headX: 0.2 });
+  } else if (anim === 'atk' && v.atk) Object.assign(J, attackPose(v, v.atk));
+  else { // standing: breathe, shift the weight, look around now and then
+    const b = Math.sin(t * 1.3 + id);
+    J.sway = b * 0.018; J.kneeL += Math.max(0, b) * 0.1; J.kneeR += Math.max(0, -b) * 0.1;
+    J.armL += b * 0.04; J.armR -= b * 0.04;
+    const look = Math.sin(t * 0.37 + id * 2.1);
+    J.headY = Math.abs(look) > 0.6 ? Math.sign(look) * 0.45 : 0;
+    J.headX = Math.sin(t * 0.23 + id) * 0.06;
+    if (v.job === 'warrior') { J.armR = -0.35; J.elbR = 0.9; J.toolR = 0.35; } // the talwar held low and ready
+  }
+  if (v.blockT > 0) Object.assign(J, { armL: -1.25, elbL: 1.45, armLz: -0.15, toolL: 0, lean: J.lean - 0.1, twist: -0.2 }); // dhaal up
+  if (v.hurtT > 0 && anim !== 'atk') J.lean -= 0.28 * (v.hurtT / 0.25); // flinch
+  // the hands: a body-space tool angle becomes a wrist angle, so the tool points where it should
+  J.handR = J.toolR != null ? J.toolR - J.lean - J.armR + J.elbR : J.gripR;
+  J.handL = J.toolL != null ? J.toolL - J.lean - J.armL + J.elbL : J.gripL;
+  return J;
+}
+/** Put a pose on the rig. */
+function applyVillagerPose(obj, ud, P) {
+  ud.hips.position.y = P.hipY + P.lie * 0.19;
+  ud.hips.rotation.set(0, -P.hipTw, P.sway);
+  ud.spine.rotation.set(P.lean, -P.twist, 0);
+  ud.head.rotation.set(P.headX, -P.headY, 0);
+  ud.legs[0].rotation.set(P.legR, 0, -P.legRz); ud.legs[0].userData.knee.rotation.x = P.kneeR;
+  ud.legs[1].rotation.set(P.legL, 0, P.legLz); ud.legs[1].userData.knee.rotation.x = P.kneeL;
+  ud.arms[0].rotation.set(P.armL, 0, P.armLz); ud.arms[0].userData.elbow.rotation.x = -P.elbL;
+  ud.arms[1].rotation.set(P.armR, 0, -P.armRz); ud.arms[1].userData.elbow.rotation.x = -P.elbR;
+  ud.grips[1].rotation.x = P.handR;
+  ud.grips[0].rotation.x = P.handL;
+  if (ud.skirt) { // the saree follows the legs
+    const avg = (P.legL + P.legR) / 2, spread = Math.abs(P.legL - P.legR);
+    ud.skirt.rotation.x = clamp(avg * 0.55, -1.1, 0.4);
+    ud.skirt.scale.set(1 + Math.max(P.legLz, P.legRz) * 0.3, avg < -0.8 ? 0.62 : 1 - Math.max(0, -avg) * 0.25, 1 + spread * 0.4 + Math.max(0, -avg) * 0.35);
+  }
 }
 
 const R3 = {
@@ -136,7 +286,7 @@ const R3 = {
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.localClippingEnabled = true; // construction sites reveal buildings from the ground up
     const sc = (this.scene = new THREE.Scene());
-    sc.fog = new THREE.Fog(SKY_DAY, 60, 150);
+    sc.fog = new THREE.Fog(SKY_DAY, 70, 175);
     sc.background = new THREE.Color(SKY_DAY);
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.5, 500);
     // lights: warm golden sun, cool periwinkle sky fill — warm light, cool shadows (complementary)
@@ -197,6 +347,7 @@ const R3 = {
   /* ---------- world (rebuilt for each new game / load) ---------- */
   buildWorld(s) {
     const sc = this.scene;
+    this.postKey = null; this.postMeshes = []; // outpost circles live in the world group, rebuilt below
     if (this.worldGroup) {
       sc.remove(this.worldGroup);
       this.disposeTree(this.worldGroup);
@@ -232,7 +383,7 @@ const R3 = {
     });
   },
   buildTerrain(s) {
-    const geo = new THREE.PlaneGeometry(150, 150, 100, 100);
+    const geo = new THREE.PlaneGeometry(190, 190, 124, 124);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
@@ -624,10 +775,10 @@ const R3 = {
     const cc = new THREE.Color();
     let nt = 0, nf = 0;
     for (let i = 0; i < 6000 && (nt < 2600 || nf < 500); i++) {
-      const a = rnd() * Math.PI * 2, r = 8 + rnd() * 46;
+      const a = rnd() * Math.PI * 2, r = 8 + rnd() * 58;
       const x = Math.cos(a) * r, z = Math.sin(a) * r;
       if (r > islandR(x, z) - 4) continue;
-      if (r < 25 && rnd() < 0.7) continue;
+      if (r < 27 && rnd() < 0.7) continue;
       const y = heightAt(x, z);
       if (nt < 2600) { this.setInst(tufts, nt, x, y, z, rnd() * 6, 0.7 + rnd() * 0.7, 0); tufts.setColorAt(nt, cc.setHex(pick([0x6f8f45, 0x7f9c4e, 0x8ea457, 0xa9a65e]))); nt++; } // a few sun-dried golden tufts warm the meadow
       if (nf < 500 && rnd() < 0.2) { this.setInst(flowers, nf, x + 0.2, y + 0.06, z, 0, 1, 0); flowers.setColorAt(nf, cc.setHex(grade(pick([0xffb31a, 0xff7a1a, 0xf4ecd8, 0xe03c31, 0xc2185b, 0x9b7fd0])))); nf++; }
@@ -745,7 +896,7 @@ const R3 = {
   zoomBy(f) { this.cam.tdist = clamp(this.cam.tdist * f, 8, 70); },
   rotateBy(dyaw, dpitch) { this.cam.tyaw += dyaw; this.cam.tpitch = clamp(this.cam.tpitch + (dpitch || 0), 0.5, 1.45); },
   lookAt(x, z) { this.cam.tx = x; this.cam.tz = z; this.clampTarget(); },
-  clampTarget() { const c = this.cam, r = Math.hypot(c.tx, c.tz); if (r > 52) { c.tx *= 52 / r; c.tz *= 52 / r; } },
+  clampTarget() { const c = this.cam, r = Math.hypot(c.tx, c.tz); if (r > 64) { c.tx *= 64 / r; c.tz *= 64 / r; } },
 
   /* ---------- picking ---------- */
   ndc(clientX, clientY) {
@@ -809,6 +960,14 @@ const R3 = {
   /* ---------- build ghost ---------- */
   setGhost(info) { // { type, cx, cz, ok, cells }
     const g = this.ghostGroup;
+    // a tower being placed shows the circle of land it will claim
+    if (!this.ghostLand) {
+      this.ghostLand = new THREE.Mesh(new THREE.RingGeometry(0.965, 1.0, 72), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.9, depthWrite: false }));
+      this.ghostLand.rotation.x = -Math.PI / 2; this.ghostLand.visible = false; this.scene.add(this.ghostLand);
+    }
+    const landR = info && !info.cells && TOWER_LAND[info.type];
+    this.ghostLand.visible = !!landR;
+    if (landR) { const c = bCenterOf(info.type, info.cx, info.cz); this.ghostLand.position.set(c.x, 0.05, c.z); this.ghostLand.scale.setScalar(landR); this.ghostLand.material.color.setHex(info.ok ? 0xffd27a : 0xff6a50); }
     if (!info) { g.visible = false; this.ghostInfo = null; return; }
     g.visible = true;
     const key = info.type + (info.cells ? 'L' + info.cells.length : '');
@@ -886,6 +1045,22 @@ const R3 = {
       this.worldGroup.add(this.ringMesh);
     }
     this.ringMesh.material.opacity = UI.buildType ? 0.8 : 0.3;
+    // outposts: each finished tower's own little circle of land
+    const posts = outposts(s), pkey = posts.map((o) => o.b.id + ':' + o.r).join('|');
+    if (this.postKey !== pkey) {
+      this.postKey = pkey;
+      for (const m of this.postMeshes || []) { this.worldGroup.remove(m); m.geometry.dispose(); }
+      this.postMeshes = [];
+      for (const o of posts) {
+        const ring = new THREE.Mesh(new THREE.RingGeometry(o.r - 0.05, o.r + 0.05, 64), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.35, depthWrite: false }));
+        ring.rotation.x = -Math.PI / 2; ring.position.set(o.x, 0.04, o.z);
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(o.r, 48), new THREE.MeshBasicMaterial({ color: 0xffe2a8, transparent: true, opacity: 0.07, depthWrite: false }));
+        disc.rotation.x = -Math.PI / 2; disc.position.set(o.x, 0.03, o.z);
+        this.worldGroup.add(ring); this.worldGroup.add(disc);
+        this.postMeshes.push(ring, disc);
+      }
+    }
+    for (const m of this.postMeshes || []) m.material.opacity = m.geometry.type === 'RingGeometry' ? (UI.buildType ? 0.85 : 0.3) : (UI.buildType ? 0.12 : 0.05);
     for (const b of this.bounds) b.userData.flags[0].rotation.y = Math.sin(time * 3 + b.position.x) * 0.4;
     if (this.shrine) for (const f of this.shrine.userData.flags) f.rotation.y = Math.sin(time * 3 + f.position.x * 4) * 0.45;
     // trees / rocks
@@ -906,6 +1081,7 @@ const R3 = {
     for (const d of this.diyas) { d.userData.flame.visible = lit; d.userData.flame.scale.setScalar(0.8 + 0.3 * Math.sin(time * 12 + d.position.x * 9)); }
     this.syncBuildings(s, time, dark, lit);
     this.syncVillagers(s, time, dark, dt);
+    this.syncZzz(s, dt);
     this.syncEnemies(s, time, dt);
     this.syncAmbient(s, time);
     this.syncLoot(s, time);
@@ -1087,6 +1263,135 @@ const R3 = {
     this.scene.add(obj);
     return o;
   },
+  /*
+   * Omens of a coming asura (s.omen, set two days ahead): crows wheeling in silence over the forest where
+   * Bakasura will come from, a blood-red dusk and moon for Raktabija, a violet mist for Kalanemi, tremors
+   * and a cowering flame for Mahasura. Strength grows as the night draws near; dusk and night show it most.
+   */
+  omens(s, time, du, dark, bg) {
+    const om = s.omen, dt = this._dt || 0.016;
+    const str = om ? om.str * (om.k === 0 ? 1.15 : 1) : 0;
+    const eve = clamp(du * 1.5 + dark * 0.9, 0, 1);
+    this.moon.color.setHex(om && om.type === 'raktabija' ? lerpHex(0x7f8cff, 0xff4030, str) : 0x7f8cff);
+    if (om && om.type === 'raktabija') { // the light itself turns red: dusk glows like embers, the moon bleeds
+      const f = str * (0.18 + 0.6 * eve);
+      const c2 = lerpHex(bg, dark > 0.5 ? 0x420812 : 0xc8382c, f);
+      this.scene.background.setHex(c2); this.scene.fog.color.setHex(c2);
+      this.hemi.color.setHex(lerpHex(this.hemi.color.getHex(), 0xff4a3a, f * 0.65));
+      this.hemi.groundColor.setHex(lerpHex(this.hemi.groundColor.getHex(), 0x3a0608, f * 0.5));
+      this.sun.color.setHex(lerpHex(this.sun.color.getHex(), 0xff3a20, f * 0.6));
+      this.moon.intensity *= 1 + str * 0.8;
+    } else if (om && om.type === 'kalanemi') {
+      const f = str * (0.3 + 0.7 * eve);
+      const c2 = lerpHex(bg, 0x6e5e94, f * 0.75);
+      this.scene.background.setHex(c2); this.scene.fog.color.setHex(c2);
+      const near = this.scene.fog.near, cd = this.cam.dist;
+      this.scene.fog.near = cd + (near - cd) * (1 - 0.7 * f);
+      this.scene.fog.far = cd + (this.scene.fog.far - cd) * (1 - 0.55 * f);
+    } else if (om && om.type === 'boss') { // the earth shudders now and then, dust lifts off the roofs
+      this.quakeT = (this.quakeT == null ? rand(4, 9) : this.quakeT) - dt;
+      if (this.quakeT <= 0) {
+        this.quakeT = rand(12, 24) / Math.max(0.5, str);
+        this.shakeAmt = Math.max(this.shakeAmt || 0, 0.16 * str);
+        for (let i = 0; i < 8; i++) { const a = Math.random() * Math.PI * 2, r = rand(2, territory(s)); emit(s, Math.cos(a) * r, 0.1, Math.sin(a) * r, 3, { spread: 0.5, vx: 0.8, vyMin: 0.2, vyMax: 0.8, life: 1.4, colors: ['#b8a07a', '#9a8460'], g: 0.5 }); }
+        sfx('stomp', this.cam.x, this.cam.z);
+      }
+    }
+    // Kalanemi's mist: soft violet banks drifting in from the forest over the edge of the village
+    const mist = om && om.type === 'kalanemi' ? str * (0.35 + 0.65 * eve) : 0;
+    if (mist > 0.01 && !this.mist) {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const x = c.getContext('2d'), gr = x.createRadialGradient(64, 64, 4, 64, 64, 62);
+      gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
+      const tex = new THREE.CanvasTexture(c);
+      this.mist = [];
+      for (let i = 0; i < 46; i++) {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, color: 0xb8a8e0, transparent: true, depthWrite: false, opacity: 0 }));
+        sp.userData = { a: (i / 46) * Math.PI * 2 + rand(-0.06, 0.06), d: rand(-6, 6), s: rand(5, 9), ph: rand(0, 6.3), y: rand(0.4, 1.3) };
+        sp.renderOrder = 5; this.scene.add(sp); this.mist.push(sp);
+      }
+    }
+    if (this.mist) {
+      const R = territory(s);
+      for (const sp of this.mist) {
+        const u = sp.userData;
+        sp.visible = mist > 0.01;
+        if (!sp.visible) continue;
+        const a = u.a + time * 0.012, d = R + u.d + Math.sin(time * 0.2 + u.ph) * 1.5;
+        sp.position.set(Math.sin(a) * d, u.y, -Math.cos(a) * d);
+        sp.scale.set(u.s * 1.6, u.s * 0.55, 1);
+        sp.material.opacity = mist * 0.5 * (0.7 + 0.3 * Math.sin(time * 0.5 + u.ph));
+      }
+    }
+    // Bakasura's crows
+    const crows = om && om.type === 'bakasura' && dark < 0.85;
+    if (crows && !this.crows) {
+      const geo = merge([P(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0.12, -0.5, 0.06, -0.05, 0, 0, -0.12, 0, 0, 0.12, 0, 0, -0.12, 0.5, 0.06, -0.05]), 3)), 0x15121a), sph(0.08, 0x15121a, 0, 0, 0, 0.8, 0.7, 2)]);
+      const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: true });
+      this.crows = [];
+      for (let i = 0; i < 18; i++) { const m = new THREE.Mesh(geo, mat); m.userData = { r: rand(2.5, 6.5), h: rand(4.5, 7.5), sp: rand(0.35, 0.6) * (i % 5 === 0 ? -1 : 1), ph: rand(0, 6.3), fl: rand(0, 6.3) }; this.scene.add(m); this.crows.push(m); }
+    }
+    if (this.crows) {
+      const R = territory(s), a = om && om.a != null ? om.a : 0, cx = Math.sin(a) * (R + 3), cz = -Math.cos(a) * (R + 3);
+      for (const m of this.crows) {
+        m.visible = !!crows;
+        if (!crows) continue;
+        const u = m.userData, th = time * u.sp + u.ph;
+        m.position.set(cx + Math.cos(th) * u.r, u.h + Math.sin(time * 0.7 + u.ph) * 0.6, cz + Math.sin(th) * u.r);
+        m.rotation.set(0, -th + (u.sp > 0 ? 0 : Math.PI), Math.sin(th * 2) * 0.25);
+        m.scale.set(1.3, 0.35 + Math.abs(Math.sin(time * 7 + u.fl)) * 1.1, 1.3); // wings beating
+      }
+      if (crows) { this.cawT = (this.cawT || 0) - dt; if (this.cawT <= 0) { this.cawT = rand(5, 11) / Math.max(0.5, str); sfx('crow', cx, cz); } }
+    }
+  },
+  /** Sleep: little "z" letters drift up from every home with sleepers inside and from those asleep by the fire. */
+  syncZzz(s, dt) {
+    if (!this.zTex) {
+      const c = document.createElement('canvas'); c.width = c.height = 64;
+      const x = c.getContext('2d');
+      x.font = 'bold 50px Rubik, Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.lineWidth = 7; x.strokeStyle = 'rgba(40,30,70,0.85)'; x.strokeText('z', 32, 34);
+      x.fillStyle = '#eef3ff'; x.fillText('z', 32, 34);
+      this.zTex = new THREE.CanvasTexture(c);
+      this.zs = []; this.zSrc = new Map();
+    }
+    // where the sleepers are: one source per home, one per sleeper by the fire
+    const src = new Map();
+    for (const v of s.villagers) {
+      if (!v.sleep) continue;
+      if (v.inside && v.home) { const b = getB(s, v.home); if (b) { const k = 'b' + b.id; const e = src.get(k); if (e) e.n++; else src.set(k, { x: b.x, y: BUILDINGS[b.type].ht + 0.15, z: b.z, n: 1, gap: 1.0 }); } }
+      else if (v.anim === 'sleep') src.set('v' + v.id, { x: v.x, y: 0.55, z: v.z, n: 1, gap: 1.5 });
+    }
+    for (const [k, e] of src) {
+      let t = this.zSrc.get(k);
+      if (t == null) t = Math.random() * e.gap;
+      t -= dt * (e.n > 2 ? 1.4 : 1);
+      if (t <= 0) {
+        t += e.gap;
+        let z = this.zs.find((q) => !q.sprite.visible);
+        if (!z && this.zs.length < 80) {
+          const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.zTex, transparent: true, depthWrite: false, opacity: 0 }));
+          sp.renderOrder = 6; this.scene.add(sp);
+          z = { sprite: sp }; this.zs.push(z);
+        }
+        if (z) Object.assign(z, { x: e.x + rand(-0.15, 0.15), y: e.y, z0: e.z + rand(-0.15, 0.15), t: 0, life: 2.4, ph: Math.random() * 6, big: e.y > 1 ? 1.25 : 1 }), z.sprite.visible = true;
+      }
+      this.zSrc.set(k, t);
+    }
+    for (const k of this.zSrc.keys()) if (!src.has(k)) this.zSrc.delete(k);
+    for (const z of this.zs) {
+      if (!z.sprite.visible) continue;
+      z.t += dt;
+      const f = z.t / z.life;
+      if (f >= 1) { z.sprite.visible = false; continue; }
+      const sp = z.sprite;
+      sp.position.set(z.x + Math.sin(z.t * 2.2 + z.ph) * 0.12 + f * 0.25, z.y + f * 1.0, z.z0);
+      sp.scale.setScalar((0.16 + f * 0.26) * z.big);
+      sp.material.opacity = Math.min(1, f * 5) * (1 - f) * 0.95;
+      sp.material.rotation = Math.sin(z.t * 1.7 + z.ph) * 0.25;
+    }
+  },
   syncLoot(s, time) {
     const seen = new Set();
     for (const l of s.loot) {
@@ -1121,43 +1426,23 @@ const R3 = {
       while (dr > Math.PI) dr -= Math.PI * 2;
       while (dr < -Math.PI) dr += Math.PI * 2;
       o.rot += dr * Math.min(1, dt * 12);
-      obj.rotation.y = o.rot;
       obj.position.set(v.x, heightAt(v.x, v.z), v.z);
       // walk cycle follows the distance actually covered, so feet never slide
       const moved = o.lx == null ? 0 : Math.hypot(v.x - o.lx, v.z - o.lz);
       o.lx = v.x; o.lz = v.z;
-      o.ph = (o.ph || 0) + moved * 5.2;
+      o.spd = (o.spd || 0) + ((dt > 0 ? moved / dt : 0) - (o.spd || 0)) * Math.min(1, dt * 8);
+      o.ph = (o.ph || 0) + moved * (o.spd > 3.1 ? 5.4 : 6.8);
       const t = v.animT, anim = v.anim;
-      const J = { hipY: 0.36, legL: 0, legR: 0, armL: 0, armR: 0, lean: 0, sway: 0, twist: 0, armRz: 0, armLz: 0 };
-      let fast = false;
-      if (anim === 'walk') {
-        const w = Math.sin(o.ph);
-        J.legL = w * 0.62; J.legR = -w * 0.62; J.armL = -w * 0.5; J.armR = w * 0.5;
-        J.hipY += Math.abs(Math.cos(o.ph)) * 0.035; J.lean = 0.07; J.sway = Math.sin(o.ph) * 0.05;
-        if (v.combatT > 0 && isDefender(v)) { J.armR = -0.9 + w * 0.2; J.lean = 0.2; } // charging with the weapon up
-      } else if (anim === 'work') {
-        // wind up slowly, strike fast (eased swing)
-        const c = (t * 1.15) % 1, e = c < 0.65 ? Math.sin((c / 0.65) * Math.PI * 0.5) : 1 - Math.pow((c - 0.65) / 0.35, 2);
-        J.armR = -0.45 - e * 2.0; J.armL = -0.3 - e * 0.35; J.lean = 0.12 - e * 0.18;
-      } else if (anim === 'shoot') { J.armR = -1.5; J.armL = -1.35 - Math.sin(t * 3) * 0.05; J.lean = -0.04; }
-      else if (anim === 'sit') { J.hipY = 0.13; J.legL = J.legR = -1.45; J.armL = J.armR = -0.45; J.lean = 0.08; }
-      else if (anim === 'fight') Object.assign(J, fightStance(v, t));
-      else if (anim === 'heal') { J.armR = -1.45; J.armL = -0.95 + Math.sin(t * 4) * 0.1; J.lean = 0.1; J.hipY = 0.35; J.armRz = 0.1; }
-      else if (anim === 'atk' && v.atk) { fast = true; Object.assign(J, attackPose(v, v.atk)); }
-      else { const b = Math.sin(t * 1.6 + v.id); J.armL = b * 0.05; J.armR = -J.armL; J.sway = b * 0.015; }
-      if (v.blockT > 0) { J.armL = -1.65; J.armLz = 0.25; J.lean -= 0.12; J.twist = -0.25; fast = true; } // dhaal up
-      if (v.hurtT > 0 && anim !== 'atk') J.lean -= 0.28 * (v.hurtT / 0.25); // flinch
+      const J = villagerPose(v, o, t);
+      const fast = anim === 'atk' || v.blockT > 0;
       // ease every joint toward its target so poses blend instead of snapping (swings snap fast)
       const P = o.pose || (o.pose = Object.assign({}, J));
-      const k = 1 - Math.exp(-dt * (fast ? 34 : anim === 'walk' ? 22 : 12));
-      for (const key in J) P[key] += (J[key] - (P[key] || 0)) * k;
-      ud.hips.position.y = P.hipY;
-      ud.hips.rotation.set(P.lean, P.twist, P.sway);
-      ud.legs[0].rotation.x = P.legL;
-      ud.legs[1].rotation.x = P.legR;
-      ud.arms[0].rotation.set(P.armL, 0, P.armLz);
-      ud.arms[1].rotation.set(P.armR, 0, P.armRz);
-      ud.torso.scale.y = 1 + Math.sin(time * 2.2 + v.id) * 0.012; // breathing
+      const k = 1 - Math.exp(-dt * (fast ? 34 : anim === 'walk' ? 22 : anim === 'sleep' ? 5 : 12));
+      for (const key of VJ_EASE) P[key] += (J[key] - (P[key] || 0)) * k;
+      applyVillagerPose(obj, ud, P);
+      obj.rotation.set(0, o.rot, P.lie * Math.PI / 2);
+      if (ud.bowDrawn) { ud.bowDrawn.visible = !!J.drawn; ud.bowRest.visible = !J.drawn; }
+      ud.torso.scale.y = 1 + Math.sin(time * (anim === 'sleep' ? 1.2 : 2.2) + v.id) * (anim === 'sleep' ? 0.02 : 0.012); // breathing
       // the tokri: gatherers always wear one; its contents show the good and how full it is (3 steps)
       let pk = null;
       if (v.carryAmt > 0 && v.carry) pk = v.carry + clamp(Math.ceil((v.carryAmt / carryCap(s, v.carry)) * 3), 1, 3);
@@ -1266,6 +1551,8 @@ const R3 = {
       }
       if (ud.neckFlame) ud.neckFlame.scale.set(1, 0.8 + 0.3 * Math.sin(t * 13 + e.id) + 0.1 * Math.sin(t * 29), 1);
       if (ud.halo) ud.halo.scale.setScalar(0.85 + 0.25 * Math.sin(t * 6 + e.id));
+      obj.visible = !(e.hidden > 0); // Kalanemi, gone into his maya
+      if (ud.orb) ud.orb.scale.setScalar(0.85 + 0.3 * Math.sin(t * 5 + e.id));
       if (def.glow && !e.burning && !e.dead) this.lightSrc.push({ x: e.x, y: e.y + def.h * 0.8, z: e.z, r: def.fly ? 2.6 : 2.2, c: def.glow, k: def.fly ? 0.7 : 0.45 });
       if (ud.neckFlame && !e.burning) this.lightSrc.push({ x: e.x, y: 2.2, z: e.z, r: 2.6, c: 0x6fa8ff, k: 0.55 });
       if (ud.wings.length) { const f = Math.sin(t * 16) * 0.7; ud.wings[0].rotation.z = f; ud.wings[1].rotation.z = -f; }
@@ -1460,9 +1747,10 @@ const R3 = {
     const lowQ = this.Q.farCull;
     this.scene.fog.near = c.dist + lerp(lowQ ? 14 : 40, 6, dark);
     this.scene.fog.far = c.dist + lerp(lowQ ? 34 : 130, lowQ ? 30 : 45, dark);
+    this.omens(s, time, du, dark, bg);
     const F = s.fire, FL = fireLv(s);
     const flick = 1 + Math.sin(time * 10) * 0.06 + Math.sin(time * 23) * 0.04;
-    this.fireLight.intensity = (0.12 + 1.15 * dark) * (0.35 + 0.65 * F.intensity) * flick;
+    this.fireLight.intensity = (0.12 + 1.15 * dark) * (0.35 + 0.65 * F.intensity) * flick * (s.omen && s.omen.type === 'boss' ? 1 - 0.2 * s.omen.str * (0.6 + 0.4 * Math.sin(time * 0.9)) : 1); // the flame cowers before Mahasura
     this.fireLight.distance = FL.light * (0.6 + 0.4 * F.intensity);
     this.fireLight.position.y = 1.6 + s.fire.level * 0.15;
     // pick the light sources nearest the view
@@ -1794,6 +2082,9 @@ const R3 = {
   villagerThumb(look, job) {
     const o = Models.villager(look, job), pk = { wood: 'wood2', stone: 'stone2', farm: 'food2' }[job];
     if (pk) { const ud = o.userData, geo = Models.packGeo(pk); setGeo(ud.pack, geo); ud.pack.visible = true; }
-    return this.thumb(o, 72, 88, [0.9, 1.25, 2.0], [0, 0.72, 0]);
+    const J = villagerPose({ id: 0, job, look, anim: 'stand', animT: 0.4 }, {}, 0.4);
+    applyVillagerPose(o, o.userData, J);
+    if (o.userData.bowRest) { o.userData.bowRest.visible = true; o.userData.bowDrawn.visible = false; }
+    return this.thumb(o, 72, 88, [-0.5, 1.12, 1.5], [0, 0.8, 0]);
   },
 };

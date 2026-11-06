@@ -563,7 +563,8 @@ const UI = {
       html += `<p>${def.desc}</p>`;
       if (!b.done) {
         html += this.meter('prog', b.progress / def.time, 'Construction', `${Math.floor((b.progress / def.time) * 100)}%`);
-        html += canBuildNow(s) ? status('info', jobCount(s, 'build') ? 'A Mistri is on the way' : 'Idle villagers are building it') : '<p class="miss">Nobody to build it: assign a Mistri, or free a villager (idle villagers build too).</p>';
+        if (needsMistri(b) && !jobCount(s, 'build')) html += '<p class="miss">Stone, brick and iron work: a <b>Mistri</b> has to lead it. Assign one in the Kaam panel (idle villagers can only help a Mistri here).</p>';
+        else html += canBuildNow(s) ? status('info', jobCount(s, 'build') ? (mistriOn(s, b) ? 'A Mistri is building it' : 'A Mistri is on the way') : 'Idle villagers are building it (a Mistri would be 3× faster)') : '<p class="miss">Nobody to build it: assign a Mistri, or free a villager (idle villagers build too).</p>';
       } else {
         html += this.meter('', b.hp / b.maxHp, 'Strength', `${Math.ceil(b.hp)} / ${b.maxHp}`);
         if (isFieldType(b.type)) html += this.meter('prog', b.grow / 30, 'Crop', `${Math.floor((b.grow / 30) * 100)}%`);
@@ -591,9 +592,10 @@ const UI = {
             const crew = upgradeCrew(s, b), left = Math.max(0, L.time - (b.upProg || 0)), day = phaseOf(s.t) === 'day';
             const helpers = s.villagers.filter((v) => v.helpB === b.id).length, freeIdle = idleVillagers(s).some((v) => !v.helpB);
             if (crew.n) u += status('user', `<b>${crew.n}</b> working on it · about <b>${this.fmtSecs(left / crew.rate)}</b> left`);
+            else if (needsMistri(b) && day) u += `<p class="miss">Level ${lv + 1} is stone, brick and iron work: a <b>Mistri</b> has to lead it${jobCount(s, 'build') ? ' (one will come when free)' : '. Assign one in the Kaam panel'}; helpers join in once they are here.</p>`;
             else u += `<p class="miss">${day ? 'Nobody is working on it yet. Send a helper, or assign a Mistri.' : 'Work stops for the night and carries on at dawn.'}</p>`;
             u += `<div class="actions"><button data-action="uphelp" class="${freeIdle && day ? 'primary' : ''}" ${freeIdle ? '' : 'disabled'} data-tip="Send an idle villager to help. More hands finish sooner">${svgIcon('plus')}Send helper</button><button data-action="upunhelp" ${helpers ? '' : 'disabled'} data-tip="Call one helper back">${svgIcon('minus')}Call back</button></div>`;
-            u += `<p><small>By day its own workers, your Mistri, idle villagers and helpers${helpers ? ` (${helpers} sent)` : ''} build it. The more people, the sooner it is done.</small></p>`;
+            u += `<p><small>By day its own workers, your Mistri, idle villagers and helpers${helpers ? ` (${helpers} sent)` : ''} build it. The more people, the sooner it is done; a Mistri works 3× faster than a helper.</small></p>`;
           } else if (lv < max) {
             const L = def.levels[lv + 1];
             u += `<p>Unlocks <b>${L.unlocks}</b>.</p><p>${this.costHTML(L.cost)} <small>· about ${this.fmtSecs(L.time)} of work for one person</small></p>${this.missHTML(L.cost)}`;
@@ -850,9 +852,9 @@ const UI = {
     this.drawDial();
     this.updateJobs();
     this.updateCards();
-    const boss = s.enemies.find((e) => e.type === 'boss');
+    const boss = s.enemies.find((e) => ENEMIES[e.type].boss && !e.fake && !e.dead);
     $('bossbar').classList.toggle('hidden', !boss);
-    if (boss) $('bossbar').querySelector('i').style.width = (boss.hp / boss.maxHp) * 100 + '%';
+    if (boss) { $('bossbar').querySelector('i').style.width = (boss.hp / boss.maxHp) * 100 + '%'; $('bossbar').querySelector('span').textContent = ENEMIES[boss.type].name; }
     this.renderInfo();
     $('pausedTag').classList.toggle('hidden', !this.paused || !$('menu').classList.contains('hidden'));
     void force;
@@ -881,7 +883,7 @@ const UI = {
   },
 
   /* ---------- round top-down minimap ---------- */
-  MM_SCALE: 60, // world units from the centre to the map edge
+  MM_SCALE: 75, // world units from the centre to the map edge
   mmBase(s) {
     const mm = $('minimap'), N = mm.width;
     const c = makeCanvas(N, N), x = c.getContext('2d');

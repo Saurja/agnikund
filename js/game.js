@@ -23,7 +23,9 @@ function tip(id, msg) {
 /* ---------- geometry helpers ---------- */
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const distXZ = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
-function islandR(x, z) { const a = Math.atan2(z, x); return 50 + 5 * Math.sin(3 * a + 1) + 3 * Math.sin(5 * a + 2) + 2 * Math.sin(7 * a); }
+/** The island is 25% bigger than it first was (MAP_SCALE); village land grew 10% (LAND_K, see FIRE_LEVELS). */
+const MAP_SCALE = 1.25, LAND_K = 1.1;
+function islandR(x, z) { const a = Math.atan2(z, x); return (50 + 5 * Math.sin(3 * a + 1) + 3 * Math.sin(5 * a + 2) + 2 * Math.sin(7 * a)) * MAP_SCALE; }
 const COMPASS = ['North', 'North-East', 'East', 'South-East', 'South', 'South-West', 'West', 'North-West'];
 function compassOf(x, z) { const a = Math.atan2(x, -z); return COMPASS[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8]; }
 function dirXZ(a) { return { x: Math.sin(a), z: -Math.cos(a) }; } // compass angle → unit vector (0 = north = -z)
@@ -45,39 +47,46 @@ function newState(seed) {
   };
 }
 
-function genWorld(s) {
-  const rnd = mulberry32(s.seed);
+/**
+ * Plant the forest: sparse round the village, thick beyond, palms on the beach. Only where the land lies
+ * further out than minR (an older, smaller island's forest stays as it was when a save is loaded).
+ */
+function plantForest(s, rnd, minR) {
   const pickW = (w) => { let tot = 0; for (const k in w) tot += w[k]; let r = rnd() * tot; for (const k in w) { r -= w[k]; if (r <= 0) return k; } return Object.keys(w)[0]; };
-  const step = 1.9;
-  for (let gx = -60; gx <= 60; gx += step) {
-    for (let gz = -60; gz <= 60; gz += step) {
+  const step = 1.9, ext = Math.ceil(61 * MAP_SCALE), K = LAND_K;
+  for (let gx = -ext; gx <= ext; gx += step) {
+    for (let gz = -ext; gz <= ext; gz += step) {
       const x = gx + (rnd() - 0.5) * step * 0.9, z = gz + (rnd() - 0.5) * step * 0.9;
       const r = Math.hypot(x, z), edge = islandR(x, z) - 4.5;
-      if (r < 5.5 || r > edge) continue;
+      if (r < 6 || r > edge || r < minR * (edge + 4.5) / MAP_SCALE) continue;
       const meadow = Math.sin(x * 0.11 + 1.3) * Math.cos(z * 0.09 - 0.7) + Math.sin(x * 0.05 - z * 0.07) * 0.6;
-      let p = r < 9 ? 0.12 : r < 13 ? 0.28 : r < 18 ? 0.5 : 0.82;
-      if (meadow > 0.7 && r < 34) p *= 0.2;
+      let p = r < 9 * K ? 0.12 : r < 13 * K ? 0.28 : r < 18 * K ? 0.5 : 0.82;
+      if (meadow > 0.7 && r < 40) p *= 0.2;
       if (rnd() > p) continue;
       const beach = r > edge - 5;
-      const type = beach ? pickW({ palm: 6, neem: 1 }) : r < 20 ? pickW({ mango: 3, neem: 3, palm: 3, banyan: 1 }) : pickW({ palm: 2, banyan: 2, neem: 3, mango: 2 });
+      const type = beach ? pickW({ palm: 6, neem: 1 }) : r < 22 ? pickW({ mango: 3, neem: 3, palm: 3, banyan: 1 }) : pickW({ palm: 2, banyan: 2, neem: 3, mango: 2 });
       s.trees.push(makeTree(s, x, z, type, Math.floor(rnd() * 3), rnd));
     }
   }
-  for (let i = 0; i < 80; i++) {
-    const a = rnd() * Math.PI * 2, r = (i < 6 ? 6 : 9) + rnd() * (i < 6 ? 4 : 36);
+}
+function genWorld(s) {
+  const rnd = mulberry32(s.seed);
+  plantForest(s, rnd, 0);
+  for (let i = 0; i < 110; i++) {
+    const a = rnd() * Math.PI * 2, r = (i < 6 ? 6.6 : 9.9) + rnd() * (i < 6 ? 4.4 : 47);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (r > islandR(x, z) - 6) continue;
     s.trees = s.trees.filter((t) => distXZ(t.x, t.z, x, z) > 1.3);
     const rock = makeRock(s, x, z, Math.floor(rnd() * 8), 36 + Math.floor(rnd() * 40), rnd);
-    if (r > 11 && rnd() < 0.3) rock.ore = true; // rusty iron boulders, out beyond the first clearing
+    if (r > 12 && rnd() < 0.3) rock.ore = true; // rusty iron boulders, out beyond the first clearing
     s.rocks.push(rock);
   }
   // make sure a few ore boulders lie within reach of a level-2 village
-  if (!s.rocks.some((k) => k.ore && Math.hypot(k.x, k.z) < 17)) {
-    for (const k of s.rocks.filter((q) => Math.hypot(q.x, q.z) > 9 && Math.hypot(q.x, q.z) < 17).slice(0, 3)) k.ore = true;
+  if (!s.rocks.some((k) => k.ore && Math.hypot(k.x, k.z) < 19)) {
+    for (const k of s.rocks.filter((q) => Math.hypot(q.x, q.z) > 10 && Math.hypot(q.x, q.z) < 19).slice(0, 3)) k.ore = true;
   }
   // Pavitra Van — the sacred grove where homeless villagers hide from demons
-  const ga = rnd() * Math.PI * 2, gd = 17;
+  const ga = rnd() * Math.PI * 2, gd = 19;
   const grove = (s.grove = { x: Math.cos(ga) * gd, z: Math.sin(ga) * gd, r: 4.2 });
   s.trees = s.trees.filter((t) => distXZ(t.x, t.z, grove.x, grove.z) > grove.r + 1.2);
   s.rocks = s.rocks.filter((r) => distXZ(r.x, r.z, grove.x, grove.z) > grove.r + 1.5);
@@ -249,6 +258,7 @@ function nearestEnemy(s, x, z, range, groundOnly) {
   for (const e of s.enemies) {
     if (e.dead) continue;
     if (groundOnly && ENEMIES[e.type].fly && e.y > 1.2) continue;
+    if (e.hidden > 0) continue; // Kalanemi, vanished into his maya
     const d = distXZ(e.x, e.z, x, z) - ENEMIES[e.type].r;
     if (d <= bd) { bd = d; best = e; }
   }
@@ -420,15 +430,28 @@ function finishUpgrade(s, b) {
   sfx('upgrade', b.x, b.z);
   emit(s, b.x, def.ht * 0.6, b.z, 20, { spread: def.fw / 2, spreadY: def.ht / 3, vx: 0.8, vyMin: 0.5, vyMax: 2, life: 1.2, colors: ['#ffcc33', '#ff9933', '#fff3b0'], g: -0.5, add: true });
 }
+/*
+ * Outposts: a finished tower standing on (or right at the edge of) village land claims a small circle of
+ * land of its own, so houses and workshops can go up round it, even past the village boundary.
+ */
+const TOWER_LAND = { tower: 5, belltower: 4.5, firetower: 5, cannontower: 5.5 };
+const TOWER_EDGE = 1.4; // how far past the boundary a tower itself may stand
+function outposts(s) {
+  const R = territory(s), out = [];
+  for (const b of s.buildings) if (TOWER_LAND[b.type] && b.done && Math.hypot(b.x, b.z) <= R + TOWER_EDGE + 0.6) out.push({ x: b.x, z: b.z, r: TOWER_LAND[b.type], b });
+  return out;
+}
+function onOutpost(s, px, pz) { for (const o of outposts(s)) if (distXZ(px, pz, o.x, o.z) <= o.r - 0.3) return o; return null; }
 function canPlace(s, type, cx, cz, ignoreCost) {
   const def = BUILDINGS[type];
   if (def.lvl > s.fire.level) return { ok: false, why: 'Needs Agnikund level ' + def.lvl };
   const R = territory(s);
   const fireClear = 2.7 + s.fire.level * 0.12;
+  const posts = outposts(s), tower = !!TOWER_LAND[type];
   for (let i = 0; i < def.fw; i++) {
     for (let j = 0; j < def.fd; j++) {
       const px = cx + i + 0.5, pz = cz + j + 0.5, r = Math.hypot(px, pz);
-      if (r > R - 0.3) return { ok: false, why: 'Outside village land — upgrade the Agnikund for more' };
+      if (r > R - 0.3 && !(tower && r <= R + TOWER_EDGE) && !posts.some((o) => distXZ(px, pz, o.x, o.z) <= o.r - 0.3)) return { ok: false, why: tower ? 'Too far out: a tower can stand at most a step past the village edge' : 'Outside village land: upgrade the Agnikund, or put up a tower (Burj) to claim land round it' };
       if (r < fireClear) return { ok: false, why: 'Too close to the Agnikund' };
       if (s.grove && distXZ(px, pz, s.grove.x, s.grove.z) < s.grove.r + 0.9) return { ok: false, why: 'This is the Pavitra Van — the sacred grove cannot be built on' };
       const k = cellIdx(cx + i, cz + j);
@@ -614,19 +637,156 @@ function deliver(s, v, d) {
   v.carryAmt = 0; v.carry = null; v.gold = 0;
 }
 
-/* ---------- movement ---------- */
+/* ---------- movement ----------
+ * Nobody walks through a building. A navigation grid marks every cell a building stands on (fields, the
+ * Akhara pit and the archery range are open ground, and villagers slip through their own walls by the
+ * little gates). Walkers go straight when the way is clear; otherwise they follow an A* path round the
+ * buildings, smoothed into straight runs. The building a walker starts in or is heading into never
+ * blocks them, so people can still step out of a hut or work inside a clay pit.
+ */
+const NAV_WALK = (type) => { const d = BUILDINGS[type]; return d.wall || isFieldType(type) || type === 'akhara' || type === 'range'; };
+function navGrid(s) {
+  if (s._nav && s._nav.ver === s.buildVer) return s._nav;
+  const g = (s._nav && s._nav.g) || new Int32Array(GRID * GRID);
+  g.fill(0);
+  for (const b of s.buildings) {
+    if (NAV_WALK(b.type)) continue;
+    const d = BUILDINGS[b.type];
+    for (let i = 0; i < d.fw; i++) for (let j = 0; j < d.fd; j++) { const k = cellIdx(b.cx + i, b.cz + j); if (k >= 0) g[k] = b.id; }
+  }
+  s._nav = { ver: s.buildVer, g };
+  return s._nav;
+}
+/** The building blocking this point for a walker, or 0. a / b: building ids the walker may pass through. */
+function navBlock(nav, x, z, a, b) {
+  const k = cellIdx(Math.floor(x), Math.floor(z));
+  if (k < 0) return 0;
+  const id = nav.g[k];
+  return id && id !== a && id !== b ? id : 0;
+}
+/** Is the straight way from (x0, z0) to (x1, z1) clear for a body about 0.36 wide? */
+function navClear(nav, x0, z0, x1, z1, a, b) {
+  const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz);
+  if (L < 0.01) return true;
+  const n = Math.ceil(L / 0.22), px = (-dz / L) * 0.17, pz = (dx / L) * 0.17;
+  for (let i = 1; i <= n; i++) {
+    const x = x0 + (dx * i) / n, z = z0 + (dz * i) / n;
+    if (navBlock(nav, x, z, a, b) || navBlock(nav, x + px, z + pz, a, b) || navBlock(nav, x - px, z - pz, a, b)) return false;
+  }
+  return true;
+}
+const _navOpen = new Float64Array(GRID * GRID), _navG = new Float32Array(GRID * GRID), _navFrom = new Int32Array(GRID * GRID), _navSeen = new Uint32Array(GRID * GRID);
+let _navStamp = 0;
+/** A* over the grid (8 directions, no cutting corners). Returns cell-centre points from start to goal, or null. */
+function navPath(nav, x0, z0, x1, z1, a, b) {
+  const g = nav.g;
+  const free = (cx, cz) => { const k = cellIdx(cx, cz); if (k < 0) return false; const id = g[k]; return !id || id === a || id === b; };
+  const sx = Math.floor(x0), sz = Math.floor(z0);
+  let gx = Math.floor(x1), gz = Math.floor(z1);
+  if (!free(gx, gz)) { // the goal is inside something: aim for the nearest open cell
+    let best = null, bd = Infinity;
+    for (let r = 1; r < 4 && !best; r++) for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) if (free(gx + i, gz + j)) { const d = Math.hypot(i, j); if (d < bd) { bd = d; best = [gx + i, gz + j]; } }
+    if (!best) return null;
+    [gx, gz] = best;
+  }
+  const S0 = cellIdx(sx, sz), G0 = cellIdx(gx, gz);
+  if (S0 < 0 || G0 < 0) return null;
+  _navStamp++;
+  // binary heap of cell indices keyed by f
+  const heap = [];
+  const push = (k, f) => { _navOpen[k] = f; heap.push(k); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (_navOpen[heap[p]] <= f) break; heap[i] = heap[p]; i = p; } heap[i] = k; };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { let i = 0; const f = _navOpen[last]; for (;;) { let c = i * 2 + 1; if (c >= heap.length) break; if (c + 1 < heap.length && _navOpen[heap[c + 1]] < _navOpen[heap[c]]) c++; if (_navOpen[heap[c]] >= f) break; heap[i] = heap[c]; i = c; } heap[i] = last; } return top; };
+  const h = (cx, cz) => { const ax = Math.abs(cx - gx), az = Math.abs(cz - gz); return Math.max(ax, az) + 0.414 * Math.min(ax, az); };
+  _navSeen[S0] = _navStamp; _navG[S0] = 0; _navFrom[S0] = -1;
+  push(S0, h(sx, sz));
+  let found = false, n = 0;
+  while (heap.length && n++ < 9000) {
+    const k = pop();
+    if (k === G0) { found = true; break; }
+    const cx = (k % GRID) - GH, cz = Math.floor(k / GRID) - GH, gk = _navG[k];
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      if (!dx && !dz) continue;
+      const nx = cx + dx, nz = cz + dz;
+      if (!free(nx, nz)) continue;
+      if (dx && dz && (!free(cx + dx, cz) || !free(cx, cz + dz))) continue; // no squeezing past a corner
+      const nk = cellIdx(nx, nz), ng = gk + (dx && dz ? 1.414 : 1);
+      if (_navSeen[nk] === _navStamp && _navG[nk] <= ng) continue;
+      _navSeen[nk] = _navStamp; _navG[nk] = ng; _navFrom[nk] = k;
+      push(nk, ng + h(nx, nz));
+    }
+  }
+  if (!found) return null;
+  const pts = [];
+  for (let k = G0; k !== -1 && k !== S0; k = _navFrom[k]) pts.push({ x: (k % GRID) - GH + 0.5, z: Math.floor(k / GRID) - GH + 0.5 });
+  pts.reverse();
+  return pts;
+}
+/** Where to walk next on the way to (tx, tz): the target itself when the way is clear, else the next turn of a path. */
+function navWaypoint(s, v, tx, tz) {
+  const nav = navGrid(s);
+  const a = nav.g[cellIdx(Math.floor(v.x), Math.floor(v.z))] || 0; // the building we are in, if any
+  const ti = cellIdx(Math.floor(tx), Math.floor(tz)), b = ti >= 0 ? nav.g[ti] || 0 : 0;
+  let P = v._nav;
+  if (P && (P.ver !== nav.ver || Math.abs(P.tx - tx) + Math.abs(P.tz - tz) > 1.2)) P = v._nav = null;
+  if (!P) {
+    if (navClear(nav, v.x, v.z, tx, tz, a, b)) return null;
+    const pts = navPath(nav, v.x, v.z, tx, tz, a, b);
+    if (!pts) return null;
+    pts.push({ x: tx, z: tz });
+    P = v._nav = { ver: nav.ver, tx, tz, pts, i: 0 };
+  }
+  P.pts[P.pts.length - 1].x = tx; P.pts[P.pts.length - 1].z = tz;
+  // now and then skip ahead to the farthest point in sight (straight runs, not grid steps)
+  if (!(P.chk > s.time)) {
+    P.chk = s.time + 0.2;
+    for (let j = Math.min(P.pts.length - 1, P.i + 8); j > P.i; j--) if (navClear(nav, v.x, v.z, P.pts[j].x, P.pts[j].z, a, b)) { P.i = j; break; }
+  }
+  const w = P.pts[P.i];
+  if (P.i === P.pts.length - 1) { v._nav = null; return null; }
+  if (distXZ(v.x, v.z, w.x, w.z) < 0.2) P.i++;
+  return P.pts[P.i];
+}
+/** The nearest open spot to p (p itself when nothing stands there): for seats, wandering and waiting places. */
+function freeSpot(s, p) {
+  if (!s.buildings.length) return p;
+  const nav = navGrid(s);
+  const open = (x, z) => !navBlock(nav, x, z) && !navBlock(nav, x + 0.2, z) && !navBlock(nav, x - 0.2, z) && !navBlock(nav, x, z + 0.2) && !navBlock(nav, x, z - 0.2);
+  if (open(p.x, p.z)) return p;
+  for (let r = 0.5; r <= 4; r += 0.5) for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 + Math.atan2(p.z, p.x), x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+    if (Math.hypot(x, z) > 1.9 && open(x, z)) return { x, z };
+  }
+  return p;
+}
 function moveTo(v, tx, tz, spd, dt) {
+  if (S && S.buildings.length) { // a spot inside someone else's building (a tree right by a wall, say): stop at its edge instead
+    const nav = navGrid(S), ti = cellIdx(Math.floor(tx), Math.floor(tz)), b = ti >= 0 ? nav.g[ti] : 0;
+    if (b && b !== v.workplace && b !== v.home && !(v.target && v.target.id === b) && b !== nav.g[cellIdx(Math.floor(v.x), Math.floor(v.z))]) { const p = freeSpot(S, { x: tx, z: tz }); tx = p.x; tz = p.z; }
+  }
   const dx = tx - v.x, dz = tz - v.z, d = Math.hypot(dx, dz);
-  if (d <= spd * dt + 0.01) { v.x = tx; v.z = tz; v.anim = 'stand'; return true; }
-  v.x += (dx / d) * spd * dt;
-  v.z += (dz / d) * spd * dt;
+  if (d <= spd * dt + 0.01) { v.x = tx; v.z = tz; v.anim = 'stand'; v._nav = null; return true; }
+  let wx = tx, wz = tz;
+  if (S && S.buildings.length) { const w = navWaypoint(S, v, tx, tz); if (w) { wx = w.x; wz = w.z; } }
+  const ex = wx - v.x, ez = wz - v.z, ed = Math.hypot(ex, ez) || 1, st = Math.min(spd * dt, ed);
+  const ox = v.x, oz = v.z;
+  v.x += (ex / ed) * st;
+  v.z += (ez / ed) * st;
+  if (S && S._nav) { // never step into a building that was not on the way (a fresh one, a stale path): slide along it
+    const nav = S._nav, a = nav.g[cellIdx(Math.floor(ox), Math.floor(oz))] || 0, ti = cellIdx(Math.floor(tx), Math.floor(tz)), b = ti >= 0 ? nav.g[ti] || 0 : 0;
+    if (navBlock(nav, v.x, v.z, a, b)) {
+      if (!navBlock(nav, v.x, oz, a, b)) v.z = oz;
+      else if (!navBlock(nav, ox, v.z, a, b)) v.x = ox;
+      else { v.x = ox; v.z = oz; }
+      v._nav = null;
+    }
+  }
   // walk around the Agnikund, never through it
   const r = Math.hypot(v.x, v.z), keep = 1.75;
   if (r < keep && Math.hypot(tx, tz) >= keep - 0.05) {
-    const a = Math.atan2(v.z, v.x) + (dx * v.z - dz * v.x > 0 ? -0.06 : 0.06);
+    const a = Math.atan2(v.z, v.x) + (ex * v.z - ez * v.x > 0 ? -0.06 : 0.06);
     v.x = Math.cos(a) * keep; v.z = Math.sin(a) * keep;
   }
-  v.rot = Math.atan2(dx, dz);
+  v.rot = Math.atan2(ex, ez);
   v.anim = 'walk';
   return false;
 }
@@ -745,7 +905,8 @@ function idleAI(s, v, dt, spd) {
     v.wanderT = rand(3, 8);
     v.idleSit = Math.random() < 0.6;
     const a = Math.random() * Math.PI * 2, r = rand(3, Math.min(7, territory(s) - 1));
-    v.wx = Math.cos(a) * r; v.wz = Math.sin(a) * r;
+    const p = freeSpot(s, { x: Math.cos(a) * r, z: Math.sin(a) * r });
+    v.wx = p.x; v.wz = p.z;
   }
   if (!v.task) v.task = 'Relaxing';
 }
@@ -991,8 +1152,11 @@ function processAI(s, v, dt, spd) {
 }
 function findBuildJob(s, v) {
   let best = null, bs = Infinity;
+  const idle = v.job !== 'build';
   for (const b of s.buildings) {
     if (b.done && b.hp >= b.maxHp - 0.5 && !b.upgrading) continue;
+    if (idle && b.done && !b.upgrading) continue; // repairs are a Mistri's trade
+    if (idle && needsMistri(b) && !mistriOn(s, b)) continue; // stone, brick and iron work waits for a Mistri to lead it
     let n = 0;
     for (const o of s.villagers) if (o !== v && (o.job === 'build' || o.job === 'idle') && o.target === b) n++;
     const score = dist(b, v) + n * 6 + (b.done && !b.upgrading ? 25 : 0);
@@ -1000,6 +1164,18 @@ function findBuildJob(s, v) {
   }
   return best;
 }
+/*
+ * The Mistri's trade. A trained Mistri builds three times as fast as an idle villager lending a hand, is the
+ * only one who repairs damaged buildings (by night too, when no demon is close), and has to lead the work
+ * on anything built of stone, brick and iron: Agnikund level 3 buildings and every level 3 upgrade.
+ */
+const MISTRI_EFF = 1.5, IDLE_BUILD_EFF = 0.5;
+function needsMistri(b) {
+  if (!b.done) return BUILDINGS[b.type].lvl >= 3;
+  return !!b.upgrading && bLevel(b) + 1 >= 3;
+}
+/** Is a Mistri hammering at this building right now? */
+function mistriOn(s, b) { return b.mistriT != null && s.time - b.mistriT < 1.2; }
 function completeBuilding(s, b) {
   const def = BUILDINGS[b.type];
   b.done = true; b.hp = b.maxHp = def.hp; b.progress = def.time;
@@ -1096,22 +1272,25 @@ function lootAI(s, v, dt, spd) {
   if (moveTo(v, l.x, l.z, spd * 1.1, dt)) { collectLoot(s, l, v); v.lootT = null; }
   return true;
 }
-/** Idle villagers lend a hand as Mistri (a little slower than a trained one). */
-const IDLE_BUILD_EFF = 0.8;
-function builderAI(s, v, dt, spd) {
-  const eff = v.job === 'idle' ? IDLE_BUILD_EFF : 1;
+/** Idle villagers lend a hand as builders, slower than a trained Mistri; they leave repairs to the Mistri. */
+function builderAI(s, v, dt, spd, nightOnly) {
+  const mistri = v.job === 'build';
+  const eff = mistri ? MISTRI_EFF : IDLE_BUILD_EFF;
   let b = v.target && s.bById.get(v.target.id) === v.target ? v.target : null;
   if (b && b.done && b.hp >= b.maxHp - 0.5 && !b.upgrading) b = null;
-  if (!b) b = v.target = findBuildJob(s, v);
-  if (!b) { v.target = null; v.task = v.job === 'idle' ? 'Resting — nothing to build' : 'Nothing to build — waiting'; return idleAI(s, v, dt, spd); }
+  if (b && !mistri && ((b.done && !b.upgrading) || (needsMistri(b) && !mistriOn(s, b)))) b = null;
+  if (b && nightOnly && !safeToRepair(s, b)) b = null;
+  if (!b) b = v.target = nightOnly ? findNightRepair(s, v) : findBuildJob(s, v);
+  if (!b) { v.target = null; if (nightOnly) return false; v.task = mistri ? 'Nothing to build — waiting' : 'Resting — nothing to build'; return idleAI(s, v, dt, spd); }
   const def = BUILDINGS[b.type];
   const p = edgePoint(b, v.x, v.z, 0.35);
-  if (distToBuilding(b, v.x, v.z) > 0.55 && !moveTo(v, p.x, p.z, spd, dt)) { v.task = (b.done ? 'Going to repair the ' : 'Going to build the ') + def.name; return; }
+  if (distToBuilding(b, v.x, v.z) > 0.55 && !moveTo(v, p.x, p.z, spd, dt)) { v.task = (b.done && !b.upgrading ? 'Going to repair the ' : 'Going to build the ') + def.name; return true; }
   faceTo(v, b.x, b.z);
   v.anim = 'work';
+  if (mistri) b.mistriT = s.time;
   const rate = workRate(s) * eff;
   hammerAt(s, v, b, p, dt);
-  const who = v.job === 'idle' ? ' (lending a hand)' : '';
+  const who = mistri ? '' : ' (lending a hand)';
   if (!b.done) {
     b.progress += dt * rate;
     b.hp = Math.max(b.hp, (def.hp * b.progress) / def.time);
@@ -1122,8 +1301,21 @@ function builderAI(s, v, dt, spd) {
     v.task += who;
   } else {
     b.hp = Math.min(b.maxHp, b.hp + 12 * dt * rate);
-    v.task = `Repairing the ${def.name}${who}`;
+    v.task = `Repairing the ${def.name} (${Math.floor((b.hp / b.maxHp) * 100)}%)${nightOnly ? ' by torchlight' : ''}`;
   }
+  return true;
+}
+/** No demon close to this building (or to the path to it): a Mistri can slip out and mend it at night. */
+function safeToRepair(s, b) { return !nearestEnemy(s, b.x, b.z, 7, false) && Math.hypot(b.x, b.z) < territory(s) + 1; }
+function findNightRepair(s, v) {
+  let best = null, bs = Infinity;
+  for (const b of s.buildings) {
+    if (!b.done || b.upgrading || b.hp >= b.maxHp * 0.92 || !safeToRepair(s, b)) continue;
+    if (s.villagers.some((o) => o !== v && o.job === 'build' && o.target === b)) continue;
+    const score = dist(b, v) - (BUILDINGS[b.type].wall ? 4 : 0) + (b.hp / b.maxHp) * 10; // broken walls first
+    if (score < bs) { bs = score; best = b; }
+  }
+  return best;
 }
 /** Is anyone able to build? (Mistri, or idle villagers, who pitch in automatically) */
 const canBuildNow = (s) => jobCount(s, 'build') > 0 || idleVillagers(s).length > 0;
@@ -1142,10 +1334,16 @@ function hammerAt(s, v, b, p, dt) {
  * Upgrades take real work: L.time is the work-seconds one person needs. Every pair of hands adds to it — a
  * Mistri counts fully, the building's own workers and helpers a little less — so more people finish sooner.
  */
-const UPGRADE_EFF = { build: 1, own: 0.8, helper: 0.8 };
+const UPGRADE_EFF = { build: MISTRI_EFF, own: 0.7, helper: 0.7 };
 function upgradeWork(s, v, b, dt, eff) {
   const def = BUILDINGS[b.type], L = def.levels[bLevel(b) + 1];
   if (!L) return;
+  if (v.job === 'build') b.mistriT = s.time;
+  else if (needsMistri(b) && !mistriOn(s, b)) { // level 3 work: helpers can only follow a Mistri's lead
+    v.task = `Waiting for a Mistri to lead the level ${bLevel(b) + 1} work on the ${def.name}`;
+    v.anim = 'stand';
+    return;
+  }
   b.upProg = (b.upProg || 0) + dt * workRate(s) * eff;
   (b.crew || (b.crew = {}))[v.id] = [s.time, eff];
   v.task = `Upgrading the ${def.name} to level ${bLevel(b) + 1} (${Math.floor((b.upProg / L.time) * 100)}%)`;
@@ -1322,12 +1520,27 @@ function homeAI(s, v, dt, spd) {
     if (v.atkCd <= 0) { hitEnemy(s, e, 4, v); v.atkCd = 1.0; }
     return;
   }
+  // bedtime: anyone with a home sleeps in it; the rest sleep by the warm Agnikund
+  if (validHome(s, v)) {
+    const b = getB(s, v.home), d = homeDoor(b);
+    if (v.carryAmt > 0 || v.gold > 0) { if (moveTo(v, v.seat.x, v.seat.z, spd * 1.1, dt)) deliver(s, v); v.task = 'Dropping off their tokri before bed'; return; }
+    if (moveTo(v, d.x, d.z, spd * 1.1, dt)) {
+      v.inside = true; v.shelter = 'home'; v.sleep = true; v.x = b.x; v.z = b.z;
+      v.task = 'Asleep in their ' + BUILDINGS[b.type].name;
+    } else v.task = 'Heading home for the night';
+    return;
+  }
   if (moveTo(v, v.seat.x, v.seat.z, spd * 1.1, dt)) {
     if (v.carryAmt > 0 || v.gold > 0) deliver(s, v);
-    v.anim = 'sit';
     faceTo(v, 0, 0);
-    v.task = 'Resting by the Agnikund';
+    if (phaseOf(s.t) === 'night') { v.anim = 'sleep'; v.sleep = true; v.task = 'Asleep by the Agnikund (no home yet)'; }
+    else { v.anim = 'sit'; v.task = 'Resting by the Agnikund'; }
   } else v.task = 'Hurrying back to the fire';
+}
+/** Morning: sleepers wake up and come out to work. */
+function wakeUp(s, v) {
+  v.sleep = false;
+  if (v.inside && v.shelter === 'home' && !(v.fearT > 0)) leaveShelter(s, v);
 }
 /* ---------- shelter: huts and the Pavitra Van (sacred grove) ---------- */
 function assignHomes(s) {
@@ -1375,6 +1588,11 @@ function shelterAI(s, v, dt, spd) {
   if (v.inside) {
     v.anim = 'stand';
     v.hp = Math.min(v.maxHp, v.hp + 1.2 * dt);
+    if (v.sleep && v.shelter === 'home' && v.job === 'build' && !(v.fearT > 0) && (v.repT = (v.repT || 0) - dt) <= 0) { // a Mistri gets up when something needs mending
+      v.repT = 2;
+      if (findNightRepair(s, v)) { wakeUp(s, v); return false; }
+    }
+    if (v.sleep && v.shelter === 'home') { const b = getB(s, v.home); v.task =`Asleep in their ${b ? BUILDINGS[b.type].name : 'home'}${v.fearT > 0 ? ' (demons prowl outside)' : ''}`; return true; }
     v.task = v.shelter === 'home' ? 'Hiding inside their Jhopdi' : 'Hiding in the Pavitra Van';
     if (v.fearT <= 0) leaveShelter(s, v);
     return true;
@@ -1744,6 +1962,8 @@ function updateVillager(s, v, dt, phase) {
   naturalHealing(s, v, dt);
   if (v.power > 0 && phase === 'day' && !(v.combatT > 0) && !s.enemies.length) v.power = Math.max(0, v.power - 3 * dt); // Shakti fades in peacetime
   v.task = '';
+  if (v.sleep && (phase === 'day' || isDefender(v))) wakeUp(s, v);
+  else if (v.sleep && !v.inside) v.sleep = false; // sleepers by the fire lie down again each moment they rest
   if (v.stunT > 0) { v.stunT -= dt; v.atk = null; v.anim = 'stand'; v.task = 'Staggered by a demon’s roar'; return; }
   if (v.heldBy) { // seized by a Mamdo Bhoot: helpless until someone breaks its grip
     const m = s.enemies.find((e) => e.id === v.heldBy && !e.dead && e.grab && e.grab.v === v);
@@ -1783,6 +2003,7 @@ function updateVillager(s, v, dt, phase) {
   if (shelterAI(s, v, dt, spd)) return;
   if (v.job === 'priest') priestHeal(s, v, dt);
   if (v.job === 'vaidya') return vaidyaAI(s, v, dt, spd, phase); // healers keep working at night, inside the village
+  if (v.job === 'build' && phase !== 'day' && !v.sleep && builderAI(s, v, dt, spd, true)) return; // a Mistri mends what the demons broke
   if (phase !== 'day') return homeAI(s, v, dt, spd);
   switch (v.job) {
     case 'wood': return gatherAI(s, v, dt, spd, 'wood');
@@ -1790,7 +2011,7 @@ function updateVillager(s, v, dt, phase) {
     case 'farm': return farmAI(s, v, dt, spd);
     case 'clay': return clayAI(s, v, dt, spd);
     case 'kiln': case 'smelt': return processAI(s, v, dt, spd);
-    case 'build': return builderAI(s, v, dt, spd);
+    case 'build': builderAI(s, v, dt, spd); return;
     case 'priest': return priestAI(s, v, dt, spd);
     case 'trader': return traderAI(s, v, dt, spd);
     default: if (lootAI(s, v, dt, spd)) return; return builderAI(s, v, dt, spd); // idle hands build, upgrade and repair
@@ -2060,14 +2281,18 @@ function makeWave(s) {
     const at = NIGHT_T + 1 + (i / Math.max(1, types.length)) * 26 + rand(0, 2);
     for (let k = 0; k < (ENEMIES[type].swarm || 1); k++) q.push({ type, front: fi, at: at + k * 0.35 }); // Aleya drift in as a swarm
   });
-  if (d % 5 === 0) { q.push({ type: 'boss', front: 0, at: NIGHT_T + 14 }); fronts[0].w += 10; }
+  const bt = bossForDay(d);
+  if (bt) { // a great asura comes tonight, from where his omen pointed
+    q.push({ type: bt, front: 0, at: NIGHT_T + 14 }); fronts[0].w += 10;
+    if (s.omen && s.omen.type === bt && s.omen.a != null) fronts[0].a = s.omen.a;
+  }
   q.sort((a, b) => a.at - b.at);
   return { q, fronts };
 }
 function spawnEnemy(s, type, a) {
   const def = ENEMIES[type];
   const scale = 1 + (s.day - 1) * 0.07;
-  const hp = Math.round(type === 'boss' ? 420 + s.day * 70 : def.hp * scale);
+  const hp = Math.round(def.boss ? def.hp * 0.84 + s.day * 70 : def.minion ? def.hp : def.hp * scale);
   const aa = a + rand(-0.3, 0.3);
   const dd = dirXZ(aa);
   let r = territory(s) + 12 + rand(0, 4);
@@ -2093,8 +2318,16 @@ function hitEnemy(s, e, dmg, src, o) {
   if (e.dead) return 0;
   o = o || {};
   const def = ENEMIES[e.type];
+  if (e.fake) { vanishFake(s, e, true); return dmg; } // one of Kalanemi's copies: smoke at the first blow
   const dealt = dmg * (e.vuln || 1);
   e.hp -= dealt;
+  if (def.bloodseed && dealt >= 4 && e.hp > 0) { // Raktabija: where his blood falls, a demon rises (unless fire scorches it)
+    if (o.fire || e.fireT > 0) { if (Math.random() < 0.15) floater(s, e.x, def.h + 0.4, e.z, 'Blood scorched!', '#ffb347', 'tag'); }
+    else {
+      e.bleed = (e.bleed || 0) + dealt;
+      if (e.bleed >= 38) { e.bleed -= 38; spawnRakta(s, e, Math.random() * Math.PI * 2, 1.1 + Math.random() * 0.6); tip('raktabija', 'Each drop of Raktabija’s blood rises as a demon! Fire scorches his blood: hit him with fire pots and Agni Baan arrows, and kill him fast.'); }
+    }
+  }
   e.hurtT = 0.18;
   e.flashT = 0.12;
   if (Math.random() < 0.25 && !def.fly) sfx(def.ghost || def.float ? 'd_ghost' : 'demonHurt', e.x, e.z);
@@ -2124,6 +2357,7 @@ function hitEnemy(s, e, dmg, src, o) {
 const STREAK_CALLS = { 3: 'Shabash!', 5: 'Jai Ho!', 8: 'Har Har Mahadev!' };
 function killEnemy(s, e, byHand) {
   if (e.dead) return;
+  if (e.fake) return vanishFake(s, e, true); // a copy only ever was smoke
   e.dead = true;
   const def = ENEMIES[e.type];
   fx(s, 'death', { x: e.x, y: e.y + def.h * 0.5, z: e.z, c: def.glow || 0xb07ae0, s: def.scale });
@@ -2143,7 +2377,7 @@ function killEnemy(s, e, byHand) {
     s.stats.killed++;
     dropLoot(s, e);
     sfx((ENEMY_SFX[e.type] && ENEMY_SFX[e.type].die) || 'demonDie', e.x, e.z);
-    if (def.boss) { s.stats.bosses++; toast('Mahasura is vanquished! The village rejoices — Jai ho!', 'good', 8); }
+    if (def.boss && !e.fake) { s.stats.bosses++; toast(`${def.name} is vanquished! The village rejoices — Jai ho!`, 'good', 8); }
   }
 }
 function destroyBuilding(s, b) {
@@ -2172,7 +2406,7 @@ const nearestFoe = (s, x, z, r, pred) => { let best = null, bd = r; for (const v
 /** Should this demon use its power move now? Starts the telegraph and returns true if so. */
 function demonPowers(s, e, def, dt) {
   const P = DEMON_POWERS[e.type];
-  if (def.boss) { // Mahasura also calls up a host of demons
+  if (def.summons) { // Mahasura also calls up a host of demons
     e.sumT = (e.sumT == null ? rand(8, 12) : e.sumT) - dt;
     if (e.sumT <= 0 && s.enemies.length < 45) {
       e.sumT = BOSS_SUMMON.cd;
@@ -2191,6 +2425,7 @@ function demonPowers(s, e, def, dt) {
   else if (P.key === 'nova') { if (s.villagers.filter((v) => !v.inside && distXZ(v.x, v.z, e.x, e.z) < P.range).length >= 1) target = e; }
   else if (P.key === 'charge') target = nearestFoe(s, e.x, e.z, P.range, (v) => distXZ(v.x, v.z, e.x, e.z) > 2.5);
   else if (P.key === 'grab') target = nearestFoe(s, e.x, e.z, P.range + def.r, (v) => !v.heldBy);
+  else if (P.key === 'bleed' || P.key === 'maya') { if (!e.fake && nearestFoe(s, e.x, e.z, P.range)) target = e; }
   if (!target) { e.powT = 1.2; return false; }
   e.powT = P.cd * rand(0.85, 1.15);
   if (P.key === 'grab') return startGrab(s, e, target);
@@ -2232,7 +2467,109 @@ function usePower(s, e, w) {
       sfx('roar', e.x, e.z); sfx('stomp', e.x, e.z);
       break;
     }
+    case 'bleed': { // Rakta Varsha: Raktabija tears his own skin and his blood rains round him
+      const n = e.fireT > 0 ? 1 : 4;
+      for (let i = 0; i < n; i++) spawnRakta(s, e, (i / n) * Math.PI * 2 + rand(-0.3, 0.3), 1.6 + rand(0, 0.8));
+      if (n === 1) floater(s, e.x, ENEMIES[e.type].h + 0.6, e.z, 'The fire scorches his blood!', '#ffb347', 'tag');
+      emit(s, e.x, 1.6, e.z, 26, { spread: 0.8, vx: 3, vyMin: 1, vyMax: 4, life: 0.9, colors: ['#b0101c', '#7a0a14', '#e8303a'], g: 12 });
+      fx(s, 'ring', { x: e.x, z: e.z, r: 2.5, c: 0xc0101c, dur: 0.6 });
+      sfx('splash', e.x, e.z); sfx('roar', e.x, e.z);
+      break;
+    }
+    case 'maya': { // Maya Jaal: Kalanemi vanishes, and false Kalanemis step out of the smoke
+      startMaya(s, e);
+      break;
+    }
   }
+}
+/* ---------- the great asuras' own ways ---------- */
+/** One of Kalanemi's copies melts into violet smoke. */
+function vanishFake(s, e, struck) {
+  if (e.dead) return;
+  e.dead = true;
+  const def = ENEMIES[e.type];
+  emit(s, e.x, def.h * 0.5, e.z, 26, { spread: def.r, spreadY: def.h / 3, vx: 1.2, vyMin: 0.3, vyMax: 1.8, life: 1.1, colors: ['#6b4aa8', '#b48cff', '#2a1a4a'], g: -0.8 });
+  fx(s, 'ring', { x: e.x, z: e.z, r: 1.4, c: 0xb48cff, dur: 0.5 });
+  if (struck) floater(s, e.x, def.h + 0.5, e.z, 'Only maya!', '#cdb4ff', 'tag');
+  sfx('ghost_vanish', e.x, e.z);
+}
+/*
+ * Omens. Two days before a great asura comes, the land warns of him: crows circling over the forest
+ * (Bakasura), a blood-red sky at dusk (Raktabija), a violet mist (Kalanemi), tremors (Mahasura). The
+ * renderer reads s.omen; the village's message history quietly notes the sign, with no pop-up.
+ */
+function updateOmen(s, announce) {
+  let o = null;
+  for (const k of [0, 1, 2]) { const bt = bossForDay(s.day + k); if (bt) { o = { type: bt, k }; break; } }
+  if (!o) { s.omen = null; return; }
+  const prev = s.omen && s.omen.type === o.type ? s.omen : null;
+  s.omen = { type: o.type, k: o.k, a: prev && prev.a != null ? prev.a : Math.random() * Math.PI * 2, str: o.k === 2 ? 0.55 : 1 };
+  if (announce && o.k > 0 && !s.demo && typeof UI !== 'undefined' && UI.logPush) UI.logPush(OMENS[o.type].sign, 'info');
+}
+/** A drop of Raktabija's blood rises as a little demon. */
+function spawnRakta(s, e, a, r) {
+  if (s.enemies.filter((o) => o.type === 'rakta' && !o.dead).length >= 16) return null;
+  const m = spawnEnemy(s, 'rakta', 0);
+  m.x = e.x + Math.cos(a) * r; m.z = e.z + Math.sin(a) * r; m.aggro = true; m.variant = 2;
+  emit(s, m.x, 0.3, m.z, 8, { spread: 0.2, vx: 1.5, vyMin: 0.5, vyMax: 2, life: 0.6, colors: ['#b0101c', '#e8303a'], g: 8 });
+  return m;
+}
+/** Kalanemi turns invisible for a while and leaves three copies that fight like him. */
+function startMaya(s, e) {
+  e.hidden = 3.5;
+  e.wind = null;
+  fx(s, 'ring', { x: e.x, z: e.z, r: 2.4, c: 0xb48cff, dur: 0.7 });
+  emit(s, e.x, 1.4, e.z, 34, { spread: 0.9, spreadY: 1, vx: 1.2, vyMin: 0.3, vyMax: 1.6, life: 1.3, colors: ['#6b4aa8', '#b48cff', '#2a1a4a'], g: -0.6 });
+  sfx('ghost_vanish', e.x, e.z);
+  const copies = s.enemies.filter((o) => o.fake && !o.dead).length;
+  for (let i = 0; i < Math.max(0, 3 - copies); i++) {
+    const a = (i / 3) * Math.PI * 2 + rand(0, 1), f = spawnEnemy(s, e.type, 0);
+    f.x = e.x + Math.cos(a) * 1.6; f.z = e.z + Math.sin(a) * 1.6; f.fake = 16; f.hp = f.maxHp = Math.round(e.maxHp * 0.35); f.aggro = true; f.powT = 99;
+  }
+  // he slips away to one side while everyone watches the copies
+  const a = Math.random() * Math.PI * 2;
+  e.x += Math.cos(a) * 2.5; e.z += Math.sin(a) * 2.5;
+}
+/** Bakasura goes for the food: the grain heap by the fire, then any store with grain in it. */
+function devourAI(s, e, def, spd, dt) {
+  if (e.tv && distXZ(e.tv.x, e.tv.z, e.x, e.z) < 2.2) return false; // a fighter in his face: he fights first
+  e.foodT = (e.foodT || 0) - dt;
+  if (e.foodT <= 0 || !e.food) {
+    e.foodT = 1.5;
+    const h = FIRE_HEAP.food;
+    let best = (s.fireStock && s.fireStock.food > 0) || !s.buildings.some((b) => b.stock && b.stock.food > 0) ? { x: h.x, z: h.z, b: null } : null, bd = best ? distXZ(h.x, h.z, e.x, e.z) : Infinity;
+    for (const b of s.buildings) if (b.done && b.stock && b.stock.food > 0) { const d = distXZ(b.x, b.z, e.x, e.z); if (d < bd) { bd = d; best = { x: b.x, z: b.z, b }; } }
+    e.food = s.res.food > 0 ? best : null;
+  }
+  const f = e.food;
+  if (!f) return false;
+  const d = distXZ(f.x, f.z, e.x, e.z);
+  if (d > 1.7 + def.r) {
+    const ux = (f.x - e.x) / d, uz = (f.z - e.z) / d;
+    if (f.b == null || distXZ(f.x, f.z, e.x, e.z) > 3) { // walk on (buildings in the way get smashed by the normal code)
+      const probe = buildingAtPoint(s, e.x + ux * (def.r + 0.3), e.z + uz * (def.r + 0.3));
+      if (probe && probe !== f.b && !isFieldType(probe.type) && probe.hp > 0) { enemyAttack(s, e, probe, 'building'); return true; }
+    }
+    e.vx = ux * spd; e.vz = uz * spd; e.x += e.vx * dt; e.z += e.vz * dt; e.rot = Math.atan2(ux, uz);
+    return true;
+  }
+  // he eats: grain vanishes by the fistful, and every mouthful heals him
+  e.vx = e.vz = 0; faceTo(e, f.x, f.z);
+  e.eatT = (e.eatT || 0) - dt;
+  if (e.eatT <= 0) {
+    e.eatT = 1.4; e.atkAnim = 0.4;
+    const n = Math.floor(Math.min(10, s.res.food));
+    if (n > 0) {
+      spend(s, { food: n }, f.x, f.z); // taken from the heap or store he is standing at
+      e.hp = Math.min(e.maxHp, e.hp + 35);
+      floater(s, e.x, def.h + 0.5, e.z, `-${n} grain`, RES.food.color, 'tag');
+      emit(s, f.x, 0.6, f.z, 8, { spread: 0.4, vx: 1.2, vyMin: 0.5, vyMax: 2, life: 0.7, colors: ['#e6bd52', '#c29a62'], g: 8 });
+      sfx('drop_food', e.x, e.z);
+      tip('bakasura', 'Bakasura is eating your grain, and every mouthful heals him! Drive him off the food: send every fighter at him.');
+      e.food = null;
+    }
+  }
+  return true;
 }
 function tickCharge(s, e, dt) {
   const c = e.charge, def = ENEMIES[e.type];
@@ -2427,6 +2764,14 @@ function updateEnemy(s, e, dt) {
     const f = Math.exp(-7 * dt); e.kx *= f; e.kz *= f;
     if (Math.abs(e.kx) + Math.abs(e.kz) < 0.04) e.kx = e.kz = 0;
   }
+  if (e.fake) { // Kalanemi's copies fade when their maker falls or their time runs out
+    e.fake -= dt;
+    if (e.fake <= 0 || !s.enemies.some((o) => o.type === e.type && !o.fake && !o.dead)) return vanishFake(s, e, false);
+  }
+  if (e.hidden > 0) {
+    e.hidden -= dt;
+    if (e.hidden <= 0) { fx(s, 'ring', { x: e.x, z: e.z, r: 1.8, c: 0xb48cff, dur: 0.5 }); emit(s, e.x, 1.4, e.z, 16, { spread: 0.6, spreadY: 1, vx: 1, vyMin: 0.2, vyMax: 1.2, life: 0.9, colors: ['#6b4aa8', '#b48cff'], g: -0.6 }); }
+  }
   const ph = phaseOf(s.t);
   if (ph === 'day' || ph === 'dawn') e.burning = true;
   if (e.burning) {
@@ -2503,6 +2848,7 @@ function updateEnemy(s, e, dt) {
   }
   if (e.tv && (e.tv.inside || !s.villagers.includes(e.tv))) e.tv = null;
   if (e.tb && !s.bById.has(e.tb.id)) e.tb = null;
+  if (def.devour && !e.burning && devourAI(s, e, def, spd, dt)) return; // Bakasura heads for the grain
   if (e.tv && distXZ(e.tv.x, e.tv.z, e.x, e.z) <= def.reach + def.r * 0.5 + 0.2) return enemyAttack(s, e, e.tv, 'villager');
   if (!e.tv && df <= 1.6 + def.r + s.fire.level * 0.08) return enemyAttack(s, e, null, 'fire');
   if (e.tb && distToBuilding(e.tb, e.x, e.z) <= def.reach) return enemyAttack(s, e, e.tb, 'building');
@@ -2520,7 +2866,24 @@ function updateEnemy(s, e, dt) {
     const ox = e.x - o.x, oz = e.z - o.z, od = Math.hypot(ox, oz), min = (def.r + ENEMIES[o.type].r) * 0.85;
     if (od > 0.001 && od < min) { dx += (ox / od) * 0.6; dz += (oz / od) * 0.6; }
   }
-  const dl = Math.hypot(dx, dz) || 1;
+  let dl = Math.hypot(dx, dz) || 1;
+  if (s.buildings.length) { // a building in the way: demons batter it down, ghosts glide round it (and drift over walls)
+    const nav = navGrid(s), look = def.r + 0.25;
+    const blockedDir = (ux, uz) => navBlock(nav, e.x + ux * look, e.z + uz * look, 0, e.tb ? e.tb.id : 0);
+    let ux = dx / dl, uz = dz / dl;
+    const hit = blockedDir(ux, uz);
+    if (hit && !def.ghost) { const hb = s.bById.get(hit); if (hb && hb.hp > 0) return enemyAttack(s, e, hb, 'building'); }
+    if (hit && def.ghost) {
+      const sg = e.slide || (e.slide = Math.random() < 0.5 ? 1 : -1);
+      let ok = false;
+      for (const turn of [0.6, 1.1, 1.57, 2.1]) for (const k of [sg, -sg]) {
+        const a = turn * k, c = Math.cos(a), sn = Math.sin(a), rx = ux * c - uz * sn, rz = ux * sn + uz * c;
+        if (!ok && !blockedDir(rx, rz)) { ux = rx; uz = rz; ok = true; e.slide = k; }
+      }
+      if (!ok) { ux = -ux; uz = -uz; }
+    } else if (!hit) e.slide = 0;
+    dx = ux; dz = uz; dl = 1;
+  }
   e.vx = (dx / dl) * spd; e.vz = (dz / dl) * spd;
   e.x += e.vx * dt; e.z += e.vz * dt;
   e.rot = Math.atan2(e.vx, e.vz);
@@ -2537,7 +2900,8 @@ function updateAmbient(s, dt) {
       if (a.sit) { a.walk = false; continue; }
       if (a.t <= 0) {
         const ang = Math.random() * Math.PI * 2, r = rand(4.5, R - 1.5);
-        a.tx = Math.cos(ang) * r; a.tz = Math.sin(ang) * r; a.t = rand(6, 14);
+        const p = freeSpot(s, { x: Math.cos(ang) * r, z: Math.sin(ang) * r });
+        a.tx = p.x; a.tz = p.z; a.t = rand(6, 14);
       }
       a.walk = !moveTo(a, a.tx, a.tz, 0.45, dt);
       a.mooT = (a.mooT == null ? rand(8, 20) : a.mooT) - dt;
@@ -2634,7 +2998,7 @@ function onNewDay(s) {
   }
   if (s.day === 2) tip('day2', 'Build an Akhara to train Sainik (warriors). Drag Bamboo Walls (Baad) around the edge of your land to hold demons back.');
   if (s.day === 4) tip('day4', 'Vetala — flying spirits — fly over walls. Dhanurdhar (archers) can shoot them down.');
-  if (s.day % 5 === 4) toast('The elders warn: Mahasura, the Demon King, will rise tomorrow night!', 'danger', 8);
+  updateOmen(s, true);
   Game.save();
 }
 function gameOver(s, reason) {
@@ -2709,6 +3073,7 @@ const Game = {
       S.villagers.push(makeVillager(S, p.x, p.z, i % 2 ? 'f' : 'm'));
     }
     S.stats.maxPop = S.villagers.length;
+    updateOmen(S, false);
     setTimeout(() => toast('Namaste, Mukhiya! Keep the sacred Agnikund burning and protect your people from the demons of the night.', 'tip', 9), 600);
     return S;
   },
@@ -2721,7 +3086,7 @@ const Game = {
       const s = S;
       const r2 = (n) => Math.round(n * 100) / 100;
       const data = {
-        v: 2, seed: s.seed, day: s.day, t: s.t, res: s.res,
+        v: 2, mapScale: MAP_SCALE, seed: s.seed, day: s.day, t: s.t, res: s.res,
         fire: { level: s.fire.level, hp: s.fire.hp, fuel: s.fire.fuel },
         upgrades: s.upgrades, stats: s.stats, weather: s.weather, festival: s.festival, hungry: s.hungry, won: s.won,
         tips: s.tips, nextId: s.nextId, spawnQueue: s.spawnQueue, fronts: s.fronts, grove: s.grove,
@@ -2731,7 +3096,7 @@ const Game = {
         armory: s.armory,
         trees: s.trees.map((t) => [t.id, r2(t.x), r2(t.z), t.type, t.variant, t.wood, t.maxWood, t.stump ? 1 : 0, t.regrow, r2(t.rot), r2(t.scale), t.sacred ? 1 : 0]),
         rocks: s.rocks.map((r) => [r.id, r2(r.x), r2(r.z), r.variant, r.stone, r.maxStone, r2(r.rot), r2(r.scale), r.ore ? 1 : 0]),
-        enemies: s.enemies.filter((e) => !e.dead).map((e) => ({ id: e.id, type: e.type, x: e.x, z: e.z, y: e.y, hp: e.hp, maxHp: e.maxHp, variant: e.variant, aggro: e.aggro, loot: e.loot || 0 })),
+        enemies: s.enemies.filter((e) => !e.dead && !e.fake).map((e) => ({ id: e.id, type: e.type, x: e.x, z: e.z, y: e.y, hp: e.hp, maxHp: e.maxHp, variant: e.variant, aggro: e.aggro, loot: e.loot || 0 })),
         ambient: s.ambient.map((a) => ({ kind: a.kind, x: a.x, z: a.z })),
         loot: s.loot,
       };
@@ -2765,6 +3130,7 @@ const Game = {
       if (!s.rocks.some((r) => r.ore)) for (const r of s.rocks.slice(0, 3)) r.ore = true;
     }
     for (const r of RES_ORDER) s.res[r] = s.res[r] || 0; // older saves have no materials yet
+    if (!data.mapScale) plantForest(s, mulberry32((s.seed ^ 0x5eed) >>> 0), 1); // the island grew: new forest on the new land
     s.enemies = (data.enemies || []).map((d) => Object.assign({ vx: 0, vz: 0, rot: 0, atkCd: 1, animT: 0, hurtT: 0, atkAnim: 0, burning: false, dead: false, diveT: 0, bob: rand(0, 6), thinkT: 0, tv: null, tb: null }, d));
     s.ambient = (data.ambient || []).map((a) => ({ kind: a.kind, x: a.x, z: a.z, tx: a.x, tz: a.z, rot: 0, t: 0, fan: 0, sit: false }));
     s.loot = data.loot || [];
@@ -2774,6 +3140,7 @@ const Game = {
     syncStock(s); // older saves: everything starts on the Agnikund heap
     S = s;
     fixJobOverflow(s); // older saves: jobs now need their workplace buildings
+    updateOmen(s, false);
     S = s;
     return true;
   },
@@ -2792,7 +3159,7 @@ const Game = {
       const q = s.spawnQueue.shift();
       const f = s.fronts[q.front] || { a: Math.random() * Math.PI * 2 };
       spawnEnemy(s, q.type, f.a);
-      if (q.type === 'boss') { const d = dirXZ(f.a); toast(`MAHASURA, the Demon King, rises in the ${compassOf(d.x, d.z)}!`, 'danger', 8); sfx('roar'); }
+      if (ENEMIES[q.type].boss) { const d = dirXZ(f.a), B = ENEMIES[q.type]; toast(`${B.name.toUpperCase()}, ${B.en}, rises in the ${compassOf(d.x, d.z)}!`, 'danger', 8); sfx('roar'); }
     }
     if (ph === 'dawn' || ph === 'day') s.spawnQueue.length = 0;
     updateFire(s, dt);
@@ -2805,7 +3172,7 @@ const Game = {
     if (s.homeT <= 0) { s.homeT = 1; assignHomes(s); }
     let ci = 0;
     const civ = s.villagers.filter((v) => !isDefender(v)).length;
-    for (const v of s.villagers) if (!isDefender(v)) v.seat = seatPos(ci++, civ);
+    for (const v of s.villagers) if (!isDefender(v)) v.seat = freeSpot(s, seatPos(ci++, civ)); // never a seat inside a hut
     for (const v of s.villagers.slice()) updateVillager(s, v, dt, ph);
     for (const b of s.buildings) {
       const T = TOWERS[b.type];

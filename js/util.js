@@ -5,7 +5,7 @@
    ========================================================= */
 
 /** Shown on the title screen and in the pause menu. Bump with each release. */
-const GAME_VERSION = '1.8.0';
+const GAME_VERSION = '1.9.0';
 const VIEW_H = 270;           // internal (pixel-art) resolution height
 const GROUND_Y = 208;       // screen-space y of the ground surface
 const WORLD_MIN = -2600, WORLD_MAX = 2600;
@@ -117,12 +117,12 @@ const RECIPES = {
 
 /* ---------------- Jobs ---------------- */
 const JOBS = {
-  idle:    { name: 'Aaram',      en: 'Idle',       desc: 'Lends a hand as a Mistri: builds, upgrades and repairs (a little slower than a trained one). Rests by the Agnikund when there is nothing to build.' },
+  idle:    { name: 'Aaram',      en: 'Idle',       desc: 'Lends a hand on building sites and upgrades at a third of a Mistri’s speed. Repairs, and anything of stone, brick and iron, need a trained Mistri. Rests by the Agnikund when there is nothing to build.' },
   // every job works from a building; `building` is the one to build for more places
   wood:    { name: 'Lakadhara',  en: 'Woodcutter', tool: 'axe',    desc: 'Chops trees near their Lakdi Taal. The fire eats wood!', building: 'woodcamp' },
   stone:   { name: 'Khanik',     en: 'Miner',      tool: 'pick',   desc: 'Breaks rocks near their Khadaan. Sometimes finds gold.', building: 'minecamp' },
   farm:    { name: 'Kisan',      en: 'Farmer',     tool: 'sickle', desc: 'Grows grain on a Khet.', building: 'field' },
-  build:   { name: 'Mistri',     en: 'Builder',    tool: 'hammer', desc: 'Constructs and repairs buildings. The Agnikund has room for 2; a Mistri Adda adds more.', building: 'buildyard' },
+  build:   { name: 'Mistri',     en: 'Builder',    tool: 'hammer', desc: 'Builds three times as fast as an idle helper, is the only one who repairs (at night too, when no demon is near), and must lead every level 3 building and level 3 upgrade. The Agnikund has room for 2; a Mistri Adda adds more.', building: 'buildyard' },
   clay:    { name: 'Beldar',     en: 'Clay Digger', tool: 'spade', desc: 'Digs wet clay at a Mitti Khaan. The Eent Bhatta fires it into bricks.', building: 'claypit' },
   kiln:    { name: 'Kumhar',     en: 'Kiln Worker', tool: 'mould', desc: 'Brings clay and wood to the Eent Bhatta and fires bricks, or burns wood into charcoal.', building: 'kiln' },
   smelt:   { name: 'Agariya',    en: 'Smelter',     tool: 'tongs', desc: 'Brings iron ore and charcoal to the Loha Bhatti and smelts iron.', building: 'smelter' },
@@ -189,7 +189,23 @@ const DEMON_POWERS = {
   boss:        { key: 'charge',  name: 'Mahish Dhakka', en: 'Buffalo Charge', cd: 15, wind: 1.0, range: 9, desc: 'charges through everything in his path' },
   mamdo:       { key: 'grab',    name: 'Ghaar Motkano', en: 'Neck Twist',   cd: 9,  wind: 0,   range: 1.1, desc: 'seizes someone and twists their neck' },
 };
+DEMON_POWERS.bakasura = { key: 'roar', name: 'Bhookh Garjan', en: 'Hunger Roar', cd: 16, wind: 0.9, range: 6, desc: 'bellows with hunger: demons nearby rage, fighters stagger' };
+DEMON_POWERS.raktabija = { key: 'bleed', name: 'Rakta Varsha', en: 'Rain of Blood', cd: 18, wind: 0.9, range: 7, desc: 'sprays his blood: each drop rises as a demon' };
+DEMON_POWERS.kalanemi = { key: 'maya', name: 'Maya Jaal', en: 'Web of Illusion', cd: 15, wind: 0.6, range: 12, desc: 'vanishes and leaves false copies of himself' };
 const BOSS_SUMMON = { cd: 26, name: 'Asura Sena', en: 'Demon Host' };
+/*
+ * Boss nights. Each great asura comes on his own night (and, after the fifteenth, they return in turn
+ * every fourth night). Two days before, the land itself warns of him: an omen anyone watching can read.
+ */
+const BOSS_NIGHTS = { 4: 'bakasura', 8: 'raktabija', 12: 'kalanemi', 15: 'boss' };
+const BOSS_CYCLE = ['bakasura', 'raktabija', 'kalanemi', 'boss'];
+function bossForDay(d) { if (BOSS_NIGHTS[d]) return BOSS_NIGHTS[d]; return d > 15 && d % 4 === 3 ? BOSS_CYCLE[Math.floor((d - 15) / 4) % BOSS_CYCLE.length] : null; }
+const OMENS = {
+  bakasura:  { sign: 'The crows have gone quiet. A great flock circles over the forest and will not settle.', kind: 'crows' },
+  raktabija: { sign: 'The evening sky burns a deep red, and the moon rises the colour of blood.', kind: 'blood' },
+  kalanemi:  { sign: 'A strange violet mist creeps out of the forest at dusk, thicker each evening.', kind: 'mist' },
+  boss:      { sign: 'The ground trembles now and then, and the Agnikund’s flame shrinks back, as if afraid.', kind: 'quake' },
+};
 /* ---------------- Weapons (crafted, kept in the armoury) ---------------- */
 const WEAPONS = {
   gada:    { name: 'Gada',    en: 'Mace',  at: 'forge',   lvl: 1, cost: { iron: 3, stone: 4, gold: 2 }, job: 'brute' },
@@ -223,10 +239,10 @@ const BUILDINGS = {
   sawmill:  { name: 'Aara Mill',     en: 'Sawmill',       fw: 3, fd: 2, ht: 2.1, cost: { wood: 35, brick: 10 },           hp: 180, lvl: 2, time: 14, desc: 'Saw pit and bow-maker. Crafts Dhanush bows for archers.',
     levels: [null, null, { cost: { wood: 50, brick: 20, gold: 15 }, time: 58, unlocks: 'Bhala spears for Bhaladhari, and Longbows' }, { cost: { wood: 70, brick: 30, iron: 15, gold: 35 }, time: 92, unlocks: 'Agni Baan fire arrows' }] },
   wall:     { name: 'Qila Deewar',   en: 'Fort Wall',     fw: 1, fd: 1, ht: 1.7, cost: { stone: 8, brick: 3 },            hp: 600, lvl: 3, time: 5,  wall: true, desc: 'Sandstone and brick fort wall, very sturdy. Click and drag to build a line.' },
-  tower:    { name: 'Burj',          en: 'Arrow Tower',   fw: 2, fd: 2, ht: 4.9, cost: { wood: 20, brick: 25, iron: 6, gold: 10 }, hp: 320, lvl: 3, time: 18, desc: 'Chhatri watchtower. Shoots arrows at demons by itself.' },
-  belltower: { name: 'Ghanta Burj',  en: 'Bell Tower',    fw: 2, fd: 2, ht: 4.4, cost: { wood: 20, brick: 25, iron: 10, gold: 15 }, hp: 300, lvl: 3, time: 18, desc: 'A great temple bell cast in iron. Demons within 7 steps are slowed and take 25% more damage.' },
-  firetower: { name: 'Agni Burj',    en: 'Fire Tower',    fw: 2, fd: 2, ht: 4.6, cost: { brick: 40, iron: 12, charcoal: 15, gold: 30 }, hp: 360, lvl: 4, time: 22, desc: 'Hurls burning pots that splash fire over groups of demons.' },
-  cannontower: { name: 'Tope Burj',  en: 'Cannon Tower',  fw: 2, fd: 2, ht: 3.6, cost: { stone: 40, brick: 40, iron: 30, gold: 40 }, hp: 520, lvl: 5, time: 26, desc: 'A heavy iron fort cannon. Slow, but every shot smashes even giant demons.' },
+  tower:    { name: 'Burj',          en: 'Arrow Tower',   fw: 2, fd: 2, ht: 4.9, cost: { wood: 20, brick: 25, iron: 6, gold: 10 }, hp: 320, lvl: 3, time: 18, desc: 'Chhatri watchtower. Shoots arrows at demons by itself. Claims a small circle of land round it: you can build there, even past the village edge.' },
+  belltower: { name: 'Ghanta Burj',  en: 'Bell Tower',    fw: 2, fd: 2, ht: 4.4, cost: { wood: 20, brick: 25, iron: 10, gold: 15 }, hp: 300, lvl: 3, time: 18, desc: 'A great temple bell cast in iron. Demons within 7 steps are slowed and take 25% more damage. Claims a small circle of land round it: you can build there, even past the village edge.' },
+  firetower: { name: 'Agni Burj',    en: 'Fire Tower',    fw: 2, fd: 2, ht: 4.6, cost: { brick: 40, iron: 12, charcoal: 15, gold: 30 }, hp: 360, lvl: 4, time: 22, desc: 'Hurls burning pots that splash fire over groups of demons. Claims a small circle of land round it: you can build there, even past the village edge.' },
+  cannontower: { name: 'Tope Burj',  en: 'Cannon Tower',  fw: 2, fd: 2, ht: 3.6, cost: { stone: 40, brick: 40, iron: 30, gold: 40 }, hp: 520, lvl: 5, time: 26, desc: 'A heavy iron fort cannon. Slow, but every shot smashes even giant demons. Claims a small circle of land round it: you can build there, even past the village edge.' },
   temple:   { name: 'Mandir',        en: 'Temple',        fw: 3, fd: 3, ht: 5.6, cost: { stone: 40, brick: 20, iron: 4, gold: 20 }, hp: 320, lvl: 3, time: 24, slots: { priest: 2 }, desc: 'Trains 2 Pujari, who heal villagers and collect offerings.' },
   // made by joining two of the same building side by side (not built directly)
   bighouse:  { name: 'Bada Ghar', en: 'Big House', fw: 4, fd: 2, ht: 2.4, cost: { wood: 40 }, hp: 280, lvl: 1, time: 1, housing: 7, joined: true, desc: 'Two Jhopdis joined into one family house. Homes 7 villagers (one more than two huts).' },
@@ -320,12 +336,12 @@ const UPGRADE_ORDER = ['axe', 'pick', 'plough', 'talwar', 'kavach', 'bow', 'agni
 /* ---------------- Agnikund (sacred fire) levels ---------------- */
 const FIRE_LEVELS = [
   null,
-  { radius: 10,  hp: 300,  housing: 4, fuelMax: 30, burn: 0.065, light: 15, cost: null },
+  { radius: 11,  hp: 300,  housing: 4, fuelMax: 30, burn: 0.065, light: 15, cost: null },
   // level 2 needs bricks; level 3 and beyond need iron as well
-  { radius: 13,  hp: 450,  housing: 5, fuelMax: 40, burn: 0.085, light: 18, cost: { wood: 70, stone: 30, brick: 20 } },
-  { radius: 16.5, hp: 650, housing: 6, fuelMax: 50, burn: 0.10,  light: 21, cost: { wood: 120, stone: 80, brick: 40, iron: 15, gold: 35 } },
-  { radius: 20,  hp: 900,  housing: 7, fuelMax: 60, burn: 0.12,  light: 24, cost: { wood: 200, stone: 140, brick: 70, iron: 35, gold: 90 } },
-  { radius: 24,  hp: 1200, housing: 8, fuelMax: 70, burn: 0.14,  light: 27, cost: { wood: 300, stone: 220, brick: 100, iron: 60, gold: 170 } },
+  { radius: 14.5, hp: 450,  housing: 5, fuelMax: 40, burn: 0.085, light: 18, cost: { wood: 70, stone: 30, brick: 20 } },
+  { radius: 18,  hp: 650, housing: 6, fuelMax: 50, burn: 0.10,  light: 21, cost: { wood: 120, stone: 80, brick: 40, iron: 15, gold: 35 } },
+  { radius: 22,  hp: 900,  housing: 7, fuelMax: 60, burn: 0.12,  light: 24, cost: { wood: 200, stone: 140, brick: 70, iron: 35, gold: 90 } },
+  { radius: 26.5, hp: 1200, housing: 8, fuelMax: 70, burn: 0.14,  light: 27, cost: { wood: 300, stone: 220, brick: 100, iron: 60, gold: 170 } },
 ];
 
 /* ---------------- Demons ---------------- */
@@ -335,7 +351,12 @@ const ENEMIES = {
   rakshasa: { name: 'Rakshasa', en: 'Demon',         hp: 46,  dmg: 7,   speed: 1.2,  atkCd: 1.3, gold: 2,  r: 0.4,  h: 1.6, scale: 1,    reach: 0.85, cost: 2 },
   vetala:   { name: 'Vetala',   en: 'Flying Spirit', hp: 22,  dmg: 4,   speed: 2.2,  atkCd: 1.0, gold: 2,  r: 0.4,  h: 0.6, scale: 1,    reach: 0.8,  cost: 2, fly: true },
   danav:    { name: 'Danav',    en: 'Giant Demon',   hp: 150, dmg: 15,  speed: 0.85, atkCd: 1.8, gold: 6,  r: 0.6,  h: 2.3, scale: 1.45, reach: 1.15, cost: 6 },
-  boss:     { name: 'Mahasura', en: 'Demon King',    hp: 500, dmg: 28,  speed: 0.7,  atkCd: 2.2, gold: 40, r: 0.95, h: 3.8, scale: 2.4,  reach: 1.7,  cost: 0, boss: true },
+  boss:     { name: 'Mahasura', en: 'Demon King',    hp: 500, dmg: 28,  speed: 0.7,  atkCd: 2.2, gold: 40, r: 0.95, h: 3.8, scale: 2.4,  reach: 1.7,  cost: 0, boss: true, summons: true },
+  // more great asuras: each comes on its own night, foretold by an omen two days before (see BOSS_NIGHTS)
+  bakasura:  { name: 'Bakasura',  en: 'Devourer of Grain',  hp: 560, dmg: 22, speed: 0.72, atkCd: 2.0, gold: 40, r: 0.95, h: 3.5, scale: 2.25, reach: 1.6, cost: 0, boss: true, devour: true },
+  raktabija: { name: 'Raktabija', en: 'Blood-seed Asura',   hp: 520, dmg: 19, speed: 0.9,  atkCd: 1.6, gold: 40, r: 0.8,  h: 3.1, scale: 2.0,  reach: 1.4, cost: 0, boss: true, bloodseed: true },
+  kalanemi:  { name: 'Kalanemi',  en: 'Lord of Illusions',  hp: 470, dmg: 17, speed: 1.0,  atkCd: 1.5, gold: 40, r: 0.72, h: 3.0, scale: 1.9,  reach: 1.3, cost: 0, boss: true, illusion: true, glow: 0xb48cff },
+  rakta:     { name: 'Rakta Bindu', en: 'Blood-born Demon', hp: 20, dmg: 4,  speed: 1.7,  atkCd: 1.0, gold: 0,  r: 0.3,  h: 1.0, scale: 0.62, reach: 0.7, cost: 0, minion: true },
   // ghosts of Bengali folklore (bhoot-pret of Bangla tales)
   aleya:       { name: 'Aleya',       en: 'Marsh Light',     hp: 9,   dmg: 1.5, speed: 2.6,  atkCd: 0.9, gold: 1, r: 0.25, h: 0.5, scale: 1,    reach: 0.6,  cost: 2, fly: true, swarm: 3, glow: 0xd4ff7a, bengali: true, from: 2 },
   shakchunni:  { name: 'Shakchunni',  en: 'Bride Ghost',     hp: 30,  dmg: 4,   speed: 1.9,  atkCd: 1.0, gold: 2, r: 0.35, h: 1.4, scale: 1,    reach: 0.8,  cost: 2, ghost: true, float: true, drain: 0.6, glow: 0xffd6d6, bengali: true, from: 3 },
@@ -351,6 +372,10 @@ const ENEMY_LORE = {
   vetala: 'A bat-winged spirit. Flies over walls and swoops on villagers — archers can hit it.',
   danav: 'A giant demon. Very tough and hits hard.',
   boss: 'Mahasura, the buffalo-horned Demon King. Gather every warrior!',
+  bakasura: 'Bakasura, the giant of the old tale who made a village feed him a cartload of food every day. He lumbers straight for your grain heaps and stores and gorges himself, and every mouthful heals him. Keep him away from the food.',
+  raktabija: 'Raktabija, the asura whose every drop of blood that touches the earth rises as another demon. Hard blows make him bleed new demons. Fire scorches his blood before it falls: burn him with fire pots and Agni Baan arrows, and kill him fast.',
+  kalanemi: 'Kalanemi, the master of maya. Again and again he vanishes and leaves false copies of himself that fight like the real one. A copy bursts into smoke at the first blow; the real Kalanemi shows himself again a few moments later.',
+  rakta: 'A demon sprung from a drop of Raktabija’s blood. Small and weak, but there are always more.',
   aleya: 'Ghost lights from the marshes that lead travellers astray. They drift in as a swarm over your walls, quick but frail.',
   shakchunni: 'The ghost of a married woman in a white saree with a red border and shell bangles. She drifts through walls, and every blow she lands heals her.',
   mechho: 'A fish-loving ghost from the ponds. He sneaks to your grain stores, steals what he can carry and runs for the forest. Kill him to get the grain back.',

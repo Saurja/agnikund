@@ -288,6 +288,49 @@ function merge(parts) {
   g.computeBoundingSphere();
   return g;
 }
+/**
+ * One skinned mesh from parts that each ride a single bone (rigid skinning). entries: [[parts, bone]].
+ * Parts are built in their bone's frame; here they move into the bind pose, so the whole jointed body
+ * draws in one call instead of a dozen.
+ */
+function skinnedBody(g, root, bones, entries, mat) {
+  root.updateMatrixWorld(true);
+  const geos = [];
+  let n = 0;
+  for (const [parts, b] of entries) {
+    const geo = merge(parts);
+    geo.applyMatrix4(b.matrixWorld);
+    geos.push([geo, bones.indexOf(b)]);
+    n += geo.attributes.position.count;
+  }
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3), fab = new Float32Array(n), si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+  let o = 0;
+  for (const [geo, bi] of geos) {
+    const c = geo.attributes.position.count;
+    pos.set(geo.attributes.position.array, o * 3); nor.set(geo.attributes.normal.array, o * 3); col.set(geo.attributes.color.array, o * 3);
+    if (geo.attributes.fab) fab.set(geo.attributes.fab.array, o);
+    for (let i = 0; i < c; i++) { si[(o + i) * 4] = bi; sw[(o + i) * 4] = 1; }
+    o += c;
+    geo.dispose();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('fab', new THREE.BufferAttribute(fab, 1));
+  geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+  geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+  geo.computeBoundingSphere();
+  if (!mat.skinning) { mat.skinning = true; mat.needsUpdate = true; } // (ignored by meshes that are not skinned)
+  const mesh = new THREE.SkinnedMesh(geo, mat);
+  mesh.add(root);
+  mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false; // poses (lying asleep) reach past the bind-pose bounds
+  mesh.updateMatrixWorld(true);
+  mesh.bind(new THREE.Skeleton(bones));
+  mesh.userData.skinned = true;
+  g.add(mesh);
+  return mesh;
+}
 function meshOf(parts, mat, noShadow, noOutline, big) {
   const geo = Array.isArray(parts) ? merge(parts) : parts;
   const m = new THREE.Mesh(geo, mat || MAT.std);
@@ -307,16 +350,24 @@ function meshOf(parts, mat, noShadow, noOutline, big) {
  * the same on screen while a character's own parts (an arm in front of the body) never trigger it;
  * only real occluders like trees, huts and walls do. offset is that pull in world units.
  */
-function silMat(color, offset) {
+function silMat(color, offset, skinned) {
   MAT.sil = MAT.sil || {};
-  const k = color + '_' + offset.toFixed(2);
+  const k = color + '_' + offset.toFixed(2) + (skinned ? 's' : '');
   if (MAT.sil[k]) return MAT.sil[k];
   const m = new THREE.ShaderMaterial({
     uniforms: { uColor: { value: new THREE.Color(color) }, uOffset: { value: offset } },
-    vertexShader: `uniform float uOffset; varying float vRim;
+    skinning: !!skinned,
+    vertexShader: `#include <common>
+      #include <skinning_pars_vertex>
+      uniform float uOffset; varying float vRim;
       void main() {
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        vec3 n = normalize(normalMatrix * normal), v = normalize(-mv.xyz);
+        vec3 objectNormal = vec3(normal);
+        vec3 transformed = vec3(position);
+        #include <skinbase_vertex>
+        #include <skinnormal_vertex>
+        #include <skinning_vertex>
+        vec4 mv = modelViewMatrix * vec4(transformed, 1.0);
+        vec3 n = normalize(normalMatrix * objectNormal), v = normalize(-mv.xyz);
         vRim = 1.0 - abs(dot(n, v));
         mv.xyz += v * uOffset;
         gl_Position = projectionMatrix * mv;
@@ -342,11 +393,15 @@ function addSilhouette(obj, color, offset) {
     if (cnt > n) { n = cnt; best = c; }
   });
   if (!best) return null;
-  const s = new THREE.Mesh(best.geometry, silMat(color, offset));
-  s.renderOrder = 1; s.castShadow = false; s.receiveShadow = false;
-  s.raycast = () => {};
-  s.userData.sil = true; s.userData.noAO = true;
-  best.add(s);
+  let s = null;
+  for (const part of obj.userData.silParts || [best]) { // a skinned villager gets a skinned twin on the same skeleton
+    if (part.isSkinnedMesh) { s = new THREE.SkinnedMesh(part.geometry, silMat(color, offset, true)); s.bind(part.skeleton, part.bindMatrix); s.frustumCulled = false; }
+    else s = new THREE.Mesh(part.geometry, silMat(color, offset));
+    s.renderOrder = 1; s.castShadow = false; s.receiveShadow = false;
+    s.raycast = () => {};
+    s.userData.sil = true; s.userData.noAO = true;
+    part.add(s);
+  }
   obj.traverse((c) => { if (c.isMesh && !c.userData.sil) c.renderOrder = 2; }); // the unit itself draws after every silhouette
   return s;
 }
@@ -862,12 +917,51 @@ Models.building = function (type, level) {
       break;
     }
   }
+  if (ROUND_GARDEN[mt]) squareGarden(p, mt, level);
   addLevelDecor(p, g, ud, type, level);
   if (p.length) g.add(meshOf(p));
   // static building parts get the painted, textured surface
   if (MAT.bld && MAT.bld !== MAT.std) g.traverse((c) => { if (c.isMesh && c.material === MAT.std) c.material = MAT.bld; });
   return g;
 };
+/*
+ * Round buildings sit in a square plot: a round hut, well or tower on a square tile otherwise leaves four
+ * bare corners. Each gets a little garden that fills its footprint: grass inside a low kerb, and in the
+ * corners a tulsi chaura, marigolds, a vegetable patch or pumpkins (huts), flagstones with pots of
+ * flowers and a bucket (the well), or a paved court with clipped shrubs and stone lamps (towers).
+ */
+const ROUND_GARDEN = { hut: 'home', well: 'well', firetower: 'tower', cannontower: 'tower' };
+function squareGarden(p, type, level) {
+  const kind = ROUND_GARDEN[type], d = BUILDINGS[type], hw = d.fw / 2 - 0.02, hd = d.fd / 2 - 0.02;
+  const paved = kind !== 'home';
+  p.push(box(hw * 2, 0.03, hd * 2, paved ? 0xb9ad96 : 0x6f9a45, 0, 0, 0));
+  if (paved) { // flagstones in two tones with dark joints
+    for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) if ((i + j) % 2 === 0) p.push(box(0.36, 0.012, 0.36, 0xa89c84, i * 0.38, 0.03, j * 0.38));
+  } else for (let i = 0; i < 14; i++) { const a = i * 2.39, r = 1.02 + (i % 3) * 0.1; const x = clamp(Math.cos(a) * r, -0.92, 0.92), z = clamp(Math.sin(a) * r, -0.92, 0.92); p.push(cone(0.022, 0.08, 4, i % 2 ? 0x5e8a3a : 0x7aa64a, x, 0.03, z)); } // tufts
+  const kc = kind === 'tower' ? 0x8f8a80 : kind === 'well' ? 0x9a958c : 0x9a6a44;
+  for (const s of [-1, 1]) { p.push(box(hw * 2, 0.06, 0.06, kc, 0, 0, s * (hd - 0.03))); p.push(box(0.06, 0.06, hd * 2, kc, s * (hw - 0.03), 0, 0)); }
+  const front = level < 3; // at level 3 the upgrade's own tulsi pots take the front corners
+  const c = 0.8;
+  const marigold = (x, z) => { p.push(sph(0.1, 0x3f7a32, x, 0.1, z, 1, 0.75, 1)); for (let k = 0; k < 6; k++) { const a = k * 1.05; p.push(sph(0.03, k % 2 ? 0xff9933 : 0xffb31a, x + Math.cos(a) * 0.07, 0.15 + (k % 2) * 0.03, z + Math.sin(a) * 0.07)); } };
+  const pot = (x, z, fl) => { p.push(cyl(0.07, 0.05, 0.1, 8, C.brick, x, 0.03, z)); p.push(sph(0.07, 0x3f8a3a, x, 0.17, z, 1, 0.8, 1)); for (let k = 0; k < 4; k++) { const a = k * 1.57 + 0.4; p.push(sph(0.022, fl, x + Math.cos(a) * 0.045, 0.21, z + Math.sin(a) * 0.045)); } };
+  if (kind === 'home') {
+    if (front) { // tulsi chaura on the left of the door, marigolds on the right
+      p.push(box(0.2, 0.2, 0.2, 0xe8dcc6, -c - 0.04, 0.03, c + 0.04)); p.push(box(0.23, 0.035, 0.23, C.red, -c - 0.04, 0.23, c + 0.04)); p.push(sph(0.09, 0x3f8a3a, -c - 0.04, 0.34, c + 0.04, 1, 1.25, 1));
+      marigold(c + 0.04, c + 0.04);
+    }
+    for (let k = 0; k < 3; k++) p.push(box(0.36, 0.05, 0.07, C.soil, -c, 0.03, -c + 0.02 - k * 0.1)); // a vegetable patch: three furrows of greens
+    for (let k = 0; k < 6; k++) p.push(sph(0.035, k % 2 ? 0x4f9a3c : 0x6aae4a, -c - 0.12 + (k % 3) * 0.12, 0.1, -c + 0.02 - Math.floor(k / 3) * 0.1, 1, 0.8, 1));
+    p.push(sph(0.08, 0xd9822b, c, 0.08, -c, 1.1, 0.8, 1.1)); p.push(sph(0.06, 0xc8701f, c - 0.13, 0.065, -c + 0.06, 1.1, 0.8, 1.1)); // pumpkins on the vine
+    p.push(P(new THREE.TorusGeometry(0.08, 0.012, 4, 10, Math.PI * 1.4), 0x4f8a3a, c - 0.05, 0.05, -c + 0.02, Math.PI / 2));
+  } else if (kind === 'well') {
+    pot(-c, c, 0xff7a9a); pot(c, c, 0xffd84a); pot(-c, -c, 0xffffff);
+    p.push(cyl(0.07, 0.06, 0.11, 10, 0x8d939a, c, 0.03, -c)); p.push(P(new THREE.TorusGeometry(0.065, 0.01, 4, 12), 0x5a5a62, c, 0.14, -c, Math.PI / 2)); // a bucket
+    p.push(box(0.08, 0.02, 0.5, 0x7d7464, 0.72, 0.03, 0.15)); // the drain
+  } else { // towers: clipped shrubs at the back, stone lamps at the front
+    for (const sx of [-1, 1]) { p.push(sph(0.13, 0x3f7a32, sx * c, 0.13, -c, 1, 0.9, 1)); p.push(sph(0.08, 0x4f8a3a, sx * c, 0.27, -c)); }
+    if (front) for (const sx of [-1, 1]) { p.push(box(0.12, 0.26, 0.12, 0xb8b2a6, sx * c, 0.03, c)); p.push(box(0.16, 0.04, 0.16, 0x9a958c, sx * c, 0.29, c)); p.push(cyl(0.04, 0.03, 0.04, 8, C.brick, sx * c, 0.33, c)); }
+  }
+}
 /**
  * What an upgrade looks like, for any building. Level 2: a stone kerb with painted white dots, a marigold
  * toran on posts at the entrance and two clay diyas. Level 3: a brick kerb with a front step, a saffron
@@ -1355,206 +1449,321 @@ function addPiles(g, spots) {
 }
 
 /* ---------- villagers ----------
- * Stylised, but proportioned like people: a face with almond eyes, brows, nose and lips; men in a kurta
- * over a draped dhoti with a wound pagdi, women in a saree with a contrast border and pallu, hair in a
- * khopa ringed with a gajra, shankha-pola bangles. Cloth carries woven, block-printed or checked
- * surfaces (see FAB). The rig is unchanged: hips, torso, two legs and two arms (tool in the right hand).
+ * A jointed rig, proportioned like people: hips → two legs (thigh → knee → shin and foot) and a spine
+ * (waist) → chest, a head on a neck, and two arms (upper arm → elbow → forearm and fist). Each fist has a
+ * grip; tools and weapons sit in the right grip, the shield or bow in the left. A grip's tool lies along
+ * its +z axis, so a sword points forward out of the fist instead of hanging down like a longer arm. The
+ * person's right is -x (models face +z). Men wear a kurta over a draped dhoti and a wound pagdi; women a
+ * saree with its pleats, border and pallu over a choli, hair in a khopa ringed with a gajra.
+ * Cloth carries woven, block-printed or checked surfaces (see FAB).
  */
 function hexOf(c) { return typeof c === 'number' ? c : parseInt(String(c).slice(1), 16); }
+const V_HIP = 0.47;
 Models.villager = function (look, job) {
   const pal = lookPalette(look, job);
   const H = (k) => hexOf(pal[k]);
   const fem = look.g === 'f';
   const army = slotKey(job) === 'army';
+  const brute = job === 'brute';
   const M = MAT.char || MAT.std;
-  const skin = H('S'), skinD = darkHex(skin, 0.86), lip = mixHex(skin, 0x8a2424, 0.42), hair = H('h');
-  const cloth = H('C'), clothD = H('c'), lower = H('D'), trim = H('d');
+  const skin = H('S'), skinD = darkHex(skin, 0.84), skinL = mixHex(skin, 0xffe4c8, 0.12), lip = mixHex(skin, 0x8a2424, 0.45), hair = H('h');
+  const cloth = H('C'), clothD = H('c'), lower = H('D'), trim = H('d'), accent = H('G');
   const printed = fem || ['farm', 'trader', 'idle', 'vaidya', 'kiln', 'clay'].includes(job);
   const CL = printed ? 2 : 1;
   const g = new THREE.Group();
-  const hips = new THREE.Group(); hips.position.y = 0.36; g.add(hips);
-  // legs: a draped dhoti over each thigh (men), bare calves, chappals; women's feet peep from under the saree
+  const bones = [], skinParts = []; // a skinned rig: every part rides one bone, the whole body is one mesh
+  const bone = (parent, x, y, z) => { const b = new THREE.Bone(); b.position.set(x, y, z); if (parent) parent.add(b); bones.push(b); return b; };
+  const rig = (parts, b) => { if (parts.length) skinParts.push([parts, b]); };
+  const hips = bone(null, 0, V_HIP, 0);
+
+  /* legs: index 0 is the right leg (-x). Men: the dhoti draped over each thigh to below the knee, bare
+     calves, leather chappals. Women: only the feet show below the saree (with silver payal). */
   const legs = [];
   for (const sx of [-1, 1]) {
-    const L = new THREE.Group(); L.position.set(sx * 0.085, 0, 0); hips.add(L);
-    const lp = [];
+    const L = bone(hips, sx * 0.072, -0.02, 0);
+    const knee = bone(L, 0, -0.215, 0);
+    const th = [], sh = [];
     if (!fem) {
-      FAB = 1;
-      lp.push(cyl(0.076, 0.094, 0.25, 12, lower, 0, -0.23, 0));
-      lp.push(boxC(0.02, 0.22, 0.012, darkHex(lower, 0.9), sx * -0.02, -0.11, 0.085, -0.15)); // a fold of the dhoti
+      FAB = brute ? 1 : 1;
+      th.push(sph(0.078, lower, 0, -0.01, 0, 1, 0.8, 1));
+      th.push(cyl(0.077, 0.066, 0.21, 12, lower, 0, -0.21, 0));
+      th.push(boxC(0.018, 0.2, 0.01, darkHex(lower, 0.88), sx * -0.03, -0.1, 0.07, -0.08)); // a fold of the dhoti
+      sh.push(cyl(0.066, 0.064, 0.075, 12, lower, 0, -0.07, 0.004));
       FAB = 0;
-      lp.push(P(new THREE.TorusGeometry(0.092, 0.008, 4, 16), trim, 0, -0.218, 0, Math.PI / 2)); // its border
-      lp.push(cyl(0.043, 0.036, 0.12, 10, skin, 0, -0.335, 0));
+      sh.push(P(new THREE.TorusGeometry(0.065, 0.007, 4, 14), trim, 0, -0.068, 0.004, Math.PI / 2));
+      sh.push(sph(0.038, skin, 0, -0.07, 0.0, 1, 0.6, 1));
+      sh.push(cyl(0.041, 0.03, 0.135, 10, skin, 0, -0.205, -0.004)); // calf to ankle
+    } else {
+      FAB = 0;
+      sh.push(cyl(0.033, 0.03, 0.11, 8, skin, 0, -0.2, 0));
+      sh.push(P(new THREE.TorusGeometry(0.031, 0.007, 4, 12), 0xd8dde3, 0, -0.19, 0, Math.PI / 2)); // silver payal
     }
     FAB = 0;
-    const fz = fem ? 0.15 : 0.03;
-    lp.push(sph(0.042, skin, 0, -0.335, fz, 1, 0.55, 1.55));
-    lp.push(box(0.074, 0.016, 0.16, 0x5e3a20, 0, -0.36, fz));
-    lp.push(P(new THREE.TorusGeometry(0.04, 0.008, 4, 10, Math.PI), 0x8a4a22, 0, -0.345, fz + 0.03));
-    if (fem) lp.push(P(new THREE.TorusGeometry(0.036, 0.007, 4, 12), 0xd8dde3, 0, -0.318, fz - 0.06, Math.PI / 2)); // silver payal
-    L.add(meshOf(lp, M));
+    // foot and chappal (the foot is part of the shin, so it stays put while the knee bends)
+    sh.push(sph(0.034, skin, 0, -0.222, 0.038, 0.85, 0.5, 1.65));
+    sh.push(sph(0.012, skinD, sx * -0.012, -0.224, 0.09, 1, 0.8, 1));
+    sh.push(box(0.074, 0.013, 0.155, 0x5a3820, 0, -0.247, 0.032));
+    sh.push(P(new THREE.TorusGeometry(0.03, 0.007, 4, 10, Math.PI), 0x8a4a22, 0, -0.232, 0.06, 0, 0, 0));
+    rig(th, L);
+    rig(sh, knee);
+    L.userData.knee = knee;
     legs.push(L);
   }
+
+  /* the saree skirt hangs from the hips and swings with the legs (the renderer sways it) */
+  let skirt = null;
+  if (fem) {
+    const sk = [];
+    FAB = CL;
+    sk.push(P(new THREE.LatheGeometry(V2([[0.206, -0.452], [0.2, -0.4], [0.178, -0.26], [0.152, -0.12], [0.134, 0.0], [0.128, 0.06], [0.001, 0.062]]), 22), lower, 0, 0, 0, 0, 0, 0, 1, 1, 0.88));
+    // the front pleats fan out from the navel
+    for (let k = -2; k <= 2; k++) sk.push(boxC(0.034, 0.44, 0.012, darkHex(lower, k % 2 ? 0.86 : 0.94), k * 0.03, -0.2, 0.152 + 0.004 - Math.abs(k) * 0.006, -0.09, 0, k * 0.07));
+    FAB = 0;
+    sk.push(P(new THREE.CylinderGeometry(0.207, 0.207, 0.055, 22, 1, true), trim, 0, -0.42, 0, 0, 0, 0, 1, 1, 0.88)); // the paar (border)
+    sk.push(P(new THREE.TorusGeometry(0.205, 0.006, 4, 26), 0xe8b830, 0, -0.39, 0, Math.PI / 2, 0, 0, 1, 0.88, 1));
+    skirt = bone(hips, 0, 0, 0);
+    rig(sk, skirt);
+  }
+
+  /* spine: the waist joint. Everything above it leans and twists with the swing of a blow. */
+  const spine = bone(hips, 0, 0.05, 0);
   const body = [];
-  if (fem) { // the saree: pleated skirt with its paar, a blouse, the pallu across the chest and down the back
-    FAB = CL;
-    body.push(P(new THREE.LatheGeometry(V2([[0.236, -0.36], [0.233, -0.33], [0.206, -0.2], [0.176, -0.08], [0.158, 0.0], [0.15, 0.03]]), 22), lower, 0, 0, 0));
-    for (let k = -1; k <= 1; k++) body.push(boxC(0.032, 0.3, 0.012, darkHex(lower, 0.9), k * 0.042, -0.2, 0.198 - Math.abs(k) * 0.006, -0.14, 0, k * 0.06));
+  if (fem) { // choli (blouse) over a bare midriff, the pallu across the chest from the right hip to the left shoulder and down the back
     FAB = 0;
-    body.push(P(new THREE.CylinderGeometry(0.237, 0.239, 0.05, 22, 1, true), trim, 0, -0.335, 0));
-    body.push(P(new THREE.TorusGeometry(0.236, 0.006, 4, 24), 0xe8b830, 0, -0.306, 0, Math.PI / 2));
+    body.push(P(new THREE.LatheGeometry(V2([[0.124, -0.01], [0.122, 0.06], [0.126, 0.11], [0.001, 0.112]]), 18), skin, 0, 0, 0, 0, 0, 0, 1, 1, 0.78));
     FAB = 1;
-    body.push(P(new THREE.LatheGeometry(V2([[0.15, 0.0], [0.156, 0.1], [0.15, 0.2], [0.122, 0.27], [0.07, 0.3], [0.001, 0.306]]), 18), cloth, 0, 0, 0));
+    body.push(P(new THREE.LatheGeometry(V2([[0.124, 0.1], [0.138, 0.15], [0.142, 0.2], [0.135, 0.245], [0.1, 0.278], [0.055, 0.292], [0.001, 0.296]]), 18), cloth, 0, 0, 0, 0, 0, 0, 1, 1, 0.8));
+    for (const sx of [-1, 1]) body.push(sph(0.062, cloth, sx * 0.055, 0.175, 0.07, 1, 0.9, 0.75));
     FAB = CL;
-    body.push(boxC(0.1, 0.36, 0.018, lower, -0.035, 0.14, 0.153, -0.12, 0, -0.5));
-    body.push(boxC(0.12, 0.44, 0.018, lower, -0.09, 0.08, -0.156, 0.1, 0, 0.08));
-    body.push(sph(0.07, lower, -0.11, 0.27, 0, 0.9, 0.6, 1.4));
+    body.push(boxC(0.1, 0.36, 0.016, lower, 0.01, 0.12, 0.118, -0.08, 0, -0.55)); // pallu over the chest
+    body.push(boxC(0.13, 0.5, 0.016, lower, 0.07, 0.07, -0.112, 0.08, 0, 0.12)); // and down the back
+    body.push(sph(0.06, lower, 0.105, 0.255, 0.0, 0.85, 0.55, 1.5)); // over the shoulder
     FAB = 0;
-    body.push(boxC(0.018, 0.36, 0.02, trim, 0.009, 0.116, 0.155, -0.12, 0, -0.5)); // the pallu's border
-  } else if (job === 'brute') { // pehelwan: bare, broad and oiled, in a dhoti and langot
+    body.push(boxC(0.016, 0.36, 0.018, trim, 0.052, 0.098, 0.12, -0.08, 0, -0.55)); // its border
+  } else if (brute) { // pehelwan: bare, broad and oiled, in a red langot under the dhoti
     FAB = 0;
-    body.push(P(new THREE.LatheGeometry(V2([[0.17, -0.06], [0.18, 0.06], [0.195, 0.18], [0.16, 0.27], [0.08, 0.31], [0.001, 0.315]]), 18), skin, 0, 0, 0));
-    for (const sx of [-1, 1]) body.push(sph(0.075, skin, sx * 0.075, 0.2, 0.13, 1.1, 0.75, 0.6));
+    body.push(P(new THREE.LatheGeometry(V2([[0.15, -0.04], [0.148, 0.04], [0.172, 0.13], [0.192, 0.2], [0.188, 0.245], [0.14, 0.28], [0.06, 0.3], [0.001, 0.302]]), 20), skin, 0, 0, 0, 0, 0, 0, 1, 1, 0.78));
+    for (const sx of [-1, 1]) { body.push(sph(0.07, skinL, sx * 0.068, 0.2, 0.1, 1.1, 0.72, 0.55)); body.push(sph(0.06, skin, sx * 0.17, 0.25, 0, 1.1, 0.9, 1)); }
+    for (let k = 0; k < 3; k++) for (const sx of [-1, 1]) body.push(sph(0.026, skinD, sx * 0.03, 0.03 + k * 0.042, 0.112, 1, 0.8, 0.5)); // abdomen
     FAB = 1;
-    body.push(cyl(0.18, 0.19, 0.16, 18, lower, 0, -0.17, 0));
+    body.push(cyl(0.155, 0.16, 0.1, 18, lower, 0, -0.1, 0, 0, 0, 0)); // dhoti at the waist
     FAB = 0;
-    body.push(P(new THREE.TorusGeometry(0.18, 0.02, 6, 18), H('G'), 0, -0.01, 0, Math.PI / 2));
-  } else { // kurta: an A-line tunic over the dhoti, a buttoned placket and a cloth waistband
+    body.push(P(new THREE.TorusGeometry(0.153, 0.022, 6, 20), accent, 0, -0.005, 0, Math.PI / 2, 0, 0, 1, 0.78, 1));
+    const mala = [];
+    for (let i = 0; i < 15; i++) { const a = (i / 14) * Math.PI; mala.push(sph(0.013, 0x6b2a1e, Math.cos(a) * 0.075, 0.28 - Math.sin(a) * 0.1, 0.1 + Math.sin(a) * 0.025)); }
+    body.push(...mala);
+  } else { // kurta: an A-line tunic to mid-thigh, a placket with brass buttons, a cloth waistband
     FAB = CL;
-    body.push(P(new THREE.LatheGeometry(V2([[0.172, -0.17], [0.166, -0.08], [0.152, 0.02], [0.158, 0.14], [0.16, 0.22], [0.13, 0.28], [0.075, 0.31], [0.001, 0.316]]), 20), cloth, 0, 0, 0));
+    body.push(P(new THREE.LatheGeometry(V2([[0.156, -0.165], [0.15, -0.1], [0.135, -0.02], [0.13, 0.03], [0.142, 0.11], [0.154, 0.18], [0.158, 0.225], [0.148, 0.258], [0.11, 0.285], [0.058, 0.3], [0.001, 0.305]]), 22), cloth, 0, 0, 0, 0, 0, 0, 1, 1, 0.76));
     FAB = 0;
-    body.push(P(new THREE.CylinderGeometry(0.173, 0.175, 0.022, 20, 1, true), clothD, 0, -0.16, 0));
-    body.push(boxC(0.034, 0.16, 0.012, clothD, 0, 0.2, 0.159, -0.06));
-    for (let i = 0; i < 3; i++) body.push(sph(0.009, 0xe8b830, 0, 0.15 + i * 0.045, 0.167));
-    body.push(P(new THREE.TorusGeometry(0.157, 0.018, 6, 20), H('G'), 0, 0.02, 0, Math.PI / 2));
-    if (['wood', 'stone', 'farm', 'build', 'clay', 'kiln', 'idle', 'smelt'].includes(job)) { // a checked gamcha over the shoulder
+    body.push(P(new THREE.CylinderGeometry(0.157, 0.157, 0.02, 22, 1, true), clothD, 0, -0.155, 0, 0, 0, 0, 1, 1, 0.76)); // hem border
+    body.push(boxC(0.03, 0.13, 0.01, clothD, 0, 0.225, 0.115, -0.1));
+    for (let i = 0; i < 3; i++) body.push(sph(0.0085, 0xe8b830, 0, 0.185 + i * 0.035, 0.123));
+    body.push(P(new THREE.TorusGeometry(0.06, 0.012, 5, 16), clothD, 0, 0.292, 0.0, Math.PI / 2 - 0.15)); // collar
+    body.push(P(new THREE.TorusGeometry(0.132, 0.016, 6, 22), accent, 0, 0.03, 0, Math.PI / 2, 0, 0, 1, 0.78, 1)); // kamarbandh
+    if (['wood', 'stone', 'farm', 'build', 'clay', 'kiln', 'idle', 'smelt'].includes(job)) { // a checked gamcha over the right shoulder
       FAB = 3;
-      body.push(P(new THREE.TorusGeometry(0.1, 0.022, 5, 12, Math.PI), 0xb83a30, 0.115, 0.25, 0, 0, Math.PI / 2, 0));
-      body.push(boxC(0.045, 0.13, 0.012, 0xb83a30, 0.115, 0.19, 0.142, -0.12));
-      body.push(boxC(0.045, 0.16, 0.012, 0xb83a30, 0.115, 0.17, -0.142, 0.12));
+      body.push(P(new THREE.TorusGeometry(0.085, 0.02, 5, 12, Math.PI), 0xb83a30, -0.1, 0.262, 0, 0, Math.PI / 2, 0, 1, 1, 1.15));
+      body.push(boxC(0.04, 0.12, 0.012, 0xb83a30, -0.1, 0.21, 0.108, -0.1));
+      body.push(boxC(0.04, 0.15, 0.012, 0xb83a30, -0.1, 0.19, -0.108, 0.1));
       FAB = 0;
     }
-    if (army) body.push(boxC(0.034, 0.42, 0.012, 0x6b3a1e, 0, 0.12, 0.162, 0, 0, 0.62)); // leather baldric
+    if (army) { // leather baldric, belt and a brass buckle
+      body.push(boxC(0.03, 0.4, 0.012, 0x6b3a1e, 0, 0.13, 0.12, 0, 0, 0.6));
+      body.push(boxC(0.03, 0.4, 0.012, 0x6b3a1e, 0, 0.13, -0.12, 0, 0, -0.6));
+      body.push(P(new THREE.TorusGeometry(0.134, 0.014, 5, 22), 0x5a3018, 0, 0.0, 0, Math.PI / 2, 0, 0, 1, 0.78, 1));
+      body.push(boxC(0.034, 0.03, 0.01, 0xe8b830, 0, 0.0, 0.106));
+    }
+    if (job === 'build') { // a Mistri's plumb line and a measuring cord at the waist
+      body.push(cylC(0.012, 0.012, 0.09, 6, 0xd8c28a, 0.11, -0.02, 0.06, 0, 0, 0.2)); body.push(cone(0.018, 0.035, 6, 0x55555f, 0.12, -0.1, 0.06, Math.PI));
+      body.push(box(0.06, 0.05, 0.03, 0x7a4b26, -0.12, -0.06, 0.07)); // a pouch of nails
+    }
+    if (job === 'medic') body.push(P(new THREE.TorusGeometry(0.15, 0.02, 6, 20), 0x2e7d32, 0, 0.14, 0, Math.PI / 2 - 0.5, 0, 0.6, 1, 0.8, 1)); // green healer's sash
   }
-  // neck and face
+  // neck
   FAB = 0;
-  const hy = 0.47;
-  body.push(cyl(0.045, 0.052, 0.08, 10, skin, 0, 0.29, 0));
-  body.push(sph(0.158, skin, 0, hy, 0.005, 0.95, 1.06, 0.98));
-  body.push(sph(0.07, skin, 0, hy - 0.085, 0.04, 1.3, 0.7, 1.1));
-  for (const sx of [-1, 1]) {
-    body.push(sph(0.03, skin, sx * 0.152, hy - 0.005, -0.005, 0.45, 1, 0.8));
-    body.push(sph(0.027, 0xf6f1e8, sx * 0.055, hy + 0.012, 0.135, 1.45, 0.85, 0.45));
-    body.push(sph(0.018, 0x2a1810, sx * 0.055, hy + 0.01, 0.146, 1.1, 1.1, 0.45));
-    body.push(sph(0.006, 0xffffff, sx * 0.049, hy + 0.019, 0.153));
-    body.push(boxC(0.058, 0.011, 0.012, hair, sx * 0.057, hy + 0.052, 0.142, 0, 0, sx * -0.14));
-    if (fem) body.push(boxC(0.05, 0.006, 0.006, 0x1a1010, sx * 0.058, hy + 0.027, 0.147, 0, 0, sx * -0.1)); // kajal
+  body.push(cyl(0.037, 0.043, 0.075, 10, skin, 0, 0.27, 0.004));
+  if (job === 'archer') { // quiver on the back with red-fletched arrows
+    body.push(cylC(0.045, 0.04, 0.34, 10, 0x7a4b26, -0.05, 0.16, -0.13, -0.15, 0, -0.35));
+    for (let i = 0; i < 4; i++) body.push(coneC(0.022, 0.07, 3, i % 2 ? 0xd33b2c : 0xf4ecd8, -0.11 + i * 0.016, 0.36 + i * 0.004, -0.16, -0.15, 0, -0.35));
   }
-  body.push(sph(0.02, skinD, 0, hy - 0.022, 0.155, 0.85, 1.2, 1));
-  body.push(sph(0.024, lip, 0, hy - 0.07, 0.137, 1.5, 0.48, 0.6));
+  const torso = bone(spine, 0, 0, 0); // its own bone, so breathing swells the chest alone
+  rig(body, torso);
+
+  /* head: almond eyes, brows, nose and lips; a pagdi for men (with a plume for soldiers), a khopa with a
+     gajra for women, a shaved head with a choti for the Pujari */
+  const head = bone(spine, 0, 0.3, 0.006);
+  const hp = [];
+  const hy = 0.11, R = 0.12;
+  FAB = 0;
+  hp.push(sph(R, skin, 0, hy, 0, 0.93, 1.06, 0.98));
+  hp.push(sph(0.064, skin, 0, hy - 0.062, 0.03, 1.25, 0.72, 1.05)); // jaw and chin
+  for (const sx of [-1, 1]) {
+    hp.push(sph(0.024, skin, sx * 0.113, hy - 0.004, -0.004, 0.45, 1, 0.8)); // ears
+    hp.push(sph(0.02, 0xf6f1e8, sx * 0.041, hy + 0.01, 0.102, 1.45, 0.82, 0.45));
+    hp.push(sph(0.0135, 0x2a1810, sx * 0.041, hy + 0.009, 0.109, 1.1, 1.1, 0.45));
+    hp.push(sph(0.0045, 0xffffff, sx * 0.037, hy + 0.015, 0.115));
+    hp.push(boxC(0.044, 0.009, 0.01, hair, sx * 0.043, hy + 0.043, 0.108, 0, 0, sx * -0.14)); // brows
+    hp.push(sph(0.02, mixHex(skin, 0xd06a5a, 0.25), sx * 0.062, hy - 0.025, 0.088, 1, 0.6, 0.4)); // cheeks
+    if (fem) hp.push(boxC(0.04, 0.005, 0.005, 0x1a1010, sx * 0.043, hy + 0.022, 0.111, 0, 0, sx * -0.1)); // kajal
+  }
+  hp.push(sph(0.016, skinD, 0, hy - 0.018, 0.115, 0.8, 1.25, 1));
+  hp.push(sph(0.018, lip, 0, hy - 0.052, 0.104, 1.55, 0.45, 0.6));
   if (fem) {
     FAB = 6;
-    body.push(P(new THREE.SphereGeometry(0.166, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), hair, 0, hy + 0.008, -0.012, -0.32));
-    body.push(sph(0.082, hair, 0, hy - 0.005, -0.16));
+    hp.push(P(new THREE.SphereGeometry(0.127, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), hair, 0, hy + 0.004, -0.012, -0.62));
+    hp.push(sph(0.058, hair, 0, hy - 0.01, -0.12)); // khopa
     FAB = 0;
-    for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; body.push(sph(0.017, 0xfaf6ee, Math.cos(a) * 0.078, hy - 0.005 + Math.sin(a) * 0.072, -0.185)); } // gajra
-    body.push(sph(0.011, 0xc81e1e, 0, hy + 0.076, 0.152)); // bindi
-    if (hexOf(look.cloth) % 3 !== 0) body.push(boxC(0.008, 0.06, 0.006, 0xc81e1e, 0, hy + 0.14, 0.11, -0.62)); // sindoor in the parting
-    body.push(sph(0.006, 0xf2c230, 0.032, hy - 0.026, 0.153)); // nose stud
-    for (const sx of [-1, 1]) { body.push(cone(0.014, 0.03, 6, 0xf2c230, sx * 0.158, hy - 0.04, 0.0, Math.PI)); body.push(sph(0.009, 0xf2c230, sx * 0.158, hy - 0.035, 0.0)); } // jhumka
-    if (look.covered) { FAB = CL; body.push(P(new THREE.SphereGeometry(0.184, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), lower, 0, hy, -0.035, -0.5)); FAB = 0; }
-  } else if (job === 'priest') { // a shaved head with a choti, and the three lines of the tripundra
-    body.push(coneC(0.022, 0.08, 6, hair, 0, hy + 0.17, -0.07, -0.6));
-    for (let k = 0; k < 3; k++) body.push(boxC(0.075, 0.006, 0.006, 0xf4ecd8, 0, hy + 0.06 + k * 0.014, 0.148 - k * 0.002, -0.3));
-    body.push(sph(0.01, 0xd33b2c, 0, hy + 0.075, 0.152));
-  } else { // pagdi: a dome wound round with bands in two colours, a knot at the front and a tail (or a plume)
+    for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; hp.push(sph(0.013, 0xfaf6ee, Math.cos(a) * 0.056, hy - 0.01 + Math.sin(a) * 0.052, -0.143)); } // gajra
+    hp.push(sph(0.008, 0xc81e1e, 0, hy + 0.06, 0.116)); // bindi
+    if (hexOf(look.cloth) % 3 !== 0) hp.push(boxC(0.007, 0.05, 0.005, 0xc81e1e, 0, hy + 0.108, 0.082, -0.62)); // sindoor
+    hp.push(sph(0.005, 0xf2c230, 0.022, hy - 0.024, 0.118)); // nose stud
+    for (const sx of [-1, 1]) { hp.push(coneC(0.011, 0.024, 6, 0xf2c230, sx * 0.114, hy - 0.04, 0.0, Math.PI)); hp.push(sph(0.007, 0xf2c230, sx * 0.114, hy - 0.03, 0.0)); } // jhumka
+    if (look.covered) { FAB = CL; hp.push(P(new THREE.SphereGeometry(0.14, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), lower, 0, hy, -0.03, -0.55)); FAB = 0; } // the pallu over the head
+  } else if (job === 'priest') {
+    FAB = 6; hp.push(P(new THREE.SphereGeometry(0.122, 16, 8, 0, Math.PI * 2, Math.PI * 0.55, Math.PI * 0.45), hair, 0, hy, 0, 0, 0, 0, 0.95, 1.05, 1)); FAB = 0; // a little hair round the back
+    hp.push(coneC(0.018, 0.07, 6, hair, 0, hy + 0.135, -0.06, -0.6)); // choti
+    for (let k = 0; k < 3; k++) hp.push(boxC(0.06, 0.005, 0.005, 0xf4ecd8, 0, hy + 0.05 + k * 0.012, 0.113 - k * 0.002, -0.3)); // tripundra
+    hp.push(sph(0.008, 0xd33b2c, 0, hy + 0.062, 0.116));
+  } else { // pagdi: a dome wound round with bands in two colours, a knot at the front and a tail behind (or a plume)
+    FAB = 6; hp.push(sph(0.123, hair, 0, hy - 0.005, -0.012, 0.96, 0.92, 0.98)); // hair beneath
     FAB = 1;
-    body.push(sph(0.17, H('H'), 0, hy + 0.06, -0.01, 1.02, 0.66, 1.02));
-    for (let i = 0; i < 3; i++) body.push(P(new THREE.TorusGeometry(0.163 - i * 0.012, 0.03, 6, 22), i % 2 ? H('G') : H('H'), 0, hy + 0.05 + i * 0.04, -0.008 - i * 0.004, Math.PI / 2 + (i % 2 ? 0.12 : -0.1)));
-    body.push(sph(0.03, H('G'), 0.03, hy + 0.13, 0.15, 1, 1, 0.6));
-    if (army) { body.push(boxC(0.05, 0.12, 0.014, H('G'), 0, hy + 0.15, 0.155, -0.25)); FAB = 6; body.push(coneC(0.014, 0.1, 6, 0xfff0d0, 0.01, hy + 0.24, 0.13, -0.35)); }
-    else body.push(boxC(0.06, 0.13, 0.012, H('H'), 0, hy - 0.02, -0.165, 0.15));
+    hp.push(sph(0.132, H('H'), 0, hy + 0.05, -0.008, 1.02, 0.66, 1.05));
+    for (let i = 0; i < 3; i++) hp.push(P(new THREE.TorusGeometry(0.124 - i * 0.01, 0.024, 6, 22), i % 2 ? accent : H('H'), 0, hy + 0.04 + i * 0.032, -0.006 - i * 0.004, Math.PI / 2 + (i % 2 ? 0.12 : -0.1)));
+    hp.push(sph(0.024, accent, 0.022, hy + 0.1, 0.116, 1, 1, 0.6));
+    if (army) { hp.push(boxC(0.04, 0.1, 0.012, accent, 0, hy + 0.12, 0.12, -0.25)); FAB = 6; hp.push(coneC(0.011, 0.09, 6, 0xfff0d0, 0.008, hy + 0.2, 0.1, -0.35)); }
+    else hp.push(boxC(0.05, 0.11, 0.012, H('H'), 0, hy - 0.02, -0.128, 0.15));
     FAB = 0;
-    if (look.stache) for (const sx of [-1, 1]) { body.push(sphR(0.03, hair, sx * 0.028, hy - 0.047, 0.152, 0, 0, sx * 0.35, 1.5, 0.45, 0.55)); body.push(sph(0.012, hair, sx * 0.064, hy - 0.038, 0.142)); }
+    if (look.stache) for (const sx of [-1, 1]) { hp.push(sphR(0.024, hair, sx * 0.022, hy - 0.035, 0.112, 0, 0, sx * 0.35, 1.5, 0.45, 0.55)); hp.push(sph(0.009, hair, sx * 0.05, hy - 0.028, 0.104)); }
   }
-  if (job === 'archer') { body.push(cylC(0.055, 0.05, 0.38, 10, 0x7a4b26, 0.07, 0.22, -0.18, 0, 0, 0.35)); for (let i = 0; i < 3; i++) body.push(coneC(0.025, 0.08, 3, 0xd33b2c, 0.13 + i * 0.02, 0.44, -0.18)); }
   FAB = 0;
-  const torso = meshOf(body, M);
-  hips.add(torso);
-  // arms: a sleeve to the elbow (a short one for women), bare forearms, mitten hands with a thumb
-  const arms = [];
-  for (const sx of [-1, 1]) {
-    const A = new THREE.Group(); A.position.set(sx * 0.19, 0.25, 0); hips.add(A);
-    const ap = [];
-    const sleeve = job === 'brute' ? skin : cloth;
-    FAB = job === 'brute' ? 0 : fem ? 1 : CL;
-    ap.push(sph(0.056, sleeve, 0, 0, 0));
-    ap.push(cyl(0.05, 0.046, fem ? 0.07 : 0.14, 10, sleeve, 0, fem ? -0.07 : -0.14, 0));
+  rig(hp, head);
+
+  /* arms: index 0 is the left arm (+x), index 1 the right arm (-x) that holds tools and weapons */
+  const arms = [], grips = [];
+  for (const sx of [1, -1]) {
+    const A = bone(spine, sx * (brute ? 0.17 : 0.153), 0.243, 0);
+    const E = bone(A, 0, -0.158, 0);
+    const up = [], fo = [];
+    const sleeve = brute ? skin : cloth;
+    FAB = brute ? 0 : fem ? 1 : CL;
+    const ur = brute ? 0.054 : 0.046;
+    up.push(sph(ur + 0.002, sleeve, 0, -0.004, 0, 1, 0.95, 1));
+    if (fem) { up.push(cyl(ur, ur - 0.004, 0.07, 10, cloth, 0, -0.07, 0)); FAB = 0; up.push(cyl(ur - 0.006, ur - 0.01, 0.09, 10, skin, 0, -0.158, 0)); }
+    else up.push(cyl(ur, ur - 0.006, 0.158, 10, sleeve, 0, -0.158, 0));
     FAB = 0;
-    if (fem) ap.push(cyl(0.043, 0.04, 0.08, 10, skin, 0, -0.15, 0));
-    ap.push(sph(0.04, skin, 0, -0.145, 0));
-    ap.push(cyl(0.039, 0.035, 0.13, 10, skin, 0, -0.275, 0));
-    ap.push(sph(0.042, skin, 0, -0.3, 0.008, 0.85, 1.15, 0.8));
-    ap.push(sph(0.017, skin, -sx * 0.028, -0.285, 0.028, 1, 1.3, 1));
-    if (fem) { // shankha-pola: a white shell bangle, a red one, and a thin gold one
-      ap.push(P(new THREE.TorusGeometry(0.041, 0.009, 4, 12), 0xf6f1e8, 0, -0.245, 0, Math.PI / 2));
-      ap.push(P(new THREE.TorusGeometry(0.039, 0.008, 4, 12), 0xc81e1e, 0, -0.26, 0, Math.PI / 2));
-      ap.push(P(new THREE.TorusGeometry(0.037, 0.005, 4, 12), 0xe8b830, 0, -0.272, 0, Math.PI / 2));
-    } else if (army) ap.push(cyl(0.044, 0.044, 0.05, 10, 0x8a5a22, 0, -0.27, 0));
-    else if (job === 'brute') ap.push(P(new THREE.TorusGeometry(0.05, 0.012, 5, 12), 0xd4a234, 0, -0.08, 0, Math.PI / 2));
-    A.add(meshOf(ap, M));
-    arms.push(A);
+    if (brute) up.push(P(new THREE.TorusGeometry(ur, 0.01, 5, 12), 0xd4a234, 0, -0.07, 0, Math.PI / 2)); // bajuband
+    // forearm and fist
+    const fr = brute ? 0.046 : 0.038;
+    up.push(sph(fr + 0.002, fem || brute ? skin : sleeve, 0, -0.158, 0));
+    if (!fem && !brute) { FAB = CL; fo.push(cyl(fr, fr - 0.002, 0.08, 10, sleeve, 0, -0.08, 0)); FAB = 0; fo.push(P(new THREE.TorusGeometry(fr - 0.001, 0.007, 4, 12), clothD, 0, -0.08, 0, Math.PI / 2)); fo.push(cyl(fr - 0.006, fr - 0.009, 0.06, 10, skin, 0, -0.138, 0)); }
+    else fo.push(cyl(fr, fr - 0.008, 0.14, 10, skin, 0, -0.14, 0));
+    fo.push(sph(0.034, skin, 0, -0.165, 0.004, 0.82, 1.05, 0.95)); // fist
+    fo.push(sph(0.013, skin, sx * -0.022, -0.152, 0.024, 1, 1.25, 1)); // thumb
+    if (fem) {
+      fo.push(P(new THREE.TorusGeometry(0.032, 0.008, 4, 12), 0xf6f1e8, 0, -0.108, 0, Math.PI / 2)); // shankha
+      fo.push(P(new THREE.TorusGeometry(0.031, 0.007, 4, 12), 0xc81e1e, 0, -0.121, 0, Math.PI / 2)); // pola
+      fo.push(P(new THREE.TorusGeometry(0.03, 0.004, 4, 12), 0xe8b830, 0, -0.131, 0, Math.PI / 2));
+    } else if (army) fo.push(cyl(fr + 0.004, fr + 0.002, 0.06, 10, 0x8a5a22, 0, -0.13, 0)); // leather bracer
+    rig(up, A);
+    rig(fo, E);
+    const G = bone(E, 0, -0.168, 0.006);
+    A.userData.elbow = E; A.userData.grip = G;
+    arms.push(A); grips.push(G);
   }
+
+  /* the tool in the right grip, modelled along +z out of the fist (origin = where the fist closes) */
   const T = [];
   const tool = JOBS[job] && JOBS[job].tool;
-  const hy2 = -0.29;
-  if (tool === 'axe') { T.push(cyl(0.022, 0.022, 0.5, 8, 0x8a5a2e, 0, hy2 - 0.42, 0.04)); T.push(sphR(0.09, 0xd0d4dc, 0, hy2 - 0.4, 0.12, 0, 0, 0, 0.35, 0.9, 1)); }
-  else if (tool === 'pick') { T.push(cyl(0.022, 0.022, 0.5, 8, 0x8a5a2e, 0, hy2 - 0.42, 0.04)); T.push(cylC(0.025, 0.012, 0.36, 8, 0xc0c4cc, 0, hy2 - 0.4, 0.04, Math.PI / 2 + 0.2)); }
-  else if (tool === 'hammer') { T.push(cyl(0.022, 0.022, 0.32, 8, 0x8a5a2e, 0, hy2 - 0.26, 0.04)); T.push(cylC(0.06, 0.06, 0.16, 10, 0x55555f, 0, hy2 - 0.26, 0.06, Math.PI / 2)); }
-  else if (tool === 'sickle') { T.push(cyl(0.022, 0.022, 0.12, 8, 0x8a5a2e, 0, hy2 - 0.12, 0.04)); T.push(P(new THREE.TorusGeometry(0.09, 0.014, 5, 12, Math.PI * 1.2), 0xd8dae0, 0, hy2 - 0.18, 0.12, 0, Math.PI / 2, 0)); }
-  else if (tool === 'sword') { T.push(cylC(0.05, 0.05, 0.03, 10, 0xe8b830, 0, hy2 - 0.04, 0.04, Math.PI / 2)); T.push(boxC(0.02, 0.5, 0.055, 0xf2f4f8, 0, hy2 - 0.32, 0.06, 0.12)); }
-  else if (tool === 'bow') { T.push(P(new THREE.TorusGeometry(0.3, 0.017, 5, 14, Math.PI * 0.9), 0x8a5a2e, 0, hy2 - 0.02, 0.05, 0, Math.PI / 2, Math.PI * 0.55)); T.push(box(0.008, 0.008, 0.55, 0xf0e8d0, 0, hy2 - 0.02, -0.17)); }
-  else if (tool === 'thali') { T.push(cyl(0.13, 0.11, 0.025, 16, 0xe8b830, 0, hy2 - 0.04, 0.08)); }
-  else if (tool === 'sack') { T.push(sph(0.12, 0xd6b47a, 0, hy2 - 0.17, 0.04, 1, 1.1, 0.9)); }
-  else if (tool === 'herbs') { T.push(cyl(0.09, 0.06, 0.06, 12, 0x8a5a2e, 0, hy2 - 0.08, 0.08)); T.push(sph(0.075, 0x5fae4a, 0, hy2 - 0.02, 0.08, 1, 0.45, 1)); T.push(coneC(0.025, 0.12, 5, 0x3f8a3a, 0.03, hy2 + 0.06, 0.08, 0, 0, -0.4)); } // a bowl of crushed herbs
-  else if (tool === 'gada') { T.push(cyl(0.03, 0.035, 0.55, 10, 0x6b4223, 0, hy2 - 0.5, 0.06)); T.push(sph(0.15, 0xf2c230, 0, hy2 - 0.58, 0.06)); T.push(cyl(0.07, 0.07, 0.04, 12, 0xfff0a0, 0, hy2 - 0.45, 0.06)); T.push(cone(0.04, 0.09, 8, 0xfff0a0, 0, hy2 - 0.81, 0.06, Math.PI)); }
-  else if (tool === 'spear') { T.push(cyl(0.02, 0.02, 1.5, 8, 0x8a5a2e, 0, hy2 - 0.55, 0.05)); T.push(cone(0.05, 0.22, 8, 0xe0e4ea, 0, hy2 + 0.95, 0.05)); T.push(sph(0.035, 0xd33b2c, 0, hy2 + 0.92, 0.05)); }
-  else if (tool === 'spade') { T.push(cyl(0.022, 0.022, 0.6, 8, 0x8a5a2e, 0, hy2 - 0.5, 0.04)); T.push(boxC(0.13, 0.16, 0.02, 0x8d939a, 0, hy2 - 0.58, 0.06)); }
-  else if (tool === 'mould') { for (const [w, d, x, z] of [[0.24, 0.02, 0, -0.06], [0.24, 0.02, 0, 0.06], [0.02, 0.14, -0.11, 0], [0.02, 0.14, 0.11, 0]]) T.push(boxC(w, 0.05, d, 0x9a6a3a, x, hy2 - 0.06, 0.06 + z)); } // wooden brick mould
-  else if (tool === 'tongs') { for (const sx of [-0.02, 0.02]) T.push(cylC(0.01, 0.01, 0.5, 5, 0x3a3a40, sx, hy2 - 0.25, 0.06, 0, 0, sx * 2)); T.push(sph(0.035, 0xff7a30, 0, hy2 - 0.5, 0.06)); } // tongs holding a glowing bloom
-  else if (tool === 'potli') { // the medicine kit: a cloth bundle with a tied neck, and a vial of green tonic
-    T.push(sph(0.1, 0xe8dcc0, 0, hy2 - 0.14, 0.05, 1, 0.9, 1)); T.push(cyl(0.035, 0.05, 0.05, 8, 0xc84030, 0, hy2 - 0.06, 0.05)); T.push(sph(0.03, 0xe8dcc0, 0, hy2 - 0.01, 0.05));
-  }
-  if (T.length) arms[1].add(meshOf(T));
+  const handle = (r, z0, z1, c) => cylC(r, r, z1 - z0, 8, c || 0x8a5a2e, 0, 0, (z0 + z1) / 2, Math.PI / 2);
   let toolFlame = null;
-  if (tool === 'thali') { toolFlame = glowMesh(new THREE.ConeGeometry(0.03, 0.1, 6), 0xffcc33); toolFlame.position.set(0, hy2 + 0.03, 0.08); arms[1].add(toolFlame); }
-  if (tool === 'potli') { toolFlame = glowMesh(new THREE.CylinderGeometry(0.028, 0.032, 0.11, 8), 0x7dff9a, 0.9); toolFlame.position.set(0, hy2 - 0.04, 0.06); arms[0].add(toolFlame); }
-  if (job === 'medic') torso.add(meshOf([P(new THREE.TorusGeometry(0.17, 0.022, 6, 20), 0x2e7d32, 0, 0.13, 0, Math.PI / 2 - 0.15, 0, 0.7)], M)); // a green healer's sash
-  if (job === 'brute') { // pehelwan: broad shoulders and a rudraksha mala
-    const mala = [];
-    for (let i = 0; i < 14; i++) { const a = (i / 13) * Math.PI - Math.PI; mala.push(sph(0.014, 0x6b2a1e, Math.cos(a) * 0.1, 0.28 + Math.sin(a) * 0.09, 0.12 + Math.abs(Math.sin(a)) * 0.04)); }
-    torso.add(meshOf([sph(0.1, H('S'), -0.15, 0.27, 0, 1, 0.8, 0.9), sph(0.1, H('S'), 0.15, 0.27, 0, 1, 0.8, 0.9), ...mala], M));
+  const ud = {};
+  if (tool === 'axe') { T.push(handle(0.016, -0.06, 0.46)); T.push(boxC(0.018, 0.1, 0.07, 0xd0d4dc, 0, -0.045, 0.42)); T.push(boxC(0.02, 0.03, 0.08, 0x8d939a, 0, 0.0, 0.42)); T.push(cylC(0.008, 0.008, 0.07, 6, 0xeef0f5, 0, -0.095, 0.42, Math.PI / 2)); }
+  else if (tool === 'pick') { T.push(handle(0.016, -0.06, 0.46)); T.push(cylC(0.022, 0.01, 0.18, 8, 0xb9bcc6, 0, -0.09, 0.43, 0, 0, 0.0)); T.push(coneC(0.014, 0.08, 6, 0xb9bcc6, 0, 0.04, 0.43)); T.push(cylC(0.026, 0.026, 0.05, 8, 0x8d939a, 0, 0, 0.43)); }
+  else if (tool === 'hammer') { T.push(handle(0.014, -0.05, 0.25)); T.push(boxC(0.05, 0.11, 0.05, 0x55555f, 0, 0.005, 0.26)); }
+  else if (tool === 'sickle') { T.push(handle(0.016, -0.05, 0.08)); T.push(P(new THREE.TorusGeometry(0.085, 0.01, 4, 14, Math.PI * 1.15), 0xd8dae0, 0, 0.075, 0.1, 0, Math.PI / 2, -0.2, 1, 1, 1)); }
+  else if (tool === 'sword') { // talwar: disc pommel, knuckle guard, a gently curved blade
+    T.push(cylC(0.026, 0.026, 0.01, 10, 0xe8b830, 0, 0, -0.065, Math.PI / 2)); T.push(handle(0.014, -0.06, 0.04, 0x6b3a1e));
+    T.push(boxC(0.09, 0.016, 0.016, 0xe8b830, 0, 0, 0.045)); T.push(P(new THREE.TorusGeometry(0.05, 0.006, 4, 10, Math.PI), 0xe8b830, 0, 0.0, 0.0, 0, Math.PI / 2, 0));
+    const Rc = 1.1, n = 6; // the blade follows an arc, curving back toward the spine
+    for (let i = 0; i < n; i++) {
+      const s0 = 0.05 + (i / n) * 0.5, s1 = 0.05 + ((i + 1) / n) * 0.5, sm = (s0 + s1) / 2, th = sm / Rc, wdt = 0.04 * (1 - (i / n) * 0.45);
+      T.push(boxC(0.008, wdt, s1 - s0 + 0.004, 0xf2f4f8, 0, Rc * (1 - Math.cos(th)), Rc * Math.sin(th), -th));
+      if (i < n - 1) T.push(boxC(0.009, 0.006, s1 - s0 + 0.004, 0xc8ccd4, 0, Rc * (1 - Math.cos(th)) - wdt * 0.25, Rc * Math.sin(th), -th)); // the fuller
+    }
+    T.push(coneC(0.016, 0.05, 4, 0xf2f4f8, 0, Rc * (1 - Math.cos(0.57 / Rc)) + 0.004, Rc * Math.sin(0.57 / Rc), Math.PI / 2 - 0.57 / Rc, 0, 0, 0.5, 1, 1)); // the point
   }
-  if (job === 'spear') arms[0].add(meshOf([cylC(0.13, 0.13, 0.03, 16, 0x3e5f8a, -0.05, -0.24, 0.02, 0, 0, Math.PI / 2), sph(0.035, 0xc9962e, -0.07, -0.24, 0.02)]));
-  if (job === 'warrior') arms[0].add(meshOf([cylC(0.17, 0.17, 0.035, 18, 0xd4a234, -0.05, -0.24, 0.02, 0, 0, Math.PI / 2), sph(0.045, 0x8a5a22, -0.075, -0.24, 0.02), P(new THREE.TorusGeometry(0.15, 0.015, 5, 18), 0x8a5a22, -0.07, -0.24, 0.02, 0, Math.PI / 2, 0)]));
+  else if (tool === 'bow') { /* in the left hand, below */ }
+  else if (tool === 'thali') { // the aarti plate: a brass thali with a diya, flowers and kumkum
+    T.push(cylC(0.012, 0.012, 0.06, 6, 0xe8b830, 0, 0.03, 0.03)); T.push(cylC(0.11, 0.095, 0.018, 16, 0xe8b830, 0, 0.065, 0.05));
+    T.push(cyl(0.025, 0.02, 0.018, 8, C.brick, 0, 0.074, 0.05)); for (let i = 0; i < 5; i++) { const a = i * 1.26; T.push(sph(0.016, i % 2 ? 0xff9933 : 0xffcc33, Math.cos(a) * 0.065, 0.082, 0.05 + Math.sin(a) * 0.065)); }
+    toolFlame = glowMesh(new THREE.ConeGeometry(0.018, 0.06, 6), 0xffcc33); toolFlame.position.set(0, 0.12, 0.05); grips[1].add(toolFlame);
+  }
+  else if (tool === 'sack') { T.push(sph(0.1, 0xd6b47a, 0, -0.11, 0.02, 1, 1.15, 0.9)); T.push(cyl(0.03, 0.04, 0.06, 8, 0xb89860, 0, -0.03, 0.02)); }
+  else if (tool === 'herbs') { T.push(cylC(0.012, 0.012, 0.05, 6, 0x8a5a2e, 0, 0.02, 0.03)); T.push(cyl(0.07, 0.045, 0.05, 12, 0x8a5a2e, 0, 0.04, 0.05)); T.push(sph(0.06, 0x5fae4a, 0, 0.088, 0.05, 1, 0.4, 1)); T.push(coneC(0.02, 0.08, 5, 0x3f8a3a, 0.02, 0.13, 0.05, 0, 0, -0.4)); }
+  else if (tool === 'gada') { T.push(handle(0.022, -0.08, 0.36, 0x6b4223)); T.push(cylC(0.05, 0.05, 0.03, 12, 0xfff0a0, 0, 0, 0.34, Math.PI / 2)); T.push(sph(0.12, 0xf2c230, 0, 0, 0.46)); for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; T.push(P(new THREE.TorusGeometry(0.121, 0.008, 4, 16), 0xc9962e, 0, 0, 0.46, 0, a, 0)); } T.push(coneC(0.03, 0.08, 8, 0xfff0a0, 0, 0, 0.6, Math.PI / 2)); }
+  else if (tool === 'spear') { T.push(handle(0.015, -0.45, 1.0)); T.push(coneC(0.035, 0.18, 8, 0xe0e4ea, 0, 0, 1.09, Math.PI / 2)); T.push(sph(0.028, 0xd33b2c, 0, 0, 0.99)); T.push(cylC(0.02, 0.016, 0.05, 8, 0xc9962e, 0, 0, -0.44, Math.PI / 2)); }
+  else if (tool === 'spade') { T.push(handle(0.015, -0.1, 0.5)); T.push(boxC(0.12, 0.012, 0.15, 0x8d939a, 0, 0, 0.56)); T.push(boxC(0.07, 0.03, 0.02, 0x8a5a2e, 0, 0, -0.11)); }
+  else if (tool === 'mould') { for (const [w, d, x, z] of [[0.24, 0.018, 0, -0.06], [0.24, 0.018, 0, 0.06], [0.018, 0.13, -0.11, 0], [0.018, 0.13, 0.11, 0]]) T.push(boxC(w, 0.05, d, 0x9a6a3a, x, -0.03, 0.08 + z)); }
+  else if (tool === 'tongs') { for (const sx of [-0.012, 0.012]) T.push(cylC(0.008, 0.008, 0.46, 5, 0x3a3a40, sx, 0, 0.22, Math.PI / 2, 0, 0)); T.push(sph(0.032, 0xff7a30, 0, 0, 0.47)); }
+  else if (tool === 'potli') { T.push(sph(0.062, 0xe8dcc0, 0, -0.08, 0.02, 1, 0.9, 1)); T.push(cyl(0.03, 0.045, 0.045, 8, 0xc84030, 0, -0.03, 0.02)); T.push(sph(0.026, 0xe8dcc0, 0, 0.02, 0.02)); }
+  if (T.length) grips[1].add(meshOf(T));
+  if (tool === 'potli') { toolFlame = glowMesh(new THREE.CylinderGeometry(0.022, 0.026, 0.09, 8), 0x7dff9a, 0.9); toolFlame.position.set(0, 0.03, 0.03); grips[0].add(toolFlame); }
+
+  /* the left hand: a dhaal (shield) facing forward, or the bow */
+  if (job === 'warrior' || job === 'spear') {
+    const big = job === 'warrior', r = big ? 0.165 : 0.13, col = big ? 0xd4a234 : 0x3e5f8a;
+    const sp = [cylC(r, r, 0.03, 18, col, 0, 0, 0.05, Math.PI / 2), P(new THREE.TorusGeometry(r, 0.014, 5, 20), 0x8a5a22, 0, 0, 0.066), sph(0.035, 0xc9962e, 0, 0, 0.07, 1, 1, 0.6)];
+    for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2 + Math.PI / 4; sp.push(sph(0.018, 0xfff0a0, Math.cos(a) * r * 0.55, Math.sin(a) * r * 0.55, 0.068, 1, 1, 0.6)); }
+    grips[0].add(meshOf(sp));
+  }
+  if (job === 'archer') { // a recurve bow: limbs along the grip's z axis, belly bulging away from the archer (-y)
+    const bow = new THREE.Group(); grips[0].add(bow);
+    const limb = [];
+    for (const sz of [-1, 1]) for (let k = 0; k < 4; k++) {
+      const a0 = (k / 4) * 0.95, a1 = ((k + 1) / 4) * 0.95;
+      const p0 = [0, (1 - Math.cos(a0)) * 0.2, Math.sin(a0) * 0.42 * sz];
+      const p1 = [0, (1 - Math.cos(a1)) * 0.2, Math.sin(a1) * 0.42 * sz];
+      const dz = p1[2] - p0[2], dy = p1[1] - p0[1], len = Math.hypot(dy, dz) + 0.01;
+      limb.push(cylC(0.012 - k * 0.0015, 0.012 - k * 0.0015, len, 6, 0x8a5a2e, 0, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2, Math.atan2(dz, dy), 0, 0));
+    }
+    limb.push(cylC(0.017, 0.017, 0.07, 8, 0xd33b2c, 0, 0, 0, Math.PI / 2)); // the grip wrap
+    bow.add(meshOf(limb));
+    const tipY = (1 - Math.cos(0.95)) * 0.2, tipZ = Math.sin(0.95) * 0.42;
+    ud.bowTip = { y: tipY, z: tipZ };
+    // the string, rest and drawn, and the nocked arrow (the renderer shows one or the other)
+    const sRest = meshOf([cylC(0.003, 0.003, tipZ * 2, 4, 0xf0e8d0, 0, tipY, 0, Math.PI / 2)], null, true, true);
+    const drawn = new THREE.Group();
+    const pull = 0.3, dl = Math.hypot(tipZ, pull - tipY), da = Math.atan2(tipZ, pull - tipY);
+    drawn.add(meshOf([cylC(0.003, 0.003, dl, 4, 0xf0e8d0, 0, (tipY + pull) / 2, tipZ / 2, -da), cylC(0.003, 0.003, dl, 4, 0xf0e8d0, 0, (tipY + pull) / 2, -tipZ / 2, da),
+      cylC(0.006, 0.006, pull + 0.06, 5, 0xc8a46a, 0, pull / 2 - 0.03, 0.0), coneC(0.012, 0.05, 5, 0xd0d4dc, 0, -0.07, 0, Math.PI), coneC(0.016, 0.05, 3, 0xd33b2c, 0, pull - 0.02, 0)], null, true, true));
+    drawn.visible = false;
+    bow.add(sRest); bow.add(drawn);
+    ud.bowRest = sRest; ud.bowDrawn = drawn;
+  }
+
+  /* soldiers carry a little brass lantern on the belt at night (both hands stay on their weapons) */
   let torch = null;
-  if (slotKey(job) === 'army') {
+  if (army) {
     torch = new THREE.Group();
-    torch.add(meshOf([cyl(0.022, 0.026, 0.4, 8, 0x6b4223, 0, -0.1, 0)], null, true, true));
-    const fl = flameCluster(0.12); fl.position.y = 0.3; torch.add(fl); torch.userData.flame = fl;
-    torch.position.set(0, -0.31, 0.06); torch.rotation.x = 0.5;
-    arms[0].add(torch);
+    torch.add(meshOf([cyl(0.028, 0.032, 0.012, 8, 0xc9962e, 0, -0.06, 0), cyl(0.026, 0.026, 0.07, 8, 0xfff0c0, 0, -0.048, 0), cone(0.03, 0.03, 8, 0xc9962e, 0, 0.022, 0), P(new THREE.TorusGeometry(0.014, 0.004, 4, 8), 0x8a6a22, 0, 0.06, 0)], null, true, true));
+    const fl = flameCluster(0.06); fl.position.y = -0.045; torch.add(fl); torch.userData.flame = fl;
+    torch.position.set(0.15, -0.05, 0.07); torch.rotation.z = 0.1;
+    hips.add(torch);
   }
   // the tokri on the back: the renderer swaps its geometry to show what is inside and how full it is
   const pack = meshOf(Models.packGeo('empty'));
-  pack.position.set(0, 0.03, -0.27);
+  pack.position.set(0, 0.04, -0.2);
   pack.visible = false;
-  hips.add(pack);
+  spine.add(pack);
   const pouch = meshOf(Models.pouchGeo(), null, true);
-  pouch.position.set(0.21, -0.02, 0.05);
+  pouch.position.set(0.17, -0.03, 0.05);
   pouch.visible = false;
   hips.add(pouch);
-  g.userData = { hips, torso, legs, arms, pack, pouch, torch, toolFlame, fem };
+  const body3 = skinnedBody(g, hips, bones, skinParts, M);
+  const silParts = [body3];
+  Object.assign(ud, { hips, spine, torso, head, legs, arms, grips, skirt, pack, pouch, torch, toolFlame, fem, tool, silParts });
+  g.userData = ud;
   return g;
 };
 
@@ -1766,40 +1975,61 @@ Models.enemy = function (type, variant) {
     ud.armBase = -0.5; // arms half raised, reaching
     ud.hips = hips; ud.hipY = hips.position.y;
   } else {
-    const big = type === 'boss';
+    // the great asuras share the demon rig, each with his own look:
+    // Mahasura (buffalo horns, crown, red cape), Bakasura (pot belly, gaping maw, an uprooted tree for a club),
+    // Raktabija (crimson hide that drips glowing blood, a ruby crown, a broad khanda), Kalanemi (indigo
+    // sorcerer: tall mukut, a third eye, violet robes and a staff with a crescent and a glowing orb)
+    const bk = ENEMIES[type] && ENEMIES[type].boss ? type : null, big = !!bk;
+    const maha = bk === 'boss', baka = bk === 'bakasura', rakta = bk === 'raktabija', kala = bk === 'kalanemi', imp = type === 'rakta';
     const skins = [0x4fa07e, 0x4e74c4, 0xb04a5a, 0x7a55b0];
-    const skin = big ? 0x4b3666 : type === 'danav' ? 0x7a2a3c : skins[variant % skins.length];
+    const skin = maha ? 0x4b3666 : baka ? 0x7a6650 : rakta ? 0x9a1c24 : kala ? 0x37408a : imp ? 0xc0202c : type === 'danav' ? 0x7a2a3c : skins[variant % skins.length];
     const sD = new THREE.Color(skin).multiplyScalar(0.78).getHex();
     const sL = new THREE.Color(skin).lerp(new THREE.Color(0xffffff), 0.25).getHex();
     const giant = type === 'danav';
-    const metal = 0x4a4e58, bone = 0xe8dcc0;
+    const metal = 0x4a4e58, bone = 0xe8dcc0, gold = 0xf2c230;
     const hips = new THREE.Group(); hips.position.y = 0.5; g.add(hips);
     for (const sx of [-1, 1]) { // thick legs, shaggy shins, clawed feet
-      const L = new THREE.Group(); L.position.set(sx * 0.15, 0, 0); hips.add(L);
+      const L = new THREE.Group(); L.position.set(sx * (baka ? 0.17 : 0.15), 0, 0); hips.add(L);
       FAB = 4;
-      const lp = [...limb(0.1, 0.3, sD, 0, 0, 0)];
+      const lp = [...limb(baka ? 0.12 : 0.1, 0.3, sD, 0, 0, 0)];
       FAB = 6;
       lp.push(cyl(0.118, 0.11, 0.12, 12, darkHex(skin, 0.55), 0, -0.36, 0));
       FAB = 0;
       lp.push(sph(0.12, 0x3a2420, 0, -0.45, 0.05, 1, 0.55, 1.4));
       for (let k = -1; k <= 1; k++) lp.push(coneC(0.022, 0.07, 6, bone, k * 0.05, -0.45, 0.2, Math.PI / 2));
       if (giant) { FAB = 8; lp.push(cyl(0.12, 0.13, 0.16, 12, metal, 0, -0.24, 0.0)); FAB = 0; } // iron greaves
+      if (kala) { FAB = 2; lp.push(cyl(0.14, 0.17, 0.32, 12, 0x4a2278, 0, -0.34, 0)); FAB = 0; } // the robe reaches his shins
       L.add(meshOf(lp, M));
       ud.legs.push(L);
     }
     const p = [];
     // loincloth: tiger skin for the rakshasa, studded iron for the Danav, red silk for the Demon King, with a ragged hem
-    const cloth = big ? 0xa82222 : giant ? 0x3d3d48 : 0xf09a32;
-    FAB = big ? 2 : giant ? 8 : 7;
+    const cloth = maha ? 0xa82222 : baka ? 0x8a6a3a : rakta ? 0x24141a : kala ? 0x5a2a8a : giant ? 0x3d3d48 : 0xf09a32;
+    FAB = maha || kala ? 2 : baka ? 1 : giant ? 8 : 7;
     p.push(cyl(0.3, 0.34, 0.22, 16, cloth, 0, -0.12, 0));
     for (let i = 0; i < 9; i++) { const a = (i / 9) * Math.PI * 2; p.push(coneC(0.055, 0.12, 4, cloth, Math.cos(a) * 0.32, -0.15, Math.sin(a) * 0.32, Math.PI)); }
     FAB = 4;
-    p.push(sph(0.36, skin, 0, 0.32, 0, 1, 1.0, 0.85));
-    p.push(sph(0.24, sL, 0, 0.28, 0.17, 1, 1.05, 0.45));
+    if (baka) { // a vast pot belly with a navel, a chest of matted hair
+      p.push(sph(0.45, skin, 0, 0.26, 0.06, 1.05, 1.0, 1.0));
+      p.push(sph(0.3, sL, 0, 0.2, 0.26, 1.05, 1.0, 0.5));
+      p.push(sph(0.035, sD, 0, 0.18, 0.5, 1, 1, 0.5));
+    } else {
+      p.push(sph(0.36, skin, 0, 0.32, 0, 1, 1.0, 0.85));
+      p.push(sph(0.24, sL, 0, 0.28, 0.17, 1, 1.05, 0.45));
+    }
     for (const sx of [-1, 1]) p.push(sph(0.14, skin, sx * 0.14, 0.5, 0.16, 1.1, 0.75, 0.6)); // heavy chest
     FAB = 0;
-    if (big) { p.push(P(new THREE.TorusGeometry(0.3, 0.05, 8, 20), 0xf2c230, 0, 0.55, 0.02, Math.PI / 2 - 0.3)); p.push(cyl(0.34, 0.36, 0.08, 16, 0xf2c230, 0, -0.02, 0)); }
-    else for (let i = 0; i < 7; i++) { // a mala of little skulls
+    if (maha) { p.push(P(new THREE.TorusGeometry(0.3, 0.05, 8, 20), gold, 0, 0.55, 0.02, Math.PI / 2 - 0.3)); p.push(cyl(0.34, 0.36, 0.08, 16, gold, 0, -0.02, 0)); }
+    else if (baka) { // a rope belt, and a necklace of cart-wheel spokes and bones from the villages he ate
+      p.push(P(new THREE.TorusGeometry(0.36, 0.03, 6, 22), 0xb89a6a, 0, -0.02, 0, Math.PI / 2));
+      for (let i = 0; i < 9; i++) { const a = -1.1 + (i / 8) * 2.2; p.push(cylC(0.022, 0.022, 0.1, 6, i % 2 ? bone : 0x7a5530, Math.sin(a) * 0.3, 0.62 - Math.cos(a) * 0.08, Math.cos(a) * 0.24 + 0.04, 0, 0, a)); }
+    } else if (rakta) { // a gold collar with rubies, and blood on his chest
+      p.push(P(new THREE.TorusGeometry(0.28, 0.045, 8, 20), gold, 0, 0.58, 0.02, Math.PI / 2 - 0.25));
+      for (let i = 0; i < 5; i++) p.push(sph(0.03, 0xe8202c, -0.16 + i * 0.08, 0.53 + Math.abs(i - 2) * 0.012, 0.26));
+    } else if (kala) { // rudraksha beads, a violet cape and a silver sash
+      for (let i = 0; i < 11; i++) { const a = -1.1 + (i / 10) * 2.2; p.push(sph(0.028, 0x6b2a1e, Math.sin(a) * 0.27, 0.6 - Math.cos(a) * 0.09, Math.cos(a) * 0.23 + 0.04)); }
+      p.push(boxC(0.06, 0.62, 0.03, 0xcfd6e6, 0.05, 0.28, 0.28, 0.2, 0, 0.55));
+    } else if (!imp) for (let i = 0; i < 7; i++) { // a mala of little skulls
       const a = -0.9 + (i / 6) * 1.8, x = Math.sin(a) * 0.26, y = 0.57 - Math.cos(a) * 0.06, z = Math.cos(a) * 0.22 + 0.04;
       p.push(sph(0.045, 0xeee6d2, x, y, z, 1, 1.1, 0.9));
       for (const ex of [-1, 1]) p.push(sph(0.012, 0x1b1020, x + ex * 0.016 * Math.cos(a), y + 0.006, z + 0.038));
@@ -1812,57 +2042,90 @@ Models.enemy = function (type, variant) {
       for (let i = 0; i < 6; i++) p.push(sph(0.02, 0xd4a234, -0.2 + (i % 3) * 0.2, 0.36 + Math.floor(i / 3) * 0.16, 0.27));
       for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) p.push(coneC(0.03, 0.12, 6, 0x8a8e98, sx * (0.32 + k * 0.06), 0.72, -0.06 + k * 0.06, 0, 0, -sx * 0.5));
     }
-    if (big) { FAB = 2; p.push(boxC(0.66, 0.95, 0.04, 0x8a1a1a, 0, 0.3, -0.33, 0.12)); FAB = 0; p.push(boxC(0.68, 0.06, 0.05, 0xf2c230, 0, 0.76, -0.31, 0.12)); } // the royal cape
+    if (maha || kala) { FAB = 2; p.push(boxC(0.66, 0.95, 0.04, maha ? 0x8a1a1a : 0x3a1a66, 0, 0.3, -0.33, 0.12)); FAB = 0; p.push(boxC(0.68, 0.06, 0.05, maha ? gold : 0xcfd6e6, 0, 0.76, -0.31, 0.12)); } // the royal cape
     const hy = 0.82;
     FAB = 4;
     p.push(sph(0.25, skin, 0, hy, 0.02));
     p.push(sph(0.09, sL, 0, hy - 0.08, 0.22, 1.3, 0.8, 0.7));
     p.push(boxC(0.3, 0.06, 0.08, sD, 0, hy + 0.1, 0.19, 0.35)); // a heavy brow
     FAB = 0;
-    p.push(boxC(0.17, 0.03, 0.02, 0x1b1020, 0, hy - 0.12, 0.235)); // the grim mouth
+    if (baka) { // a gaping maw with a lolling tongue and broken teeth
+      p.push(sph(0.13, 0x3a0a10, 0, hy - 0.12, 0.17, 1.15, 0.7, 0.6));
+      p.push(sph(0.07, 0xc84050, 0, hy - 0.17, 0.25, 1.1, 0.5, 1));
+      for (let i = 0; i < 6; i++) p.push(coneC(0.018, 0.05, 5, 0xf2ead0, -0.09 + i * 0.036, hy - 0.06, 0.25, Math.PI));
+    } else p.push(boxC(0.17, 0.03, 0.02, 0x1b1020, 0, hy - 0.12, 0.235)); // the grim mouth
     for (const sx of [-1, 1]) {
       p.push(coneC(0.025, 0.08, 8, 0xffffff, sx * 0.06, hy - 0.16, 0.22, Math.PI));
-      p.push(coneC(0.03, 0.12, 8, bone, sx * 0.1, hy - 0.06, 0.2, 0, 0, -sx * 0.3)); // tusks
+      if (!kala) p.push(coneC(0.03, 0.12, 8, bone, sx * 0.1, hy - 0.06, 0.2, 0, 0, -sx * 0.3)); // tusks
       p.push(boxC(0.12, 0.03, 0.03, 0x1b1020, sx * 0.08, hy + 0.12, 0.22, 0, 0, sx * -0.4));
       p.push(sph(0.06, 0x3a0a0a, sx * 0.085, hy + 0.04, 0.2, 1, 1, 0.5));
     }
-    if (big) {
-      p.push(cyl(0.2, 0.22, 0.14, 16, 0xf2c230, 0, hy + 0.2, 0));
-      for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; p.push(cone(0.05, 0.16, 8, 0xf2c230, Math.cos(a) * 0.18, hy + 0.34, Math.sin(a) * 0.18)); }
+    if (maha) {
+      p.push(cyl(0.2, 0.22, 0.14, 16, gold, 0, hy + 0.2, 0));
+      for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; p.push(cone(0.05, 0.16, 8, gold, Math.cos(a) * 0.18, hy + 0.34, Math.sin(a) * 0.18)); }
       p.push(sph(0.05, 0xff3a3a, 0, hy + 0.27, 0.2));
       for (const sx of [-1, 1]) p.push(P(new THREE.TorusGeometry(0.3, 0.06, 8, 14, Math.PI * 0.62), 0xece0c4, sx * 0.25, hy + 0.08, 0, 0, sx < 0 ? 0 : Math.PI, Math.PI * 0.05));
+    } else if (rakta) { // a ruby crown with flame-shaped points
+      p.push(cyl(0.21, 0.23, 0.12, 16, gold, 0, hy + 0.19, 0));
+      for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2; p.push(coneC(0.045, 0.18, 6, gold, Math.cos(a) * 0.19, hy + 0.38, Math.sin(a) * 0.19, 0, 0, 0)); }
+      p.push(sph(0.06, 0xe8202c, 0, hy + 0.27, 0.21)); p.push(sph(0.035, 0xe8202c, -0.12, hy + 0.25, 0.17)); p.push(sph(0.035, 0xe8202c, 0.12, hy + 0.25, 0.17));
+      FAB = 6; for (let i = 0; i < 6; i++) { const a = (i / 5 - 0.5) * 2.2; p.push(coneC(0.06, 0.28, 6, 0x1a0a0e, Math.sin(a) * 0.17, hy + 0.0, -0.16, -1.3, 0, a * 0.5)); } FAB = 0; // long black hair
+    } else if (kala) { // a tall mukut, a third eye
+      p.push(cyl(0.2, 0.2, 0.1, 16, gold, 0, hy + 0.18, 0));
+      p.push(P(new THREE.LatheGeometry(V2([[0.19, 0], [0.17, 0.12], [0.12, 0.3], [0.06, 0.46], [0.001, 0.56]]), 12), 0xd4b040, 0, hy + 0.27, 0));
+      for (let i = 0; i < 4; i++) p.push(sph(0.03, 0x8a5aff, Math.cos(i * 1.57) * 0.16, hy + 0.33, Math.sin(i * 1.57) * 0.16));
+      FAB = 6; for (let i = 0; i < 7; i++) { const a = (i / 6 - 0.5) * 2.4; p.push(coneC(0.06, 0.34, 6, 0x15102a, Math.sin(a) * 0.18, hy - 0.04, -0.14, -1.35, 0, a * 0.5)); } FAB = 0;
     } else {
       FAB = 6; // a wild mane
-      for (let i = 0; i < 7; i++) { const a = (i / 6 - 0.5) * 2.4; p.push(coneC(0.07, 0.3, 6, 0x1b1020, Math.sin(a) * 0.15, hy + 0.12 + Math.cos(a) * 0.05, -0.15, -1.0, 0, a * 0.55)); }
-      p.push(sph(0.2, 0x1b1020, 0, hy + 0.14, -0.06, 1.2, 0.6, 1.1));
+      for (let i = 0; i < 7; i++) { const a = (i / 6 - 0.5) * 2.4; p.push(coneC(0.07, 0.3, 6, baka ? 0x3a2a1a : 0x1b1020, Math.sin(a) * 0.15, hy + 0.12 + Math.cos(a) * 0.05, -0.15, -1.0, 0, a * 0.55)); }
+      p.push(sph(0.2, baka ? 0x3a2a1a : 0x1b1020, 0, hy + 0.14, -0.06, 1.2, 0.6, 1.1));
       FAB = giant ? 8 : 0;
       if (giant) p.push(sph(0.265, metal, 0, hy + 0.07, -0.01, 1, 0.72, 1)); // horned iron helmet
       FAB = 0;
-      for (const sx of [-1, 1]) {
+      if (!baka) for (const sx of [-1, 1]) {
         p.push(coneC(giant ? 0.075 : 0.06, giant ? 0.36 : 0.28, 10, bone, sx * 0.17, hy + 0.27, 0, 0, 0, -sx * 0.4));
         for (let k = 0; k < 2; k++) p.push(P(new THREE.TorusGeometry(0.05 - k * 0.012, 0.01, 4, 12), 0x9a8a70, sx * (0.13 + k * 0.035), hy + 0.18 + k * 0.08, 0, Math.PI / 2, 0, -sx * 0.4)); // ridges on the horns
-      }
+      } else for (const sx of [-1, 1]) p.push(coneC(0.045, 0.14, 8, bone, sx * 0.16, hy + 0.2, 0.02, 0, 0, -sx * 0.7)); // little stub horns
     }
     hips.add(meshOf(p, M, false, false, big));
-    hips.add(eyePair(0xff3d2e, 0.035, 0.085, hy + 0.04, 0.23));
+    hips.add(eyePair(kala ? 0xd0a8ff : rakta ? 0xffd040 : 0xff3d2e, 0.035, 0.085, hy + 0.04, 0.23));
+    if (kala) { const third = eye(0xd0a8ff, 0.03); third.position.set(0, hy + 0.12, 0.245); hips.add(third); }
+    if (rakta) { // glowing drops of blood that run down his hide
+      const drops = [];
+      for (let i = 0; i < 9; i++) { const a = i * 2.4, yy = 0.15 + (i % 4) * 0.13; drops.push(P(new THREE.SphereGeometry(0.03, 6, 5), 0xff2030, Math.cos(a) * 0.34, yy, Math.sin(a) * 0.3 + 0.04, 0, 0, 0, 1, 1.6, 1)); }
+      hips.add(glowMesh(merge(drops), 0xff2030, 0.95));
+    }
     for (const sx of [-1, 1]) {
-      const A = new THREE.Group(); A.position.set(sx * 0.38, 0.45, 0); hips.add(A);
+      const A = new THREE.Group(); A.position.set(sx * (baka ? 0.44 : 0.38), 0.45, 0); hips.add(A);
       FAB = 4;
-      const ap = [sph(0.11, skin, 0, 0, 0), ...limb(0.085, 0.32, skin, 0, 0, 0), sph(0.1, sD, 0, -0.42, 0)];
+      const ap = [sph(0.11, skin, 0, 0, 0), ...limb(baka ? 0.1 : 0.085, 0.32, skin, 0, 0, 0), sph(0.1, sD, 0, -0.42, 0)];
       FAB = 0;
       for (let k = -1; k <= 1; k++) ap.push(coneC(0.018, 0.07, 5, bone, k * 0.04, -0.5, 0.05, Math.PI)); // claws
-      ap.push(P(new THREE.TorusGeometry(0.09, 0.022, 6, 14), big ? 0xf2c230 : giant ? metal : 0xb8860b, 0, -0.16, 0, Math.PI / 2)); // arm ring
+      ap.push(P(new THREE.TorusGeometry(0.09, 0.022, 6, 14), big ? gold : giant ? metal : 0xb8860b, 0, -0.16, 0, Math.PI / 2)); // arm ring
+      if (kala) { FAB = 2; ap.push(cyl(0.13, 0.1, 0.2, 10, 0x5a2a8a, 0, -0.2, 0)); FAB = 0; } // wide sleeves
       A.add(meshOf(ap, M));
       ud.arms.push(A);
     }
     FAB = 0;
     const W = [];
-    if (big) { W.push(cyl(0.04, 0.04, 0.85, 10, 0x6b4223, 0, -1.25, 0.1)); W.push(sph(0.22, 0xf2c230, 0, -1.5, 0.1)); for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; W.push(coneC(0.04, 0.12, 8, 0xfff0a0, Math.cos(a) * 0.22, -1.5, 0.1 + Math.sin(a) * 0.22, Math.PI / 2, 0, a + Math.PI / 2)); } }
-    else {
+    if (maha) { W.push(cyl(0.04, 0.04, 0.85, 10, 0x6b4223, 0, -1.25, 0.1)); W.push(sph(0.22, gold, 0, -1.5, 0.1)); for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; W.push(coneC(0.04, 0.12, 8, 0xfff0a0, Math.cos(a) * 0.22, -1.5, 0.1 + Math.sin(a) * 0.22, Math.PI / 2, 0, a + Math.PI / 2)); } }
+    else if (baka) { // a whole young tree, torn up by the roots
+      W.push(cylC(0.07, 0.13, 1.1, 10, 0x6b4a2a, 0, -0.95, 0.12));
+      for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; W.push(cylC(0.02, 0.012, 0.22, 5, 0x5a3a20, Math.cos(a) * 0.12, -0.42, 0.12 + Math.sin(a) * 0.12, Math.cos(a) * 0.8, 0, Math.sin(a) * 0.8)); } // roots
+      for (let i = 0; i < 4; i++) W.push(sph(0.13, i % 2 ? 0x4f7a32 : 0x3f6a2a, (i - 1.5) * 0.08, -1.48 - (i % 2) * 0.08, 0.12 + (i % 2 ? 0.06 : -0.04), 1, 0.8, 1));
+    } else if (rakta) { // a broad khanda
+      W.push(cylC(0.035, 0.035, 0.22, 8, 0x5a3018, 0, -0.5, 0.1)); W.push(boxC(0.2, 0.04, 0.06, gold, 0, -0.62, 0.1));
+      W.push(boxC(0.13, 0.8, 0.025, 0xdfe4ec, 0, -1.04, 0.1)); W.push(coneC(0.075, 0.14, 4, 0xdfe4ec, 0, -1.5, 0.1, Math.PI, 0, 0, 1, 1, 0.2));
+      W.push(boxC(0.05, 0.6, 0.03, 0x9a1c24, 0.02, -1.0, 0.115)); // blood on the blade
+    } else if (kala) { // a staff with a silver crescent cradling a glowing orb
+      W.push(cylC(0.03, 0.03, 1.5, 8, 0x2a1a3a, 0, -0.55, 0.12)); W.push(P(new THREE.TorusGeometry(0.13, 0.025, 6, 16, Math.PI), 0xcfd6e6, 0, 0.27, 0.12, 0, 0, Math.PI));
+      const orb = glowMesh(new THREE.SphereGeometry(0.08, 12, 10), 0xc8a0ff); orb.position.set(0, 0.24, 0.12); ud.orb = orb;
+    } else {
       W.push(cylC(0.05, 0.1, 0.75, 12, 0x7a4a28, 0, -0.78, 0.12));
       for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; W.push(coneC(0.03, 0.09, 8, 0xf2ead0, Math.cos(a) * 0.1, -0.98, 0.12 + Math.sin(a) * 0.1, 0, 0, Math.PI / 2 + a)); }
     }
-    ud.arms[1].add(meshOf(W, M));
+    if (!imp) ud.arms[1].add(meshOf(W, M));
+    if (ud.orb) ud.arms[1].add(ud.orb);
     ud.hips = hips;
   }
   FAB = 0;

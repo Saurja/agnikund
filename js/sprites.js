@@ -219,6 +219,7 @@ function lookPalette(look, job) {
   if (o) {
     for (const k in o) {
       if (look.g === 'f' && (k === 'H' || k === 'G')) continue;
+      if (look.g === 'f' && (k === 'C' || k === 'c') && (job === 'archer' || job === 'brute')) continue; // her own choli, not a leather jerkin or bare skin
       if (look.g === 'f' && k === 'D' && job !== 'priest' && job !== 'warrior') continue;
       p[k] = o[k];
     }
