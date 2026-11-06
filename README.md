@@ -2,7 +2,7 @@
 
 A 3D Indian village survival game that runs in the browser. Keep the sacred fire burning, build your village by day and defend it from demons and ghosts of Bengali folklore by night. Survive fifteen nights.
 
-**Play:** open `index.html`, or visit the GitHub Pages site for this repository.
+**Play now: https://saurja.github.io/agnikund/** (desktop and phone browsers). You can also open `index.html` locally.
 
 ## How to play
 
