@@ -261,6 +261,7 @@ const App = {
     window.addEventListener('keydown', (e) => {
       if (this.mode !== 'play') return;
       const k = e.key.toLowerCase();
+      if (k === 'r' && UI.buildType) { UI.rotateGhost(); return; } // while placing, R turns the building instead of zooming
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', 'q', 'e', 'r', 'f'].includes(k)) { this.keys[k] = true; if (k.startsWith('arrow')) e.preventDefault(); return; }
       if (k === ' ') { e.preventDefault(); if ($('menu').classList.contains('hidden')) UI.setPaused(!UI.paused); }
       else if (k === '1' || k === '2' || k === '3') UI.setSpeed(+k);

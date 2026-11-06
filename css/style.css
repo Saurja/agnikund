@@ -232,6 +232,19 @@ body.lowgfx .bar, body.lowgfx .panel, body.lowgfx #buildbar, body.lowgfx #placeB
 .jobgrid button small { font-size: 10px; color: var(--text-3); }
 .jobgrid button.cur { background: var(--accent-soft); border-color: rgba(242, 154, 62, 0.5); color: var(--accent-hi); }
 .jobgrid button.cur small { color: var(--accent); }
+/* Bhandar storage bays: a tile per bay with its good, amount and a fill line along the bottom */
+.bays { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 4px; }
+.bays .bay { position: relative; flex-direction: column; gap: 1px; padding: 7px 3px 9px; font-size: 11px; line-height: 1.1; border-radius: 9px; overflow: hidden; }
+.bays .bay span { color: var(--text-2); }
+.bays .bay em { font-style: normal; font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.bays .bay .fill { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--good); transition: width 0.35s var(--ease); }
+.bays .bay.full .fill { background: var(--bad); }
+.bays .bay.cur { background: var(--accent-soft); border-color: rgba(242, 154, 62, 0.5); }
+.baypick { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 8px 0 2px; }
+.baypick small { color: var(--text-3); margin-right: 2px; }
+.baypick button { padding: 5px 9px; font-size: 12px; gap: 5px; }
+.baypick button.cur { background: var(--accent-soft); border-color: rgba(242, 154, 62, 0.5); color: var(--accent-hi); }
+body.touch .bays .bay { padding: 9px 3px 11px; }
 .uplist { display: flex; flex-direction: column; gap: 6px; }
 .up { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--raise); border-radius: 10px; padding: 9px 10px; }
 .up .d { line-height: 1.35; font-size: 12px; color: var(--text-2); min-width: 0; }
@@ -357,6 +370,7 @@ p.miss { margin: 8px 0; padding: 7px 10px; background: var(--bad-soft); border-r
 .how-card { width: min(880px, 96vw); }
 .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .how-grid section { background: var(--raise); border-radius: 14px; padding: 14px 16px 16px; }
+.how-grid section:last-child { grid-column: 1 / -1; } /* the controls strip runs the full width under the six topics */
 .how-grid .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
 .how-grid h3 { margin: 10px 0 6px; font-size: 14px; font-weight: 600; }
 .how-grid p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-2); }
@@ -613,3 +627,47 @@ body.mobile .tbtn span { display: none; }
 body.mobile #speedSeg { display: none; }
 body.mobile #btnSpeed { display: inline-flex; }
 body.mobile #removeMsg { font-size: 12px; }
+/* ---------- bottom action dock: big Build and Destroy, always in reach ---------- */
+#actionDock {
+  position: absolute; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  display: flex; gap: 10px; z-index: 4;
+}
+.dockbtn {
+  height: 54px; padding: 0 26px 0 20px; gap: 10px; border-radius: 16px; font-size: 16px; font-weight: 600;
+  box-shadow: var(--shadow); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+}
+.dockbtn svg.i { width: 22px; height: 22px; }
+.dockbtn.build { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.dockbtn.build:hover:not(:disabled) { background: var(--accent-hi); border-color: transparent; }
+.dockbtn.build.on { background: var(--surface); color: var(--text); border-color: rgba(242, 154, 62, 0.6); }
+.dockbtn.remove { background: var(--surface); color: var(--text); border-color: var(--line-2); }
+.dockbtn.remove svg.i { color: var(--bad); }
+.dockbtn.remove:hover:not(:disabled) { background: rgba(52, 22, 18, 0.92); border-color: rgba(238, 107, 92, 0.55); }
+.dockbtn.remove.on { background: var(--bad); color: #fff; border-color: transparent; }
+.dockbtn.remove.on svg.i { color: #fff; }
+body.lowgfx .dockbtn { -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* everything that used to sit at the bottom now stacks above the dock */
+#buildbar { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+#placeBar { bottom: calc(214px + env(safe-area-inset-bottom, 0px)); }
+#removeBar { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+body.mobile #actionDock { bottom: calc(8px + env(safe-area-inset-bottom, 0px)); gap: 8px; width: calc(100% - 16px); max-width: 380px; }
+body.mobile .dockbtn { flex: 1; height: 50px; padding: 0 12px; justify-content: center; }
+body.mobile #buildbar { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+body.mobile #placeBar { bottom: calc(160px + env(safe-area-inset-bottom, 0px)); }
+body.mobile #removeBar { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+body.mobile #info, body.mobile #logPanel,
+body.mobile:not(.build-open) #info, body.mobile:not(.build-open) #logPanel { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+body.mobile.build-open #info, body.mobile.build-open #logPanel { bottom: calc(160px + env(safe-area-inset-bottom, 0px)); }
+body.mobile.remove-mode #info, body.mobile.remove-mode #logPanel { bottom: calc(118px + env(safe-area-inset-bottom, 0px)); }
+body.landscape #actionDock { bottom: calc(6px + env(safe-area-inset-bottom, 0px)); max-width: 320px; }
+body.landscape .dockbtn { height: 44px; }
+body.landscape #buildbar { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+body.landscape #placeBar { bottom: calc(130px + env(safe-area-inset-bottom, 0px)); }
+body.landscape #removeBar { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+body.landscape #info, body.landscape #logPanel,
+body.landscape:not(.build-open) #info, body.landscape:not(.build-open) #logPanel { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+body.landscape.build-open #info, body.landscape.build-open #logPanel { bottom: calc(130px + env(safe-area-inset-bottom, 0px)); }
+body.landscape.remove-mode #info, body.landscape.remove-mode #logPanel { bottom: calc(104px + env(safe-area-inset-bottom, 0px)); }
+body.landscape #jobs { max-height: calc(100% - 132px); }
+body.portrait #btnHome { display: inline-flex; } /* the top row has room again */
+body.portrait:not(.build-open) #jobs { max-height: calc(100% - 190px); }

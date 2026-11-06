@@ -54,14 +54,40 @@ function withWind(mat, k, key) {
  * physically-based look (smooth shading, gentle highlights) that reads modern instead of cel-shaded.
  */
 function surfaceMat(opts) {
-  if (MAT.tier === 'low') return new THREE.MeshLambertMaterial(opts);
+  if (MAT.tier === 'low') { const o = Object.assign({}, opts); delete o.roughness; delete o.metalness; return new THREE.MeshLambertMaterial(o); }
   return new THREE.MeshStandardMaterial(Object.assign({ roughness: 0.86, metalness: 0 }, opts));
+}
+/**
+ * Painted surface for buildings: soft world-space noise gives mottled plaster, wood and thatch grain
+ * (no UVs needed), and walls darken where they meet the earth. Mid and High only.
+ */
+function texturize(mat, amp) {
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = 'varying vec3 vWPos;\n' + sh.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = `varying vec3 vWPos;
+      float hh3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float vn3(vec3 x) {
+        vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(hh3(i), hh3(i + vec3(1, 0, 0)), f.x), mix(hh3(i + vec3(0, 1, 0)), hh3(i + vec3(1, 1, 0)), f.x), f.y),
+                   mix(mix(hh3(i + vec3(0, 0, 1)), hh3(i + vec3(1, 0, 1)), f.x), mix(hh3(i + vec3(0, 1, 1)), hh3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+      }
+      ` + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        float n = vn3(vWPos * 3.0) * 0.55 + vn3(vWPos * 11.0) * 0.45;
+        float grain = vn3(vec3(vWPos.x * 24.0, vWPos.y * 2.2, vWPos.z * 24.0));
+        diffuseColor.rgb *= 1.0 + ${amp.toFixed(3)} * (mix(n, grain, 0.4) - 0.5) * 2.0;
+        diffuseColor.rgb *= mix(0.8, 1.0, clamp(vWPos.y * 2.4 + 0.12, 0.0, 1.0));
+      }`);
+  };
+  mat.customProgramCacheKey = () => 'bld_' + MAT.tier + amp;
+  return mat;
 }
 function initMaterials(tier) {
   MAT.tier = tier || MAT.tier || 'high';
   MAT.useOutline = false; // the modern look relies on light, shadow and occlusion rather than ink lines
   MAT.ramp = MAT.ramp || toonRamp([95, 165, 220, 255]);
   MAT.std = surfaceMat({ vertexColors: true });
+  MAT.bld = MAT.tier === 'low' ? MAT.std : texturize(surfaceMat({ vertexColors: true, roughness: 0.92 }), 0.14);
   MAT.bhoot = surfaceMat({ vertexColors: true, transparent: true, opacity: 0.82, emissive: 0x2a3848 });
   MAT.outline = MAT.outline || outlineMat(0.028);
   MAT.outlineBig = MAT.outlineBig || outlineMat(0.045);
@@ -208,6 +234,50 @@ function meshOf(parts, mat, noShadow, noOutline, big) {
   }
   return m;
 }
+/*
+ * X-ray silhouette: drawn only where something else is in front (depth test "greater"), as a soft
+ * rim-lit glow. Vertices are pulled toward the camera along the view ray first, so the shape stays
+ * the same on screen while a character's own parts (an arm in front of the body) never trigger it;
+ * only real occluders like trees, huts and walls do. offset is that pull in world units.
+ */
+function silMat(color, offset) {
+  MAT.sil = MAT.sil || {};
+  const k = color + '_' + offset.toFixed(2);
+  if (MAT.sil[k]) return MAT.sil[k];
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(color) }, uOffset: { value: offset } },
+    vertexShader: `uniform float uOffset; varying float vRim;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vec3 n = normalize(normalMatrix * normal), v = normalize(-mv.xyz);
+        vRim = 1.0 - abs(dot(n, v));
+        mv.xyz += v * uOffset;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `uniform vec3 uColor; varying float vRim;
+      void main() { gl_FragColor = vec4(uColor, 0.28 + 0.5 * vRim * vRim); }`,
+    transparent: true, depthWrite: false, depthFunc: THREE.GreaterDepth,
+  });
+  m.userData.sil = true;
+  MAT.sil[k] = m;
+  return m;
+}
+/** Give an object an x-ray silhouette twin of its biggest part (one extra draw, shares the geometry). */
+function addSilhouette(obj, color, offset) {
+  let best = null, n = 0;
+  obj.traverse((c) => {
+    if (!c.isMesh || !c.geometry || !c.geometry.attributes.position || c.userData.outline) return;
+    const cnt = c.geometry.attributes.position.count * (c.material && c.material.isMeshBasicMaterial ? 0.2 : 1);
+    if (cnt > n) { n = cnt; best = c; }
+  });
+  if (!best) return null;
+  const s = new THREE.Mesh(best.geometry, silMat(color, offset));
+  s.renderOrder = 6; s.castShadow = false; s.receiveShadow = false;
+  s.raycast = () => {};
+  s.userData.sil = true;
+  best.add(s);
+  return s;
+}
 function glowMesh(geo, color, opacity) {
   const m = new THREE.Mesh(geo, glowMat(color, opacity));
   m.castShadow = false;
@@ -332,9 +402,19 @@ Models.building = function (type, level) {
       break;
     }
     case 'hut': {
+      const limed = level >= 3; // a lime-washed house with a red-oxide skirting at the top level
       p.push(cyl(0.95, 1.0, 0.12, 10, C.mudD, 0, 0, 0));
-      p.push(cyl(0.78, 0.8, 0.95, 10, C.mud, 0, 0.12, 0));
-      p.push(cyl(0.81, 0.81, 0.08, 10, C.white, 0, 0.28, 0));
+      p.push(cyl(0.78, 0.8, 0.95, 10, limed ? 0xece0c6 : C.mud, 0, 0.12, 0));
+      p.push(cyl(0.81, 0.81, limed ? 0.2 : 0.08, 10, limed ? 0xa8452c : C.white, 0, limed ? 0.12 : 0.28, 0));
+      // door frame, a barred window, dung cakes drying on the wall and a string of red chillies
+      p.push(box(0.07, 0.66, 0.1, C.wood, -0.21, 0.12, 0.77)); p.push(box(0.07, 0.66, 0.1, C.wood, 0.21, 0.12, 0.77)); p.push(box(0.5, 0.07, 0.11, C.wood, 0, 0.76, 0.77));
+      { const a = 1.25, wx = Math.sin(a) * 0.79, wz = Math.cos(a) * 0.79;
+        p.push(box(0.26, 0.22, 0.05, C.dark, wx, 0.42, wz, a)); p.push(box(0.32, 0.04, 0.07, C.wood, wx, 0.4, wz, a));
+        for (const o of [-0.07, 0, 0.07]) p.push(box(0.018, 0.22, 0.02, C.wood, wx + Math.cos(a) * o, 0.42, wz - Math.sin(a) * o, a)); }
+      for (let i = 0; i < 6; i++) { const a = 2.5 + (i % 3) * 0.32, y = 0.3 + Math.floor(i / 3) * 0.2;
+        p.push(cylC(0.065, 0.065, 0.025, 8, 0x6e5238, Math.sin(a) * 0.8, y, Math.cos(a) * 0.8, 0, a + Math.PI / 2, Math.PI / 2)); }
+      for (let i = 0; i < 5; i++) p.push(coneC(0.022, 0.09, 5, C.red, 0.3, 0.92 - i * 0.065, 0.76, Math.PI));
+      if (level >= 2) p.push(box(0.62, 0.07, 0.22, C.mudD, 0, 0, 0.9)); // a mud step at the door
       p.push(box(0.36, 0.62, 0.1, C.dark, 0, 0.12, 0.76));
       for (let i = 0; i < 6; i++) p.push(box(0.06, 0.06, 0.06, i % 2 ? C.saffron : C.marigold, -0.18 + i * 0.072, 0.76, 0.82));
       for (let i = 0; i < 14; i++) { const a = (i / 14) * Math.PI * 2; if (Math.abs(a) < 0.5 || a > Math.PI * 2 - 0.5) continue; p.push(box(0.05, 0.05, 0.05, C.white, Math.sin(a) * 0.8, 0.62 + (i % 2) * 0.1, Math.cos(a) * 0.8)); }
@@ -369,15 +449,48 @@ Models.building = function (type, level) {
       break;
     }
     case 'store': {
-      for (const sx of [-0.82, 0.82]) for (const sz of [-0.62, 0.62]) p.push(cyl(0.05, 0.06, 1.3, 5, C.wood, sx, 0, sz));
-      p.push(boxC(1.95, 0.08, 0.95, C.thatch, 0, 1.47, 0.32, 0.55));
-      p.push(boxC(1.95, 0.08, 0.95, C.thatch, 0, 1.47, -0.32, -0.55));
-      p.push(boxC(2.0, 0.08, 0.1, C.thatchD, 0, 1.7, 0));
-      p.push(box(1.6, 0.9, 0.08, 0xc8a46a, 0, 0, -0.62));
-      // four bays, one per good: wood and grain at the back, stone and treasure at the front
-      addPiles(g, [['wood', -0.42, 0, -0.3, 0.62, 0], ['food', 0.42, 0, -0.3, 0.62, 0], ['stone', -0.42, 0, 0.3, 0.62, 0], ['gold', 0.44, 0, 0.32, 0.6, 0]]);
-      p.push(box(0.05, 0.3, 1.1, 0x9a6a3a, 0, 0, -0.05)); // a low plank divider between the bays
-      p.push(sph(0.1, C.brick, 0.86, 0.1, 0.0)); // a matka by the post
+      // Bhandar: an open storehouse whose floor is split into bays, each holding the one good the player picks.
+      // Level 1 has 4 bays under thatch; level 2 has 6 on a stone floor with wattle side walls; level 3 has 8 under a clay-tile roof.
+      const lv = clamp(level, 1, 3), cols = lv + 1, W = 1.76, cw = W / cols, y0 = lv >= 2 ? 0.1 : 0.05;
+      const sc = [0, 0.62, 0.5, 0.41][lv], roofC = lv >= 3 ? C.tile : C.thatch, roofD = lv >= 3 ? 0x8a3a22 : C.thatchD;
+      p.push(box(1.98, y0, 1.72, lv >= 3 ? 0xa04a2c : lv >= 2 ? 0xb3ad9f : C.mudD, 0, 0, -0.02)); // floor or plinth
+      if (lv >= 2) for (let i = 0; i < 9; i++) p.push(box(0.2, 0.012, 1.6, i % 2 ? 0xa8a296 : 0xbab4a6, -0.88 + i * 0.22, y0, -0.02)); // flagstones
+      const postC = lv >= 3 ? C.woodL : C.wood, posts = lv >= 2 ? [-0.9, 0, 0.9] : [-0.9, 0.9];
+      for (const sx of posts) for (const sz of [-0.72, 0.72]) {
+        p.push(cyl(0.055, 0.065, 1.22, 8, postC, sx, y0, sz));
+        if (lv >= 2) p.push(box(0.17, 0.09, 0.17, 0xd8c8b0, sx, y0, sz)); // stone footing
+        if (lv >= 3) { p.push(boxC(0.3, 0.06, 0.08, C.wood, sx, y0 + 1.1, sz)); p.push(sph(0.045, C.gold, sx, y0 + 1.1, sz + (sz > 0 ? 0.06 : -0.06))); } // carved bracket
+      }
+      p.push(box(1.9, 0.07, 0.08, C.wood, 0, y0 + 1.15, 0.72)); p.push(box(1.9, 0.07, 0.08, C.wood, 0, y0 + 1.15, -0.72)); // beams
+      // pitched roof, with a thicker eave from level 2
+      p.push(boxC(2.12, 0.08, 1.02, roofC, 0, y0 + 1.45, 0.38, 0.52)); p.push(boxC(2.12, 0.08, 1.02, roofC, 0, y0 + 1.45, -0.38, -0.52));
+      if (lv >= 2) { p.push(boxC(2.16, 0.05, 0.3, roofD, 0, y0 + 1.24, 0.82, 0.52)); p.push(boxC(2.16, 0.05, 0.3, roofD, 0, y0 + 1.24, -0.82, -0.52)); }
+      if (lv >= 3) for (let i = 0; i < 9; i++) for (const s of [-1, 1]) p.push(cylC(0.03, 0.03, 1.0, 6, 0x9a4428, -0.96 + i * 0.24, y0 + 1.495, s * 0.405, Math.PI / 2 + s * 0.52, 0, 0)); // rows of clay tiles down the slope
+      p.push(cylC(0.05, 0.05, 2.16, 8, roofD, 0, y0 + 1.7, 0, 0, 0, Math.PI / 2)); // ridge
+      // wattle-and-daub back wall; side walls from level 2
+      p.push(box(1.86, 0.92, 0.08, 0xc8a46a, 0, y0, -0.72));
+      for (let i = 0; i < 10; i++) p.push(box(0.035, 0.92, 0.035, 0x9a6a3a, -0.84 + i * 0.187, y0, -0.67));
+      if (lv >= 2) for (const sx of [-0.92, 0.92]) { p.push(box(0.08, 0.6, 1.36, 0xc8a46a, sx, y0, -0.02)); p.push(box(0.1, 0.05, 1.4, C.white, sx, y0 + 0.6, -0.02)); }
+      // plank dividers between the bays
+      for (let c = 1; c < cols; c++) p.push(box(0.045, 0.26, 1.24, 0x9a6a3a, -W / 2 + c * cw, y0, -0.04));
+      p.push(box(W, 0.18, 0.045, 0x8a5a2e, 0, y0, -0.02));
+      // one heap per bay, back row first; the renderer sets which good each one shows
+      const spots = [];
+      for (const z of [-0.34, 0.32]) for (let c = 0; c < cols; c++) spots.push([RES_ORDER[spots.length % RES_ORDER.length], -W / 2 + cw * (c + 0.5), y0, z, sc, 0]);
+      addPiles(g, spots); ud.bays = true;
+      p.push(sph(0.1, C.brick, 0.98, 0.1, 0.0)); p.push(cyl(0.05, 0.07, 0.05, 10, C.brickD, 0.98, 0.19, 0.0)); // a matka by the post
+      if (lv >= 2) { // a taraju (balance scale) hanging from the front beam, grain sacks and a lantern
+        const tx = -0.45, ty = y0 + 0.9, tz = 0.74;
+        p.push(cyl(0.006, 0.006, 0.25, 3, 0x3a2a1a, tx, ty, tz)); p.push(boxC(0.4, 0.022, 0.022, C.wood, tx, ty, tz));
+        for (const sx of [-0.18, 0.18]) { p.push(cyl(0.004, 0.004, 0.2, 3, 0x3a2a1a, tx + sx, ty - 0.2, tz)); p.push(cyl(0.075, 0.05, 0.022, 10, C.gold, tx + sx, ty - 0.22, tz)); }
+        for (const [sx, sy] of [[0.36, 0], [0.56, 0], [0.46, 0.15]]) p.push(sph(0.1, 0xd8c090, sx, y0 + sy + 0.08, 0.86, 1, 0.8, 0.85));
+        const lamp = glowMesh(new THREE.SphereGeometry(0.055, 8, 6), 0xffc060); lamp.position.set(0.12, y0 + 1.0, 0.74); g.add(lamp); ud.flames.push(lamp);
+        p.push(cyl(0.004, 0.004, 0.12, 3, 0x2a2a2a, 0.12, y0 + 1.04, 0.74));
+        ud.lights.push({ x: 0.12, y: 1.0, z: 0.8, r: 3, c: 0xffc070 });
+      }
+      if (lv >= 3) { // the munim's low desk under the scale, with the red bahi-khata ledger
+        p.push(box(0.32, 0.14, 0.18, C.woodL, -0.45, 0, 0.9)); p.push(box(0.16, 0.03, 0.11, C.red, -0.45, 0.14, 0.9)); p.push(box(0.03, 0.035, 0.11, C.gold, -0.45, 0.14, 0.9));
+      }
       break;
     }
     case 'palisade': {
@@ -583,10 +696,80 @@ Models.building = function (type, level) {
       ud.lights.push({ x: 0, y: 0.8, z: 1.0, r: 5, c: 0xffc070, always: true });
       break;
     }
+    case 'vaidyashala': { // healer's hut: square mud room, pyramid thatch, herb beds, drying rack, mortar and pestle
+      p.push(box(1.9, 0.1, 1.9, C.mudD, 0, 0, 0));
+      p.push(box(1.35, 0.95, 1.25, C.mud, -0.1, 0.1, -0.25));
+      p.push(box(1.37, 0.07, 1.27, C.white, -0.1, 0.3, -0.25));
+      p.push(box(0.34, 0.62, 0.06, 0x2e7d32, -0.1, 0.1, 0.38)); // green door curtain
+      p.push(box(0.42, 0.06, 0.08, C.wood, -0.1, 0.72, 0.4));
+      p.push(box(0.26, 0.2, 0.05, C.dark, 0.38, 0.5, 0.38)); p.push(box(0.3, 0.04, 0.07, C.wood, 0.38, 0.48, 0.39)); // window
+      p.push(cone(1.15, 0.9, 4, C.thatch, -0.1, 1.05, -0.25, 0, Math.PI / 4));
+      p.push(cone(1.2, 0.12, 4, C.thatchD, -0.1, 1.0, -0.25, 0, Math.PI / 4));
+      p.push(sph(0.1, C.thatchD, -0.1, 1.95, -0.25));
+      for (const [bx, bz] of [[-0.55, 0.7], [0.15, 0.7]]) { // herb beds
+        p.push(box(0.55, 0.1, 0.32, 0x7a5233, bx, 0, bz)); p.push(box(0.5, 0.04, 0.27, C.soil, bx, 0.1, bz));
+        for (let k = 0; k < 4; k++) p.push(sph(0.07, k % 2 ? 0x4f9a3c : 0x6aae4a, bx - 0.18 + k * 0.12, 0.16, bz + (k % 2 ? 0.05 : -0.05), 1, 1.2, 1));
+      }
+      for (const sx of [0.62, 0.92]) p.push(cyl(0.025, 0.03, 0.95, 6, C.wood, sx, 0.1, -0.6)); // drying rack
+      p.push(cylC(0.02, 0.02, 0.36, 6, C.wood, 0.77, 0.95, -0.6, 0, 0, Math.PI / 2));
+      for (let k = 0; k < 3; k++) p.push(sph(0.06, 0x5c8a3a, 0.67 + k * 0.1, 0.85, -0.6, 1, 1.6, 1));
+      p.push(cyl(0.11, 0.09, 0.14, 12, C.stone, 0.72, 0.1, 0.25)); p.push(cylC(0.02, 0.02, 0.3, 6, C.woodL, 0.75, 0.32, 0.25, 0, 0, 0.4)); // mortar and pestle
+      p.push(sph(0.13, C.brick, -0.82, 0.22, 0.28)); p.push(cyl(0.06, 0.08, 0.06, 10, C.brickD, -0.82, 0.32, 0.28));
+      p.push(cyl(0.025, 0.03, 2.3, 6, C.bamboo, 0.85, 0.1, 0.85));
+      const f = flag(0x2e7d32, 0.42, 0.28); f.position.set(0.85, 2.4, 0.85); g.add(f); ud.flags.push(f);
+      ud.lights.push({ x: -0.1, y: 0.5, z: 0.6, r: 3.2, c: 0xffd890 });
+      break;
+    }
   }
+  addLevelDecor(p, g, ud, type, level);
   if (p.length) g.add(meshOf(p));
+  // static building parts get the painted, textured surface
+  if (MAT.bld && MAT.bld !== MAT.std) g.traverse((c) => { if (c.isMesh && c.material === MAT.std) c.material = MAT.bld; });
   return g;
 };
+/**
+ * What an upgrade looks like, for any building. Level 2: a stone kerb with painted white dots, a marigold
+ * toran on posts at the entrance and two clay diyas. Level 3: a brick kerb with a front step, a saffron
+ * flag, tulsi pots and a golden kalash on the roof.
+ */
+function addLevelDecor(p, g, ud, type, level) {
+  const d = BUILDINGS[type];
+  if (!d || d.wall || level < 2) return;
+  const hw = d.fw / 2, hd = d.fd / 2, field = isFieldType(type), kh = 0.1, small = d.fw < 2 || d.fd < 2;
+  const kc = level >= 3 ? 0xb5532f : 0xb8b2a6;
+  p.push(box(d.fw - 0.02, kh, 0.1, kc, 0, 0, hd - 0.06)); p.push(box(d.fw - 0.02, kh, 0.1, kc, 0, 0, -hd + 0.06));
+  p.push(box(0.1, kh, d.fd - 0.02, kc, hw - 0.06, 0, 0)); p.push(box(0.1, kh, d.fd - 0.02, kc, -hw + 0.06, 0, 0));
+  const nd = Math.max(3, Math.round(d.fw * 4));
+  for (let i = 0; i < nd; i++) p.push(sph(0.024, 0xf4ecd8, -hw + 0.14 + (i * (d.fw - 0.28)) / (nd - 1), kh + 0.005, hd - 0.06, 1, 0.45, 1));
+  if (!field && !small) {
+    // a welcome toran of marigolds and mango leaves strung between two posts at the front
+    const px = hw - 0.12, top = Math.min(d.ht * 0.6, 1.4);
+    for (const sx of [-1, 1]) p.push(cyl(0.025, 0.03, top + 0.06, 6, C.woodL, sx * px, 0, hd - 0.04));
+    const n = Math.max(6, Math.round(d.fw * 6));
+    for (let i = 0; i <= n; i++) {
+      const f = i / n, x = -px + f * px * 2, y = top - Math.sin(f * Math.PI) * 0.16;
+      p.push(sph(0.042, i % 2 ? C.saffron : C.marigold, x, y, hd - 0.04));
+      if (i % 2 === 0 && i > 0 && i < n) p.push(coneC(0.028, 0.12, 4, 0x3f8a3a, x, y - 0.1, hd - 0.04, Math.PI));
+    }
+    for (const sx of [-1, 1]) { // clay diyas
+      p.push(cyl(0.05, 0.035, 0.04, 8, C.brick, sx * (hw - 0.3), kh, hd - 0.06));
+      const fl = glowMesh(new THREE.ConeGeometry(0.03, 0.09, 4), 0xffcc33); fl.position.set(sx * (hw - 0.3), kh + 0.08, hd - 0.06); g.add(fl); ud.flames.push(fl);
+    }
+  }
+  if (level >= 3) {
+    p.push(box(Math.min(1.0, d.fw * 0.5), 0.06, 0.24, kc, 0, 0, hd + 0.1)); // front step
+    const ph = d.ht + 0.8;
+    p.push(cyl(0.024, 0.03, ph, 6, C.bamboo, -hw + 0.12, 0, -hd + 0.12));
+    const f = flag(C.saffron, 0.42, 0.28); f.position.set(-hw + 0.12, ph, -hd + 0.12); g.add(f); ud.flags.push(f);
+    if (!small) for (const sx of [-1, 1]) { // tulsi pots
+      const x = sx * (hw - 0.2), z = field ? hd - 0.2 : hd - 0.32;
+      p.push(box(0.2, 0.22, 0.2, 0xd8c8b0, x, 0, z)); p.push(box(0.23, 0.04, 0.23, C.red, x, 0.22, z)); p.push(sph(0.1, 0x3f8a3a, x, 0.35, z, 1, 1.3, 1));
+    }
+    if (['hut', 'bighouse', 'store', 'vaidyashala', 'bazaar'].includes(d.model || type)) { // golden kalash on the roof
+      p.push(sph(0.085, C.gold, 0, d.ht - 0.02, 0)); p.push(cone(0.035, 0.14, 6, C.gold, 0, d.ht + 0.04, 0));
+    }
+  }
+}
 
 /* ---------- construction site (foundation, scaffolding, materials) ---------- */
 Models.site = function (type) {
@@ -1031,6 +1214,7 @@ Models.villager = function (look, job) {
   else if (tool === 'bow') { T.push(P(new THREE.TorusGeometry(0.3, 0.017, 5, 14, Math.PI * 0.9), 0x8a5a2e, 0, hy2 - 0.02, 0.05, 0, Math.PI / 2, Math.PI * 0.55)); T.push(box(0.008, 0.008, 0.55, 0xf0e8d0, 0, hy2 - 0.02, -0.17)); }
   else if (tool === 'thali') { T.push(cyl(0.13, 0.11, 0.025, 16, 0xe8b830, 0, hy2 - 0.04, 0.08)); }
   else if (tool === 'sack') { T.push(sph(0.12, 0xd6b47a, 0, hy2 - 0.17, 0.04, 1, 1.1, 0.9)); }
+  else if (tool === 'herbs') { T.push(cyl(0.09, 0.06, 0.06, 12, 0x8a5a2e, 0, hy2 - 0.08, 0.08)); T.push(sph(0.075, 0x5fae4a, 0, hy2 - 0.02, 0.08, 1, 0.45, 1)); T.push(coneC(0.025, 0.12, 5, 0x3f8a3a, 0.03, hy2 + 0.06, 0.08, 0, 0, -0.4)); } // a bowl of crushed herbs
   else if (tool === 'gada') { T.push(cyl(0.03, 0.035, 0.55, 10, 0x6b4223, 0, hy2 - 0.5, 0.06)); T.push(sph(0.15, 0xf2c230, 0, hy2 - 0.58, 0.06)); T.push(cyl(0.07, 0.07, 0.04, 12, 0xfff0a0, 0, hy2 - 0.45, 0.06)); T.push(cone(0.04, 0.09, 8, 0xfff0a0, 0, hy2 - 0.81, 0.06, Math.PI)); }
   else if (tool === 'spear') { T.push(cyl(0.02, 0.02, 1.5, 8, 0x8a5a2e, 0, hy2 - 0.55, 0.05)); T.push(cone(0.05, 0.22, 8, 0xe0e4ea, 0, hy2 + 0.95, 0.05)); T.push(sph(0.035, 0xd33b2c, 0, hy2 + 0.92, 0.05)); }
   if (T.length) arms[1].add(meshOf(T));

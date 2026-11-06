@@ -188,6 +188,7 @@ const JOB_LOOK = {
   priest:  { H: '#ff8f1f', G: '#ffb84d', C: '#ff8f1f', c: '#e07010', D: '#ffb84d', d: '#e07010' },
   farm:    { H: '#f4ecd8', G: '#c8453c' },
   build:   { H: '#8d6e63', G: '#5d4037' },
+  vaidya:  { H: '#f4ecd8', G: '#2e7d32', C: '#f4ecd8', c: '#2e7d32', D: '#e6dbbf', d: '#2e7d32' },
   trader:  { H: '#ffd54f', G: '#e65100', C: '#6a1b9a', c: '#e8b830' },
   stone:   { H: '#78909c', G: '#546e7a' },
 };

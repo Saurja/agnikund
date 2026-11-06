@@ -113,9 +113,11 @@ function makeVillagerRaw() {
 const fireLv = (s) => FIRE_LEVELS[s.fire.level];
 const territory = (s) => fireLv(s).radius;
 const getB = (s, id) => s.bById.get(id);
+/** Villagers a home holds: huts gain 1 bed per upgrade, big houses 2. */
+function homeCap(b) { const h = BUILDINGS[b.type].housing || 0; return h ? h + (bLevel(b) - 1) * (h > 3 ? 2 : 1) : 0; }
 function housing(s) {
   let h = fireLv(s).housing;
-  for (const b of s.buildings) if (b.done && BUILDINGS[b.type].housing) h += BUILDINGS[b.type].housing;
+  for (const b of s.buildings) if (b.done && BUILDINGS[b.type].housing) h += homeCap(b);
   return h;
 }
 function canAfford(s, cost) { for (const k in cost) if ((s.res[k] || 0) < cost[k]) return false; return true; }
@@ -134,13 +136,36 @@ function addRes(s, k, n, x, z, y) {
    syncStock() keeps the two in step, so any gain without a place goes to the Agnikund heap
    and anything eaten or burned comes out of the heap first, then the nearest stockpile. */
 const carryCap = (s, r) => (r === 'food' && s.upgrades.plough ? 8 : CARRY_CAP[r] || 5);
-function stockCap(b, r) { if (!b) return Infinity; const c = STOCK_CAP[b.type]; return (c && c[r]) || 0; }
+/** Bhandar bays: each holds one good the player picks (4 at level 1, 6 at level 2, 8 at level 3). */
+function storeBays(b) {
+  const n = STORE_BAYS[bLevel(b)] || 4;
+  if (!b.bays) b.bays = RES_ORDER.slice();
+  while (b.bays.length < n) b.bays.push(RES_ORDER[b.bays.length % RES_ORDER.length]);
+  if (b.bays.length > n) b.bays.length = n;
+  return b.bays;
+}
+function stockCap(b, r) {
+  if (!b) return Infinity;
+  if (b.type === 'store') { let n = 0; for (const x of storeBays(b)) if (x === r) n++; return n * BAY_CAP[bLevel(b)]; }
+  const c = STOCK_CAP[b.type];
+  return c && c[r] ? Math.round(c[r] * (STOCK_MULT[bLevel(b)] || 1)) : 0;
+}
+/** Does this stockpile take this good? (a Bhandar only takes the goods its bays are set to) */
+function acceptsRes(b, r) { const d = BUILDINGS[b.type]; return !!(d.drop && d.drop.includes(r) && (b.type !== 'store' || storeBays(b).includes(r))); }
+/** Point one Bhandar bay at a different good; anything that no longer fits spills onto the Agnikund heap. */
+function setBay(s, b, i, r) {
+  const bays = storeBays(b);
+  if (i < 0 || i >= bays.length || !RES[r]) return;
+  bays[i] = r;
+  const st = stockOf(s, b), heap = stockOf(s, null);
+  for (const k of RES_ORDER) { const over = (st[k] || 0) - stockCap(b, k); if (over > 0) { st[k] -= over; heap[k] = (heap[k] || 0) + over; } }
+}
 function stockOf(s, b) { if (!b) return s.fireStock || (s.fireStock = {}); return b.stock || (b.stock = {}); }
 function stockFree(b, r) { return stockCap(b, r) - ((b && b.stock && b.stock[r]) || 0); }
 /** Every place holding a good: the Agnikund heap first, then finished stockpile buildings. */
 function stockpiles(s, r) {
   const out = [{ b: null, x: FIRE_HEAP[r].x, z: FIRE_HEAP[r].z }];
-  for (const b of s.buildings) { const d = BUILDINGS[b.type]; if (b.done && d.drop && d.drop.includes(r)) out.push({ b, x: b.x, z: b.z }); }
+  for (const b of s.buildings) { const d = BUILDINGS[b.type]; if (b.done && d.drop && d.drop.includes(r) && (acceptsRes(b, r) || (b.stock && b.stock[r] > 0))) out.push({ b, x: b.x, z: b.z }); }
   return out;
 }
 /** Put goods into one stockpile; whatever does not fit spills onto the Agnikund heap. */
@@ -170,7 +195,7 @@ function syncStock(s) {
 }
 /** What a stockpile holds, for the UI: [{ r, n, cap }] for every good it takes. */
 function stockList(s, b) {
-  const goods = b ? BUILDINGS[b.type].drop || [] : RES_ORDER;
+  const goods = !b ? RES_ORDER : b.type === 'store' ? RES_ORDER.filter((r) => storeBays(b).includes(r) || (b.stock && b.stock[r] >= 1)) : BUILDINGS[b.type].drop || [];
   const st = stockOf(s, b);
   return goods.map((r) => ({ r, n: Math.floor(st[r] || 0), cap: b ? stockCap(b, r) : Infinity }));
 }
@@ -186,7 +211,11 @@ function jobSlots(s, job) {
 }
 function usedSlots(s, job) { const k = slotKey(job); let n = 0; for (const v of s.villagers) if (slotKey(v.job) === k) n++; return n; }
 /** Work places a finished building offers for a job. */
-function bSlots(b, job) { const sl = BUILDINGS[b.type].slots; return b.done && sl ? sl[slotKey(job)] || 0 : 0; }
+function bSlots(b, job) {
+  const sl = BUILDINGS[b.type].slots, k = slotKey(job);
+  if (!b.done || !sl || !sl[k]) return 0;
+  return sl[k] + (bLevel(b) - 1) * (k === 'army' ? 2 : 1); // each upgrade adds a place (two for soldiers)
+}
 function workersAt(s, b, job, except) { const k = slotKey(job); let n = 0; for (const o of s.villagers) if (o !== except && slotKey(o.job) === k && o.workplace === b.id) n++; return n; }
 const bLevel = (b) => b.level || 1;
 /** What resources are still missing for a cost, e.g. "20 wood, 5 gold" ('' when affordable). */
@@ -363,8 +392,12 @@ function finishUpgrade(s, b) {
   b.level = bLevel(b) + 1;
   b.upgrading = false;
   b.popT = 0.6;
+  // every level makes the building sturdier (and fully repaired)
+  b.maxHp = Math.round(def.hp * (1 + 0.4 * (b.level - 1)));
+  b.hp = b.maxHp;
+  if (b.type === 'store') storeBays(b); // new empty bays appear
   s.buildVer++;
-  toast(`The ${def.name} is now level ${b.level}! Unlocked: ${L.unlocks}.`, 'good', 7);
+  toast(L.generic ? `The ${def.name} is now level ${b.level}: ${L.unlocks}.` : `The ${def.name} is now level ${b.level}! Unlocked: ${L.unlocks}.`, 'good', 7);
   sfx('upgrade', b.x, b.z);
   emit(s, b.x, def.ht * 0.6, b.z, 20, { spread: def.fw / 2, spreadY: def.ht / 3, vx: 0.8, vyMin: 0.5, vyMax: 2, life: 1.2, colors: ['#ffcc33', '#ff9933', '#fff3b0'], g: -0.5, add: true });
 }
@@ -702,7 +735,7 @@ function dropPoints(s, res) {
   const pts = [h ? { x: h.x, z: h.z, r: 0.7, fire: true } : { x: 0, z: 0, r: 2.1, fire: true }];
   for (const b of s.buildings) {
     const d = BUILDINGS[b.type];
-    if (b.done && d.drop && (!res || d.drop.includes(res))) pts.push({ x: b.x, z: b.z, r: Math.max(d.fw, d.fd) * 0.5 + 0.35, b });
+    if (b.done && d.drop && (!res || acceptsRes(b, res))) pts.push({ x: b.x, z: b.z, r: Math.max(d.fw, d.fd) * 0.5 + 0.35, b });
   }
   return pts;
 }
@@ -804,7 +837,8 @@ function farmAI(s, v, dt, spd) {
   v.anim = 'work';
   faceTo(v, f.x, f.z);
   let rate = workRate(s) * (f.type === 'field' ? 1 : 1.15);
-  if (s.buildings.some((b) => b.type === 'well' && b.done && dist(b, f) < 9)) rate *= 1.5;
+  if (s.buildings.some((b) => b.type === 'well' && b.done && dist(b, f) < 9 + (bLevel(b) - 1) * 2)) rate *= 1.5;
+  rate *= 1 + 0.2 * (bLevel(f) - 1); // upgraded fields grow faster
   if (s.weather === 'rain') rate *= 1.5;
   f.grow += dt * rate;
   v.task = f.grow < 22 ? 'Tending the crops' : 'Harvesting the grain';
@@ -964,6 +998,69 @@ function priestHeal(s, v, dt) {
       if (Math.random() < dt * 1.5) emit(s, o.x, 1.4, o.z, 1, { spread: 0.2, vx: 0.2, vyMin: 0.6, vyMax: 1.2, life: 0.9, colors: ['#ffe066', '#fff3b0'], add: true });
     }
   }
+}
+/* ---------- healing ---------- */
+function healGlow(s, o) { emit(s, o.x, 1.2, o.z, 2, { spread: 0.25, vx: 0.2, vyMin: 0.5, vyMax: 1.3, life: 1, colors: ['#8ef09a', '#d8ffd0', '#5fd36f'], g: -0.6, add: true }); }
+/**
+ * Vaidya: walk to the most hurt villager or soldier inside the village and heal them with herbs.
+ * By night they only treat people inside the village land and never go near a demon.
+ * Returns true while busy with a patient.
+ */
+function healerAI(s, v, dt, spd, phase) {
+  const hut = validWorkplace(s, v);
+  if (!hut) return false;
+  const R = territory(s);
+  let best = null, bs = Infinity;
+  for (const o of s.villagers) {
+    if (o === v || o.inside || o.arriving || o.hp >= o.maxHp * 0.92) continue;
+    const r = Math.hypot(o.x, o.z);
+    if (r > R + (phase === 'day' ? 6 : -1)) continue;
+    if (phase !== 'day' && nearestEnemy(s, o.x, o.z, 3.2, true)) continue; // too dangerous
+    const score = (o.hp / o.maxHp) * 20 + distXZ(o.x, o.z, v.x, v.z) * 0.5;
+    if (score < bs) { bs = score; best = o; }
+  }
+  if (!best) return false;
+  best.healBy = v.name; best.healT = s.time + 0.6; // the patient's panel shows who is coming
+  if (distXZ(best.x, best.z, v.x, v.z) > 0.85) {
+    moveTo(v, best.x, best.z, spd * 1.1, dt);
+    v.task = `Hurrying to heal ${best.name}`;
+    best.healNear = false;
+    return true;
+  }
+  best.healNear = true;
+  faceTo(v, best.x, best.z);
+  v.anim = 'work';
+  const rate = 7 * (1 + 0.3 * (bLevel(hut) - 1)) * workRate(s);
+  best.hp = Math.min(best.maxHp, best.hp + rate * dt);
+  v.task = `Healing ${best.name} with herbs (${Math.ceil(best.hp)} / ${best.maxHp})`;
+  if (Math.random() < dt * 4) healGlow(s, best);
+  sfx('heal', v.x, v.z);
+  return true;
+}
+function vaidyaAI(s, v, dt, spd, phase) {
+  if (healerAI(s, v, dt, spd, phase)) return;
+  const hut = validWorkplace(s, v);
+  if (!hut) { v.task = 'Needs a Vaidyashala'; return idleAI(s, v, dt, spd); }
+  if (phase !== 'day') return homeAI(s, v, dt, spd);
+  const p = frontSpot(s, v, hut, workplaceIndex(s, v) === 0 ? -0.5 : 0.5);
+  if (!moveTo(v, p.x, p.z, spd, dt)) { v.task = 'Walking to the Vaidyashala'; return; }
+  v.anim = 'work';
+  faceTo(v, hut.x, hut.z);
+  v.task = 'Grinding herbs — ready to heal the wounded';
+}
+const HERB_COST = { food: 5 };
+/** Player action: heal one villager with herbs right away (costs grain, short cooldown each). */
+function healWithHerbs(s, v) {
+  if (!v || v.hp >= v.maxHp - 0.5) return false;
+  if ((v.herbT || 0) > s.time) { toast(`${v.name} was just treated. Try again in ${Math.ceil(v.herbT - s.time)} s.`, 'warn', 3); return false; }
+  if (!canAfford(s, HERB_COST)) { notAfford(s, HERB_COST, 'make herbal medicine'); return false; }
+  spend(s, HERB_COST, v.x, v.z);
+  v.hp = Math.min(v.maxHp, v.hp + Math.max(40, v.maxHp * 0.6));
+  v.herbT = s.time + 20;
+  for (let i = 0; i < 4; i++) healGlow(s, v);
+  floater(s, v.x, 1.8, v.z, 'Healed', '#8ef09a');
+  sfx('heal', v.x, v.z);
+  return true;
 }
 function frontSpot(s, v, b, lateral) {
   const p = localToWorld(b, lateral, BUILDINGS[b.type].fd / 2 + 0.45);
@@ -1233,6 +1330,7 @@ function updateVillager(s, v, dt, phase) {
   if (v.job === 'archer') return archerAI(s, v, dt, phase, spd);
   if (shelterAI(s, v, dt, spd)) return;
   if (v.job === 'priest') priestHeal(s, v, dt);
+  if (v.job === 'vaidya') return vaidyaAI(s, v, dt, spd, phase); // healers keep working at night, inside the village
   if (phase !== 'day') return homeAI(s, v, dt, spd);
   switch (v.job) {
     case 'wood': return gatherAI(s, v, dt, spd, 'wood');
@@ -1536,7 +1634,7 @@ function updateEnemy(s, e, dt) {
   e.vuln = 1;
   for (const b of s.buildings) {
     if (!b.done || b.hp <= 0) continue;
-    if (b.type === 'lamp' && distXZ(b.x, b.z, e.x, e.z) < 4.5) { slow = 0.6; e.hp -= 2.5 * dt; }
+    if (b.type === 'lamp' && distXZ(b.x, b.z, e.x, e.z) < 4.5 + (bLevel(b) - 1)) { slow = 0.6; e.hp -= 2.5 * bLevel(b) * dt; }
     else if (b.type === 'belltower' && distXZ(b.x, b.z, e.x, e.z) < TOWERS.belltower.range) { slow = Math.min(slow, 0.6); e.vuln = 1.25; }
   }
   if (e.fireT > 0) { // set alight by fire pots or Agni Baan arrows
@@ -1761,8 +1859,8 @@ function updateTips(s, dt) {
   s.tipT = 0;
   const ph = phaseOf(s.t);
   if (s.day === 1 && s.t > 9) tip('camera', 'Look around: drag or WASD to move, mouse wheel to zoom, right-drag or Q / E to rotate the view.');
-  if (s.day === 1 && s.t > 4) tip('jobs', 'Every job needs a workplace. Press + next to Mistri (2 builders work from the Agnikund), then press Build at the top and place a Lakdi Taal (woodcutter camp) near the trees for your Lakadhara.');
-  if (s.day === 1 && s.t > 40 && !s.buildings.some((b) => isFieldType(b.type))) tip('field', 'Press Build at the top and choose a Khet (Field), then assign Kisan (farmers). Each villager eats 4 grain every evening.');
+  if (s.day === 1 && s.t > 4) tip('jobs', 'Every job needs a workplace. Press + next to Mistri (2 builders work from the Agnikund), then press Build at the bottom and place a Lakdi Taal (woodcutter camp) near the trees for your Lakadhara.');
+  if (s.day === 1 && s.t > 40 && !s.buildings.some((b) => isFieldType(b.type))) tip('field', 'Press Build at the bottom and choose a Khet (Field), then assign Kisan (farmers). Each villager eats 4 grain every evening.');
   if (s.buildings.some((b) => !b.done) && jobCount(s, 'build') === 0 && s.t > 3) tip('needBuilder', 'Construction sites need a Mistri (builder). Assign one in the Kaam panel.');
   if (s.fire.level < 5 && canAfford(s, FIRE_LEVELS[s.fire.level + 1].cost)) tip('fireUp' + s.fire.level, 'You can upgrade the Agnikund! Click the fire to grow your land and unlock new buildings.');
   if (s.villagers.length >= housing(s) && s.day >= 2 && ph === 'day') tip('housing', 'Your village is full. Build a Jhopdi (hut) so travellers can settle here.');
@@ -1806,7 +1904,7 @@ const Game = {
         upgrades: s.upgrades, stats: s.stats, weather: s.weather, festival: s.festival, hungry: s.hungry, won: s.won,
         tips: s.tips, nextId: s.nextId, spawnQueue: s.spawnQueue, fronts: s.fronts, grove: s.grove,
         villagers: s.villagers.map((v) => ({ id: v.id, name: v.name, look: v.look, x: r2(v.x), z: r2(v.z), job: v.job, hp: v.hp, maxHp: v.maxHp, carry: v.carry, carryAmt: v.carryAmt, gold: v.gold, workplace: v.workplace, arriving: v.arriving, ax: v.ax, az: v.az, home: v.home, inside: v.inside, shelter: v.shelter, fearT: v.fearT })),
-        buildings: s.buildings.map((b) => ({ id: b.id, type: b.type, cx: b.cx, cz: b.cz, rot: b.rot, done: b.done, progress: b.progress, hp: b.hp, maxHp: b.maxHp, grow: b.grow, level: b.level, upgrading: b.upgrading, upProg: b.upProg, stock: b.stock })),
+        buildings: s.buildings.map((b) => ({ id: b.id, type: b.type, cx: b.cx, cz: b.cz, rot: b.rot, done: b.done, progress: b.progress, hp: b.hp, maxHp: b.maxHp, grow: b.grow, level: b.level, upgrading: b.upgrading, upProg: b.upProg, stock: b.stock, bays: b.bays })),
         fireStock: s.fireStock,
         armory: s.armory,
         trees: s.trees.map((t) => [t.id, r2(t.x), r2(t.z), t.type, t.variant, t.wood, t.maxWood, t.stump ? 1 : 0, t.regrow, r2(t.rot), r2(t.scale), t.sacred ? 1 : 0]),
@@ -1880,11 +1978,12 @@ const Game = {
         if (nearestEnemy(s, b.x, b.z, T.range, false)) { b.cd = 3; b.ringT = 1; sfx('bell', b.x, b.z); }
         continue;
       }
-      const t = nearestEnemy(s, b.x, b.z, T.range, false);
+      const lvB = 1 + 0.25 * (bLevel(b) - 1); // upgraded towers hit harder and reach further
+      const t = nearestEnemy(s, b.x, b.z, T.range + (bLevel(b) - 1), false);
       if (!t) continue;
-      if (T.kind === 'arrow') { shootArrow(s, b.x, T.y, b.z, t, T.dmg * (s.upgrades.bow ? 1.5 : 1), false); sfx('bow', b.x, b.z); }
+      if (T.kind === 'arrow') { shootArrow(s, b.x, T.y, b.z, t, T.dmg * lvB * (s.upgrades.bow ? 1.5 : 1), false); sfx('bow', b.x, b.z); }
       else {
-        const p = shootArrow(s, b.x, T.y, b.z, t, T.dmg, false, T.kind, T.kind === 'ball' ? 12 : 8);
+        const p = shootArrow(s, b.x, T.y, b.z, t, T.dmg * lvB, false, T.kind, T.kind === 'ball' ? 12 : 8);
         p.splash = T.splash; p.burn = T.burn;
         sfx(T.kind === 'ball' ? 'cannon' : 'whoosh', b.x, b.z);
         if (T.kind === 'ball') emit(s, b.x, T.y, b.z, 10, { spread: 0.3, vx: 0.8, vyMin: 0.5, vyMax: 1.5, life: 1.5, colors: ['#9a9aa4', '#7d7d88', '#c8c8d0'], g: -0.4 });

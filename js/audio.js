@@ -28,6 +28,7 @@ const SFX = {
   drop_stone: { f: ['drop_stone1.ogg', 'drop_stone2.ogg'], vol: 0.55, gap: 0.1 },
   drop_food: { f: ['drop_food1.ogg', 'drop_food2.ogg'], vol: 0.5, pitch: [0.7, 0.85], gap: 0.1 },
   drop_gold: { f: ['drop_gold.ogg'], vol: 0.45, gap: 0.1 },
+  heal: { f: ['aleya_twinkle2.ogg', 'aleya_twinkle1.ogg'], vol: 0.16, pitch: [1.3, 1.55], verb: true, gap: 1.2 },
   // combat
   sword: { f: ['blade1.ogg', 'blade2.ogg', 'blade3.ogg'], vol: 0.42, gap: 0.05 },
   bow: { f: ['bow1.wav', 'bow2.wav'], vol: 0.4, pitch: [1.05, 1.25], gap: 0.05 },
@@ -88,7 +89,7 @@ const Sound = {
   mode: 'day', threat: 0, nextTan: 0, tanStep: 0, nextFlute: 0, nextDrum: 0, drumStep: 0,
 
   init() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    if (this.ctx) { if (this.ctx.state === 'suspended' && !this.hidden) this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     const ctx = (this.ctx = new AC());
@@ -113,6 +114,10 @@ const Sound = {
     this.initTracks();
     this.loadSamples();
     setInterval(() => this.schedule(), 60);
+    this.hidden = document.hidden;
+    document.addEventListener('visibilitychange', () => this.onVisibility(document.hidden));
+    window.addEventListener('pagehide', () => this.onVisibility(true));
+    window.addEventListener('pageshow', () => this.onVisibility(document.hidden));
   },
 
   /* ---------- recorded effects ---------- */
@@ -180,10 +185,28 @@ const Sound = {
   // three moods: day (sitar), night while the village waits (dark tabla), and battle once the ghosts appear
   tracks: null, trackOK: false, trackVol: 0.5, TRACK_VOL: { day: 0.5, night: 0.42, battle: 0.55 },
   initTracks() {
+    const ctx = this.ctx;
     const mk = (src, mode) => {
       const a = new Audio(src);
-      a.loop = true; a.preload = mode === 'day' ? 'auto' : 'metadata'; a.volume = 0;
-      a.addEventListener('error', () => { a._failed = true; }); // only this mood falls back to synthesised music
+      a.loop = true; a.preload = mode === 'day' ? 'auto' : 'metadata';
+      a._v = 0; a._tries = 0;
+      // Fade through a gain node: iPhone browsers ignore element.volume, which left a track playing for good.
+      // (Same-origin files only: a cross-origin source without CORS would come out silent.)
+      try {
+        if (new URL(a.src, location.href).origin !== location.origin) throw new Error('cross-origin');
+        const node = ctx.createMediaElementSource(a);
+        a._g = ctx.createGain(); a._g.gain.value = 0;
+        node.connect(a._g); a._g.connect(ctx.destination);
+      } catch (e) { a._g = null; a.volume = 0; }
+      a.addEventListener('canplay', () => { a._ok = true; a._tries = 0; });
+      a.addEventListener('error', () => {
+        // A dropped connection or a decode hiccup: reload after a pause. Only a track that never loads at all
+        // hands its mood to the synthesised music.
+        a._tries++;
+        if (!a._ok && a._tries > 3) { a._failed = true; return; }
+        a._broken = true;
+        setTimeout(() => { a._broken = false; try { a.load(); } catch (err) { /* retried on the next error */ } }, 3000 * a._tries);
+      });
       return a;
     };
     const ogg = (() => { try { return !!new Audio().canPlayType('audio/ogg; codecs="vorbis"'); } catch (e) { return false; } })();
@@ -206,15 +229,30 @@ const Sound = {
     for (const k of ['day', 'night', 'battle']) {
       const a = this.tracks[k];
       if (a._failed) continue;
-      const target = on && this.mode === k ? this.TRACK_VOL[k] : 0;
-      const step = k === 'battle' && target > a.volume ? 0.06 : 0.025; // the battle music cuts in fast, everything else crossfades over ~2 s
-      a.volume = clamp(a.volume + clamp(target - a.volume, -step, step), 0, 1);
-      if (target > 0 && a.paused && !a._pending) {
+      const target = on && !this.hidden && this.mode === k ? this.TRACK_VOL[k] : 0;
+      const step = k === 'battle' && target > a._v ? 0.06 : 0.025; // the battle music cuts in fast, everything else crossfades over ~2 s
+      a._v = clamp(a._v + clamp(target - a._v, -step, step), 0, 1); // our own copy: element.volume may not read back what we set
+      if (a._g) a._g.gain.setTargetAtTime(a._v, this.ctx.currentTime, 0.03); else a.volume = a._v;
+      if (target > 0 && a.paused && !a._pending && !a._broken) {
         a._pending = true;
         a.play().catch(() => { /* blocked or interrupted — retried on the next tick */ }).finally(() => { a._pending = false; });
       }
-      if (target === 0 && a.volume <= 0.001 && !a.paused) a.pause();
+      if (target === 0 && a._v <= 0.001 && !a.paused) a.pause();
     }
+  },
+  /** Leaving the tab or app silences everything at once (the game itself stops while hidden). */
+  onVisibility(hidden) {
+    this.hidden = hidden;
+    if (!this.ctx) return;
+    if (hidden) {
+      for (const k in this.tracks || {}) {
+        const a = this.tracks[k];
+        a._v = 0;
+        if (a._g) a._g.gain.value = 0; else a.volume = 0;
+        if (!a.paused) a.pause();
+      }
+      this.ctx.suspend().catch(() => {});
+    } else this.ctx.resume().catch(() => {});
   },
   setMuted(m) { this.muted = m; if (this.master) this.master.gain.setTargetAtTime(m ? 0 : 0.8, this.ctx.currentTime, 0.05); },
   setMusic(on) { this.musicOn = on; if (this.musicBus) this.musicBus.gain.setTargetAtTime(on ? 0.32 : 0, this.ctx.currentTime, 0.2); },
@@ -406,11 +444,12 @@ const Sound = {
       const src = ctx.createBufferSource();
       src.buffer = this.tanpura[step];
       src.playbackRate.value = night ? 0.94387 : 1; // drop a semitone at night
-      const g = ctx.createGain(); g.gain.value = step === 3 ? 0.7 : 0.5;
+      const g = ctx.createGain(); g.gain.value = step === 3 ? 0.5 : 0.36;
       src.connect(g); g.connect(this.musicBus); g.connect(this.verb);
       src.start(this.nextTan);
       this.nextTan += step === 3 ? 1.5 : 0.75;
       this.tanStep++;
+      if (this.tanStep % 12 === 0) this.nextTan += 8 + Math.random() * 6; // let it breathe: three rounds, then silence
     }
     if (this.nextTan < now) this.nextTan = now + 0.1;
     // bansuri phrases by day, dhol by night

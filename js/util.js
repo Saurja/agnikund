@@ -94,6 +94,7 @@ const JOBS = {
   stone:   { name: 'Khanik',     en: 'Miner',      tool: 'pick',   desc: 'Breaks rocks near their Khadaan. Sometimes finds gold.', building: 'minecamp' },
   farm:    { name: 'Kisan',      en: 'Farmer',     tool: 'sickle', desc: 'Grows grain on a Khet.', building: 'field' },
   build:   { name: 'Mistri',     en: 'Builder',    tool: 'hammer', desc: 'Constructs and repairs buildings. The Agnikund has room for 2; a Mistri Adda adds more.', building: 'buildyard' },
+  vaidya:  { name: 'Vaidya',     en: 'Healer',     tool: 'herbs',  desc: 'Walks to wounded villagers and soldiers and heals them with herbal medicine. Works from a Vaidyashala.', building: 'vaidyashala' },
   // soldiers: train a plain Sainik first, then hand them a crafted weapon to make a special soldier
   warrior: { name: 'Sainik',     en: 'Foot Soldier', tool: 'sword', desc: 'Foot soldier with a sword. Give a Sainik a crafted weapon to turn them into a special soldier.', building: 'akhara', slot: 'army' },
   brute:   { name: 'Gadadhari',  en: 'Mace Brute', tool: 'gada',   desc: 'A Sainik given a Gada: huge health, smashes groups of demons and knocks them back.', building: 'akhara', slot: 'army', weapon: 'gada' },
@@ -103,7 +104,7 @@ const JOBS = {
   trader:  { name: 'Vyapari',    en: 'Trader',     tool: 'sack',   desc: 'Sells grain for gold at the Bazaar.', building: 'bazaar' },
 };
 const AGNI_SLOTS = { build: 2 }; // work places the Agnikund itself provides
-const JOB_ORDER = ['wood', 'stone', 'farm', 'build', 'warrior', 'brute', 'spear', 'archer', 'priest', 'trader'];
+const JOB_ORDER = ['wood', 'stone', 'farm', 'build', 'vaidya', 'warrior', 'brute', 'spear', 'archer', 'priest', 'trader'];
 const slotKey = (job) => (JOBS[job] && JOBS[job].slot) || job;
 // fighting stats per soldier type
 const SOLDIERS = {
@@ -130,7 +131,7 @@ const BUILDINGS = {
   field:    { name: 'Khet',          en: 'Field',         fw: 3, fd: 3, ht: 0.8, cost: { wood: 15 },                      hp: 80,  lvl: 1, time: 8,  slots: { farm: 2 }, merge: 'bigfield', drop: ['food'], desc: 'Farmland for 2 Kisan (farmers). Two fields side by side join into a Bada Khet.' },
   palisade: { name: 'Baans ki Baad', en: 'Bamboo Wall',   fw: 1, fd: 1, ht: 1.5, cost: { wood: 6 },                       hp: 220, lvl: 1, time: 3,  wall: true, desc: 'Blocks demons. Click and drag to build a whole line of wall.' },
   akhara:   { name: 'Akhara',        en: 'Training Pit',  fw: 3, fd: 3, ht: 2.4, cost: { wood: 25, stone: 10 },           hp: 150, lvl: 1, time: 14, slots: { army: 3 }, desc: 'Wrestling pit with a mallakhamb. Room for 3 soldiers. Train Sainik here, then arm them at the Lohar or Aara Mill.' },
-  store:    { name: 'Bhandar',       en: 'Storehouse',    fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                      hp: 140, lvl: 1, time: 10, drop: ['wood', 'stone', 'food', 'gold'], desc: 'Workers drop any goods here. Build it between your work camps and the forest.' },
+  store:    { name: 'Bhandar',       en: 'Storehouse',    fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                      hp: 140, lvl: 1, time: 10, drop: ['wood', 'stone', 'food', 'gold'], desc: 'Storehouse with 4 bays. Pick the good each bay holds; goods with no bay need another Bhandar. Upgrades add bays (6, then 8).' },
   range:    { name: 'Dhanush Shala', en: 'Archery Range', fw: 3, fd: 2, ht: 1.6, cost: { wood: 30, stone: 10 },           hp: 150, lvl: 2, time: 14, slots: { army: 3 }, desc: 'Archery range with room for 3 more soldiers. Dhanurdhar practise here.' },
   well:     { name: 'Kuan',          en: 'Well',          fw: 2, fd: 2, ht: 1.8, cost: { stone: 20 },                     hp: 160, lvl: 2, time: 10, desc: 'Fields within 9 steps grow 50% faster.' },
   bazaar:   { name: 'Bazaar',        en: 'Market',        fw: 3, fd: 2, ht: 1.9, cost: { wood: 35, stone: 15 },           hp: 150, lvl: 2, time: 16, slots: { trader: 2 }, desc: 'Spice stall. 2 Vyapari trade grain for gold.' },
@@ -151,7 +152,46 @@ const BUILDINGS = {
   bigfield:  { name: 'Bada Khet', en: 'Big Field', fw: 6, fd: 3, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster.' },
   bigfieldV: { name: 'Bada Khet', en: 'Big Field', fw: 3, fd: 6, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, model: 'bigfield', desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster.' },
 };
-const BUILD_ORDER = ['hut', 'woodcamp', 'minecamp', 'buildyard', 'field', 'palisade', 'akhara', 'store', 'range', 'well', 'bazaar', 'lamp', 'forge', 'sawmill', 'wall', 'tower', 'belltower', 'temple', 'firetower', 'cannontower'];
+BUILDINGS.vaidyashala = { name: 'Vaidyashala', en: "Healer's Hut", fw: 2, fd: 2, ht: 2.0, cost: { wood: 25, food: 10 }, hp: 140, lvl: 1, time: 10, slots: { vaidya: 2 }, desc: 'Ayurvedic healer’s hut with a herb garden. Room for 2 Vaidya, who walk to the wounded and heal them.' };
+const BUILD_ORDER = ['hut', 'woodcamp', 'minecamp', 'buildyard', 'field', 'store', 'vaidyashala', 'palisade', 'akhara', 'range', 'well', 'bazaar', 'lamp', 'forge', 'sawmill', 'wall', 'tower', 'belltower', 'temple', 'firetower', 'cannontower'];
+
+/*
+ * Building levels. Every building except walls can be upgraded twice (the Lohar and Aara Mill keep their
+ * own levels that unlock weapons). Each level: +40% strength, a better-looking model, and a perk for its job.
+ */
+const MAX_LEVEL = 3;
+const STORE_BAYS = [0, 4, 6, 8];     // Bhandar bays per level; each bay holds one good the player picks
+const BAY_CAP = [0, 30, 40, 50];     // how much one bay holds per level
+const STOCK_MULT = [0, 1, 1.6, 2.3]; // storage multiplier for camps and fields per level
+function levelPerk(type, lv) {
+  const d = BUILDINGS[type], T = TOWERS[type];
+  const bits = [];
+  if (type === 'store') bits.push(`${STORE_BAYS[lv]} storage bays of ${BAY_CAP[lv]}`);
+  else if (d.drop) bits.push(`${Math.round((STOCK_MULT[lv] - 1) * 100)}% more storage`);
+  if (d.housing) bits.push(`room for ${d.housing + (lv - 1) * (d.housing > 3 ? 2 : 1)} villagers`);
+  if (d.slots) { const k = Object.keys(d.slots)[0]; bits.push(`${k === 'army' ? 2 : 1} more ${k === 'army' ? 'soldier places' : JOBS[k] ? JOBS[k].name : 'worker'}`); }
+  if (type === 'field' || type === 'bigfield' || type === 'bigfieldV') bits.push('crops grow 20% faster');
+  if (type === 'well') bits.push('waters fields 2 steps further');
+  if (type === 'lamp') bits.push('a wider, hotter holy light');
+  if (type === 'vaidyashala') bits.push('Vaidya heal 30% faster');
+  if (T) bits.push('25% more damage and longer reach');
+  bits.push('sturdier walls');
+  return bits.join(', ');
+}
+/** Give every building without its own levels the standard two upgrades (run once, at the end of this file). */
+function initBuildingLevels() { for (const type in BUILDINGS) {
+  const d = BUILDINGS[type];
+  if (d.levels || d.wall) continue;
+  const scaled = (k, extra) => {
+    const c = {};
+    for (const r in d.cost) c[r] = Math.ceil((d.cost[r] * k) / 5) * 5;
+    for (const r in extra) c[r] = (c[r] || 0) + extra[r];
+    return c;
+  };
+  d.levels = [null, null,
+    { cost: scaled(1.4, { stone: 10 }), time: Math.max(8, d.time), unlocks: levelPerk(type, 2), generic: true },
+    { cost: scaled(2.2, { stone: 25, gold: 10 }), time: Math.max(10, Math.round(d.time * 1.4)), unlocks: levelPerk(type, 3), generic: true }];
+} }
 // how each tower fights
 const TOWERS = {
   tower:       { kind: 'arrow', range: 12, cd: 1.5, dmg: 6, y: 3.6 },
@@ -249,3 +289,5 @@ const BLOUSES = ['#ffb31a', '#2a9d6f', '#c2185b', '#1e3a8a', '#f4ecd8', '#e03c31
 function costText(cost) {
   return Object.keys(cost).map((k) => cost[k] + ' ' + RES[k].en.toLowerCase()).join(', ');
 }
+
+initBuildingLevels(); // every building type now has upgrade levels

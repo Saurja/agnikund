@@ -429,6 +429,7 @@ const R3 = {
   },
   retire(obj, kind, extra) {
     if (!obj) return;
+    obj.traverse((c) => { if (c.userData.sil) c.visible = false; }); // no x-ray glow while sinking into the ground
     this.dying.push(Object.assign({ obj, t: 0, dur: kind === 'building' ? 0.9 : kind === 'loot' ? 0.45 : kind === 'villager' ? 1.2 : 0.7, kind, s0: obj.scale.x, y0: obj.position.y }, extra));
   },
   animateDying(dt) {
@@ -858,7 +859,8 @@ const R3 = {
           if (b.ringT > 0) { const k = 1 - b.ringT; ud.wave.scale.setScalar(1 + k * TOWERS.belltower.range); ud.wave.material.opacity = 0.6 * b.ringT; }
         }
         if (ud.bigFlame2) animateFlames(ud.bigFlame2, time + b.id, b.fireT > 0 ? 1.4 : 1);
-        if (ud.piles) this.syncPiles(ud.piles, b.stock || {}, (r) => stockCap(b, r));
+        if (ud.bays) this.syncBays(b, ud.piles);
+        else if (ud.piles) this.syncPiles(ud.piles, b.stock || {}, (r) => stockCap(b, r));
       }
       if (isFieldType(b.type) && ud.crops) {
         const g = clamp(b.grow / 30, 0, 1);
@@ -896,20 +898,32 @@ const R3 = {
   },
   /** Grow or shrink stockpile heaps in five steps; a heap gives a little bounce when it changes. */
   syncPiles(piles, st, capOf) {
-    const dt = this._dt || 0.016;
-    for (const p of piles) {
-      const n = Math.floor(st[p.res] || 0), cap = capOf(p.res);
-      const lv = n <= 0 || !cap ? 0 : clamp(Math.ceil((n / cap) * 5), 1, 5);
-      if (p.sc == null) p.sc = p.mesh.scale.x;
-      if (p.lv !== lv) {
-        if (p.lv >= 0 && lv > 0) p.pop = 0.3;
-        p.lv = lv;
-        p.mesh.visible = lv > 0;
-        if (lv > 0) { const geo = Models.pileGeo(p.res, lv); setGeo(p.mesh, geo); }
-      }
-      if (p.pop > 0) { p.pop = Math.max(0, p.pop - dt); p.mesh.scale.setScalar(p.sc * (1 + Math.sin((p.pop / 0.3) * Math.PI) * 0.1)); }
-      else if (p.mesh.scale.x !== p.sc) p.mesh.scale.setScalar(p.sc);
+    for (const p of piles) this.setPile(p, Math.floor(st[p.res] || 0), capOf(p.res));
+  },
+  /** Bhandar bays: each heap shows the good its bay is set to; bays of the same good fill one after another. */
+  syncBays(b, piles) {
+    const bays = storeBays(b), cap = BAY_CAP[bLevel(b)] || 30, st = b.stock || {}, left = {};
+    for (const r of RES_ORDER) left[r] = Math.floor(st[r] || 0);
+    piles.forEach((p, i) => {
+      const r = bays[i];
+      if (!r) { this.setPile(p, 0, cap); return; }
+      if (p.res !== r) { p.res = r; p.lv = -1; } // the bay now holds a different good: rebuild its heap
+      const n = Math.min(cap, left[r]);
+      left[r] -= n;
+      this.setPile(p, n, cap);
+    });
+  },
+  setPile(p, n, cap) {
+    const lv = n <= 0 || !cap ? 0 : clamp(Math.ceil((n / cap) * 5), 1, 5);
+    if (p.sc == null) p.sc = p.mesh.scale.x;
+    if (p.lv !== lv) {
+      if (p.lv >= 0 && lv > 0) p.pop = 0.3;
+      p.lv = lv;
+      p.mesh.visible = lv > 0;
+      if (lv > 0) setGeo(p.mesh, Models.pileGeo(p.res, lv));
     }
+    if (p.pop > 0) { p.pop = Math.max(0, p.pop - (this._dt || 0.016)); p.mesh.scale.setScalar(p.sc * (1 + Math.sin((p.pop / 0.3) * Math.PI) * 0.1)); }
+    else if (p.mesh.scale.x !== p.sc) p.mesh.scale.setScalar(p.sc);
   },
   makeBuildingObj(b, state) {
     const prev = this.bObjs.get(b.id);
@@ -918,17 +932,21 @@ const R3 = {
     obj.userData.bid = b.id;
     obj.position.set(b.x, 0, b.z);
     obj.rotation.y = b.rot || 0;
-    obj.traverse((c) => { if (c.isMesh && c.material && c.material !== MAT.std && !c.material.isMeshBasicMaterial && !c.userData.outline) c.material.userData.own = true; });
+    const shared = (m) => m === MAT.std || m === MAT.bld;
+    obj.traverse((c) => { if (c.isMesh && c.material && !shared(c.material) && !c.material.isMeshBasicMaterial && !c.userData.outline) c.material.userData.own = true; });
     const o = { obj, type: b.type, state, site: null, plane: null, level: bLevel(b), upSite: null };
     if (state === 'site') {
       // clip the model at the current build height so it rises layer by layer
       const plane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
-      const std = MAT.std.clone(); std.clippingPlanes = [plane]; std.clipShadows = true; std.userData.own = true;
+      const clip = (m) => { m.clippingPlanes = [plane]; m.clipShadows = true; m.userData.own = true; return m; };
+      const std = clip(MAT.std.clone());
+      const bld = MAT.bld === MAT.std ? std : clip(texturize(MAT.bld.clone(), 0.14)); // clone() drops the shader hook, so add it back
       const out = outlineMat(0.028); out.clippingPlanes = [plane]; out.userData.own = true;
       obj.traverse((c) => {
         if (!c.isMesh) return;
         if (c.userData.outline) c.material = out;
         else if (c.material === MAT.std) c.material = std;
+        else if (c.material === MAT.bld) c.material = bld;
         else if (c.material.isMeshBasicMaterial) c.visible = false; // no flames or lights until finished
         else { c.material = c.material.clone(); c.material.clippingPlanes = [plane]; c.material.userData.own = true; }
       });
@@ -950,7 +968,7 @@ const R3 = {
     for (const l of s.loot) {
       seen.add(l.id);
       let o = this.lootObjs.get(l.id);
-      if (!o) { o = Models.loot(l.kind); this.scene.add(o); this.lootObjs.set(l.id, o); }
+      if (!o) { o = Models.loot(l.kind); addSilhouette(o, 0xffd84a, 0.25); this.scene.add(o); this.lootObjs.set(l.id, o); }
       const bob = Math.sin(time * 3 + l.id) * 0.06;
       o.position.set(l.x, heightAt(l.x, l.z) + 0.05 + Math.max(0, bob), l.z);
       o.rotation.y = time * 1.2 + l.id;
@@ -967,6 +985,7 @@ const R3 = {
       if (!o || o.job !== v.job) {
         if (o) this.removeObj(o.obj);
         const obj = Models.villager(v.look, v.job);
+        addSilhouette(obj, slotKey(v.job) === 'army' ? 0x8fd0ff : 0xfff0c8, 0.5); // seen through trees and huts
         this.scene.add(obj);
         o = { obj, job: v.job, rot: v.rot };
         this.vObjs.set(v.id, o);
@@ -1047,6 +1066,7 @@ const R3 = {
       const def = ENEMIES[e.type];
       if (!o) {
         const obj = Models.enemy(e.type === 'danav' ? 'danav' : e.type, e.variant);
+        addSilhouette(obj, 0xff5a4a, 0.5 * def.scale); // demons glow red through whatever hides them
         obj.scale.setScalar(def.scale);
         this.scene.add(obj);
         o = { obj, rot: e.rot, born: 0, pose: { legs: 0, armR: -0.2, armL: 0.1 } };

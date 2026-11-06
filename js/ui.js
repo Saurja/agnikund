@@ -15,6 +15,7 @@ const SAMPLE_LOOKS = {
   archer:  { g: 'f', skin: '#c68642', hair: '#1a1212', cloth: '#7b5a3a', lower: '#1f6f8b', trim: '#e8b830', covered: false },
   brute:   { g: 'm', skin: '#a0673a', hair: '#1a1212', cloth: '#a0673a', lower: '#ff9933', head: '#d84315', head2: '#ffcc80', stache: true, trim: '#d8cfb6' },
   spear:   { g: 'm', skin: '#8d5524', hair: '#1a1212', cloth: '#3e5f8a', lower: '#e6dbbf', head: '#1565c0', head2: '#e8b830', stache: true, trim: '#d8cfb6' },
+  vaidya:  { g: 'm', skin: '#a0673a', hair: '#e8e2d8', cloth: '#f4ecd8', lower: '#e6dbbf', head: '#f4ecd8', head2: '#2e7d32', stache: true, trim: '#2e7d32' },
   priest:  { g: 'm', skin: '#cf9561', hair: '#1a1212', cloth: '#ff8f1f', lower: '#ffb84d', head: '#ff8f1f', head2: '#ffb84d', stache: false, trim: '#d8cfb6' },
   trader:  { g: 'm', skin: '#b5784a', hair: '#1a1212', cloth: '#6a1b9a', lower: '#f4ecd8', head: '#ffd54f', head2: '#e65100', stache: true, trim: '#d8cfb6' },
 };
@@ -55,6 +56,7 @@ const SVG_PATHS = {
   bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
   hammer: '<path d="m13.5 6.5 4 4"/><path d="M12 8 4.5 15.5a2.1 2.1 0 0 0 3 3L15 11"/><path d="m10.5 4.5 2-1.5 7.5 7.5-1.5 2z"/>',
   trash: '<path d="M4.5 7h15M9.5 7V4.5h5V7"/><path d="M6.5 7 7.5 20h9l1-13"/><path d="M10.5 11v5.5M13.5 11v5.5"/>',
+  heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20Z"/><path d="M12 10.5v4.5M9.75 12.75h4.5"/>',
   shrink: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
 };
 const svgIcon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${SVG_PATHS[name] || ''}</svg>`;
@@ -138,7 +140,7 @@ const UI = {
       case 'villager': h = `<b>${r.name}</b> · ${JOBS[r.job].name} <small>(${JOBS[r.job].en})</small><br>${r.task || ''}<br><small>Click to see details or change job</small>`; break;
       case 'enemy': h = `<b>${ENEMIES[r.type].name}</b> <small>${ENEMIES[r.type].en}</small><br>Health ${Math.ceil(r.hp)} / ${r.maxHp}`; break;
       case 'fire': h = `<b>Agnikund</b> · level ${S.fire.level}<br>The sacred fire. It eats wood; if demons put it out, you lose.<br><small>Click to upgrade it or invite travellers</small>`; break;
-      case 'building': if (this.removeMode) { h = `<b>Remove ${BUILDINGS[r.type].name}</b><br>You get back ${this.refundText(r)}<br><small>Click to ${BUILDINGS[r.type].wall ? 'remove it' : 'choose'}</small>`; break; } { const d = BUILDINGS[r.type]; h =`<b>${d.name}</b> <small>${d.en}</small><br>${d.desc}<br><small>${r.done ? `Strength ${Math.ceil(r.hp)} / ${r.maxHp}` : `Under construction ${Math.floor((r.progress / d.time) * 100)}%`} · click for options</small>`; break; }
+      case 'building': if (this.removeMode) { h = `<b>Destroy ${BUILDINGS[r.type].name}</b><br>You get back ${this.refundText(r)}<br><small>Click to ${BUILDINGS[r.type].wall ? 'destroy it' : 'choose'}</small>`; break; } { const d = BUILDINGS[r.type]; h =`<b>${d.name}</b> <small>${d.en}</small><br>${d.desc}<br><small>${r.done ? `Strength ${Math.ceil(r.hp)} / ${r.maxHp}` : `Under construction ${Math.floor((r.progress / d.time) * 100)}%`} · click for options</small>`; break; }
       case 'tree': h = r.sacred ? '<b>Pavitra Van</b> <small>sacred grove</small><br>Villagers without a hut hide here from demons. Never cut.' : `<b>${TREE_INFO[r.type].name}</b> <small>${TREE_INFO[r.type].en}</small><br>${r.stump ? 'Stump — regrowing' : r.wood + ' wood'} · chopped by Lakadhara`; break;
       case 'rock': h = `<b>Chattan</b> <small>Boulder</small><br>${r.stone} stone · mined by Khanik from a Khadaan`; break;
       case 'loot': h = `<b>${LOOT[r.kind].name}</b> <small>${LOOT[r.kind].en}</small><br>+${r.amt} ${RES[LOOT[r.kind].res].en.toLowerCase()} · dropped by a demon<br><small>Idle villagers collect it in daylight</small>`; break;
@@ -267,7 +269,10 @@ const UI = {
     if (this.buildOpen) this.setRemoveMode(false);
     else if (this.buildType) this.cancelBuild();
     document.body.classList.toggle('build-open', this.buildOpen);
-    $('btnBuild').classList.toggle('on', this.buildOpen);
+    const bb2 = $('btnBuild');
+    bb2.classList.toggle('on', this.buildOpen);
+    bb2.dataset.label = this.buildOpen ? 'Close' : 'Build';
+    this.setIcon(bb2, this.buildOpen ? 'x' : 'hammer');
     if (this.buildOpen) { const bb = $('buildbar'); bb.classList.remove('rise'); void bb.offsetWidth; bb.classList.add('rise'); this.refresh(true); }
   },
   setRemoveMode(on) {
@@ -275,7 +280,10 @@ const UI = {
     if (on) { this.toggleBuildTray(false); this.select(null); }
     this.hideConfirm();
     document.body.classList.toggle('remove-mode', this.removeMode);
-    $('btnRemove').classList.toggle('on', this.removeMode);
+    const rb = $('btnRemove');
+    rb.classList.toggle('on', this.removeMode);
+    rb.dataset.label = this.removeMode ? 'Done' : 'Destroy';
+    this.setIcon(rb, this.removeMode ? 'check' : 'trash');
     $('removeBar').classList.toggle('hidden', !this.removeMode);
   },
   refundText(b) {
@@ -299,7 +307,7 @@ const UI = {
         if (btn.dataset.act === 'yes' && this._popFor && S.buildings.includes(this._popFor)) {
           const d = BUILDINGS[this._popFor.type];
           demolish(S, this._popFor);
-          toast(`${d.name} removed.`, 'info', 3);
+          toast(`${d.name} destroyed.`, 'info', 3);
         }
         this.hideConfirm();
         this.refresh(true);
@@ -307,7 +315,7 @@ const UI = {
     }
     this._popFor = b;
     const inside = b.type && isHome(b.type) ? S.villagers.filter((v) => v.home === b.id).length : 0;
-    pop.innerHTML = `<b>Remove ${def.name}?</b><p>You get back ${this.refundText(b)}${b.done ? ' (half the cost)' : ' (most of the cost)'}.${inside ? ` ${inside} villager${inside > 1 ? 's' : ''} will lose their home.` : ''}</p><div class="pb"><button data-act="no">Keep</button><button data-act="yes" class="dangerfill">${svgIcon('trash')}Remove</button></div>`;
+    pop.innerHTML = `<b>Destroy ${def.name}?</b><p>You get back ${this.refundText(b)}${b.done ? ' (half the cost)' : ' (most of the cost)'}.${inside ? ` ${inside} villager${inside > 1 ? 's' : ''} will lose their home.` : ''}</p><div class="pb"><button data-act="no">Keep</button><button data-act="yes" class="dangerfill">${svgIcon('trash')}Destroy</button></div>`;
     pop.classList.remove('hidden');
     const w = pop.offsetWidth, h = pop.offsetHeight;
     pop.style.left = clamp(x - w / 2, 8, window.innerWidth - w - 8) + 'px';
@@ -324,7 +332,7 @@ const UI = {
     R3.setGhost(this.ghost);
     $('placeBar').classList.remove('hidden');
     const touch = App.touch || document.body.classList.contains('touch');
-    const how = def.wall ? (touch ? 'tap a spot, then Place — repeat for more pieces' : 'click, or click-and-drag to build a line') : (touch ? 'tap the ground to choose a spot, then Place' : 'click on your land to place');
+    const how = def.wall ? (touch ? 'tap a spot, then Place — repeat for more pieces' : 'click, or click-and-drag to build a line') : (touch ? 'tap the ground, Rotate if you like, then Place' : 'click your land to place · R to rotate');
     $('placeMsg').textContent = `${def.name}: ${how}`;
     $('placeOk').classList.toggle('hidden', !touch);
     sfx('click');
@@ -337,6 +345,19 @@ const UI = {
     $('placeBar').classList.add('hidden');
     this.refresh(true);
   },
+  /** Turn the building being placed: square ones by 90°, long ones end to end (their footprint stays the same). */
+  rotateGhost() {
+    const g = this.ghost;
+    if (!g) return;
+    const def = BUILDINGS[g.type];
+    const step = def.fw === def.fd ? Math.PI / 2 : Math.PI;
+    const c = bCenterOf(g.type, g.cx, g.cz);
+    const cur = g.userRot != null ? g.userRot : g.rot != null ? g.rot : def.fw !== def.fd ? (c.z > 0 ? Math.PI : 0) : faceFireRot(c.x, c.z);
+    g.userRot = (cur + step) % (Math.PI * 2);
+    g.rot = g.userRot;
+    R3.setGhost(g);
+    sfx('click');
+  },
   /** Move the placement ghost to the ground point (x, z). */
   moveGhost(x, z) {
     const g = this.ghost;
@@ -347,7 +368,7 @@ const UI = {
     const chk = canPlace(S, g.type, g.cx, g.cz);
     g.ok = chk.ok;
     g.cells = null;
-    g.rot = def.wall ? Math.atan2(-g.cx - 0.5, -g.cz - 0.5) : null;
+    g.rot = g.userRot != null ? g.userRot : def.wall ? Math.atan2(-g.cx - 0.5, -g.cz - 0.5) : null;
     R3.setGhost(g);
     $('placeMsg').textContent = chk.ok ? `${def.name}: good spot!` : `${def.name}: ${chk.why}`;
   },
@@ -372,7 +393,7 @@ const UI = {
     if (!g) return;
     let ok;
     if (g.cells && g.cells.length > 1) ok = placeWallLine(S, g.type, g.cells, g.rot) > 0;
-    else ok = !!placeBuilding(S, g.type, g.cx, g.cz, g.wall ? g.rot : null);
+    else ok = !!placeBuilding(S, g.type, g.cx, g.cz, g.userRot != null ? g.userRot : g.wall ? g.rot : null);
     g.cells = null;
     if (ok && !keep && !g.wall) this.cancelBuild();
     else if (this.ghost) R3.setGhost(Object.assign(g, { ok: canPlace(S, g.type, g.cx, g.cz).ok }));
@@ -404,6 +425,27 @@ const UI = {
     const anyFull = list.some((it) => it.cap !== Infinity && it.n >= it.cap);
     return this.sec(title, h + (note ? `<p><small>${note}</small></p>` : ''), anyFull ? '<span class="tag bad">Full</span>' : '');
   },
+  /** Bhandar bays: one tile per bay showing its good and how full it is; tap one to pick a different good. */
+  baysHTML(s, b) {
+    const bays = storeBays(b), cap = BAY_CAP[bLevel(b)] || 30, st = b.stock || {}, left = {};
+    for (const r of RES_ORDER) left[r] = Math.floor(st[r] || 0);
+    const pick = this.bayPick && this.bayPick.b === b.id ? this.bayPick.i : -1;
+    let h = '<div class="bays">';
+    bays.forEach((r, i) => {
+      const n = Math.min(cap, left[r]); left[r] -= n;
+      h += `<button class="bay${i === pick ? ' cur' : ''}${n >= cap ? ' full' : ''}" data-action="bay" data-i="${i}" data-tip="Bay ${i + 1}: ${RES[r].en}. Tap to change">${this.ico(r, true)}<span>${RES[r].en}</span><em>${n}/${cap}</em><b class="fill" style="width:${((n / cap) * 100).toFixed(0)}%"></b></button>`;
+    });
+    h += '</div>';
+    if (pick >= 0) {
+      h += `<p class="baypick"><small>Bay ${pick + 1} holds</small>`;
+      for (const r of RES_ORDER) h += `<button data-action="bayset" data-i="${pick}" data-r="${r}" class="${bays[pick] === r ? 'cur' : ''}">${this.ico(r, true)}${RES[r].en}</button>`;
+      h += '</p>';
+    }
+    const missing = RES_ORDER.filter((r) => !bays.includes(r)).map((r) => RES[r].en.toLowerCase());
+    h += `<p><small>Tap a bay to pick its good. ${missing.length ? `No bay for ${missing.join(' or ')}: build another Bhandar for that. ` : ''}What no longer fits goes to the Agnikund heap.</small></p>`;
+    const full = RES_ORDER.some((r) => bays.includes(r) && (st[r] || 0) >= stockCap(b, r));
+    return this.sec('Storage bays', h, `<span class="tag${full ? ' bad' : ''}">${bays.length} × ${cap}</span>`);
+  },
   renderInfo() {
     const box = $('info');
     const sel = this.selected;
@@ -420,6 +462,12 @@ const UI = {
       html += '<div class="info-body">';
       html += `<p class="task">${v.task || 'Thinking…'}</p>`;
       html += this.meter('', v.hp / v.maxHp, 'Health', `${Math.ceil(v.hp)} / ${v.maxHp}`);
+      if (v.hp < v.maxHp - 0.5) { // hurt: a Vaidya may be on the way, and herbs heal them at once
+        if (v.healBy && (v.healT || 0) > s.time) html += status('heart', v.healNear ? `${v.healBy} is healing them` : `${v.healBy} is coming to heal them`);
+        else if (!s.buildings.some((b) => b.type === 'vaidyashala' && b.done)) html += '<p><small>Build a Vaidyashala and its Vaidya will walk to the wounded and heal them.</small></p>';
+        const wait = Math.ceil((v.herbT || 0) - s.time), ok = canAfford(s, HERB_COST);
+        html += `<div class="actions"><button data-action="herbs" class="${wait > 0 ? '' : ok ? 'primary' : 'poorbtn'}" ${wait > 0 ? 'disabled' : ''} data-tip="Heal 60% of their health at once">${svgIcon('heart')}${wait > 0 ? `Herbs again in ${wait} s` : `Heal with herbs ${this.costHTML(HERB_COST)}`}</button></div>`;
+      }
       if (v.carryAmt > 0 && v.carry) {
         const cap = carryCap(s, v.carry);
         html += `<div class="stockrow">${this.ico(v.carry, true)}${this.meter('stock' + (v.carryAmt >= cap ? ' full' : ''), v.carryAmt / cap, `Tokri · ${RES[v.carry].en.toLowerCase()}`, `${v.carryAmt} / ${cap}`)}</div>`;
@@ -518,7 +566,8 @@ const UI = {
             html += this.sec('Research', c + '</div>');
           }
         }
-        if (def.drop) html += this.stockHTML(stockList(s, b), 'In stock', 'When full, workers take the rest to the next stockpile or the Agnikund heap.');
+        if (b.type === 'store') html += this.baysHTML(s, b);
+        else if (def.drop) html += this.stockHTML(stockList(s, b), 'In stock', 'When full, workers take the rest to the next stockpile or the Agnikund heap.');
         if (isHome(b.type)) {
           const res = s.villagers.filter((v) => v.home === b.id);
           const inn = res.filter((v) => v.inside).length;
@@ -530,7 +579,7 @@ const UI = {
       }
       html += '<div class="actions">';
       if (b.type === 'palisade' && b.done && s.fire.level >= 3) html += `<button data-action="fortify" class="${canAfford(s, STONE_WALL_COST) ? '' : 'poorbtn'}" data-tip="Rebuild as a sandstone fort wall">Fortify ${this.costHTML(STONE_WALL_COST)}</button>`;
-      html += `<button class="danger" data-action="demolish" data-tip="Tear it down and get part of the cost back">Demolish · ${b.done ? '50' : '90'}% back</button>`;
+      html += `<button class="danger" data-action="demolish" data-tip="Tear it down and get part of the cost back">${svgIcon('trash')}Destroy · ${b.done ? '50' : '90'}% back</button>`;
       html += '</div></div>';
     } else if (sel.kind === 'enemy') {
       const e = sel.ref;
@@ -596,6 +645,13 @@ const UI = {
       case 'bremove': unassignFromBuilding(S, sel.ref); break;
       case 'upgrade': buyUpgrade(S, btn.dataset.key); break;
       case 'fortify': fortifyWall(S, sel.ref); break;
+      case 'herbs': if (sel && sel.kind === 'villager') healWithHerbs(S, sel.ref); break;
+      case 'bay': if (sel && sel.kind === 'building') { const i = +btn.dataset.i; this.bayPick = this.bayPick && this.bayPick.b === sel.ref.id && this.bayPick.i === i ? null : { b: sel.ref.id, i }; sfx('click'); } break;
+      case 'bayset': if (sel && sel.kind === 'building') {
+        const i = +btn.dataset.i, r = btn.dataset.r, b = sel.ref, was = storeBays(b)[i];
+        if (r !== was) { setBay(S, b, i, r); toast(`Bay ${i + 1} of the Bhandar now holds ${RES[r].en.toLowerCase()}.`, 'info', 3); }
+        this.bayPick = null; sfx('click');
+      } break;
       case 'demolish': demolish(S, sel.ref); this.select(null); break;
     }
     this.lastInfo = '';
@@ -894,7 +950,6 @@ const UI = {
     $('jobs').querySelector('.panel-head').onclick = () => { if (document.body.classList.contains('mobile')) this.setJobsCollapsed(!$('jobs').classList.contains('collapsed')); }; // a big tap target on phones
     $('btnBuild').onclick = () => { Sound.init(); this.toggleBuildTray(); sfx('click'); };
     $('btnRemove').onclick = () => { Sound.init(); this.setRemoveMode(!this.removeMode); sfx('click'); };
-    $('removeDone').onclick = () => this.setRemoveMode(false);
     $('btnSpeed').onclick = () => { Sound.init(); this.setSpeed(this.paused ? this.speed : (this.speed % 3) + 1); };
     $('btnLog').onclick = () => this.toggleLog();
     $('logClose').onclick = () => this.toggleLog(false);
@@ -906,6 +961,7 @@ const UI = {
     this.syncFullscreen();
     $('mSound').onclick = () => { Sound.init(); Sound.setMuted(!Sound.muted); this.setIcon($('btnSound'), Sound.muted ? 'mute' : 'sound'); this.syncMenu(); };
     $('placeOk').onclick = () => this.confirmPlace(false);
+    $('placeRot').onclick = () => this.rotateGhost();
     $('placeCancel').onclick = () => this.cancelBuild();
     $('mResume').onclick = () => this.closeMenu();
     $('mSave').onclick = () => { Game.save(); toast('Village saved.', 'good'); this.closeMenu(); };
