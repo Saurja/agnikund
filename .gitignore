@@ -1,0 +1,4 @@
+# local tool settings, not part of the game
+.claude/
+Thumbs.db
+desktop.ini

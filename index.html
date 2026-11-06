@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1c1613">
+  <title>Agnikund — Village of the Sacred Flame</title>
+  <meta name="description" content="A 3D Indian village survival game. Keep the sacred fire burning and defend your people from the demons of the night.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Yatra+One&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="view"></canvas>
+  <div id="overlay3d"></div>
+
+  <!-- ================= HUD ================= -->
+  <div id="hud" class="hidden">
+    <div id="topbar">
+      <div id="resbar" class="bar">
+        <div class="res" data-res="wood" title="<b>Wood</b> (Lakdi)<br>For buildings, and the Agnikund burns it all day."><i class="ico" data-ico="wood"></i><b>0</b></div>
+        <div class="res" data-res="stone" title="<b>Stone</b> (Patthar)<br>For walls, wells and temples."><i class="ico" data-ico="stone"></i><b>0</b></div>
+        <div class="res" data-res="food" title="<b>Grain</b> (Anaj)<br>Each villager eats 4 every evening."><i class="ico" data-ico="food"></i><b>0</b></div>
+        <div class="res" data-res="gold" title="<b>Gold</b> (Sona)<br>From demons, miners, priests and traders."><i class="ico" data-ico="gold"></i><b>0</b></div>
+        <span class="sep"></span>
+        <div class="res" id="popRes" title="<b>Villagers / room</b><br>Build Jhopdis for more room. Travellers settle at dawn if there is space."><i class="ico" data-ico="pop"></i><b>0/0</b></div>
+      </div>
+      <div id="clock" class="bar" title="<b>Day clock</b><br>Day: work · Dusk: everyone returns to the fire · Night: demons attack · Dawn: they burn away">
+        <canvas id="dial" width="72" height="72"></canvas>
+        <div class="clock-text"><b id="dayText">Day 1</b><span id="phaseText">Day</span></div>
+      </div>
+      <div id="controls" class="bar">
+        <button id="btnBuild" class="tbtn" data-icon="hammer" data-label="Build" title="Build something <kbd>B</kbd>"></button>
+        <button id="btnRemove" class="tbtn" data-icon="trash" data-label="Remove" title="Remove buildings <kbd>X</kbd>"></button>
+        <span class="sep"></span>
+        <button id="btnPause" class="ib" data-icon="pause" title="Pause / resume <kbd>Space</kbd>"></button>
+        <div class="seg" id="speedSeg">
+          <button class="spd active" data-spd="1" title="Normal speed <kbd>1</kbd>">1×</button>
+          <button class="spd" data-spd="2" title="Double speed <kbd>2</kbd>">2×</button>
+          <button class="spd" data-spd="3" title="Triple speed <kbd>3</kbd>">3×</button>
+        </div>
+        <button id="btnSpeed" class="ib spdc" title="Game speed (tap to change)">1×</button>
+        <span class="sep"></span>
+        <button id="btnHome" class="ib" data-icon="target" title="Back to the Agnikund <kbd>H</kbd>"></button>
+        <button id="btnSound" class="ib" data-icon="sound" title="Sound on / off <kbd>M</kbd>"></button>
+        <span class="ui-size seg"><button id="btnUiMinus" class="ib" data-icon="textMinus" title="Smaller interface <kbd>−</kbd>"></button><button id="btnUiPlus" class="ib" data-icon="textPlus" title="Bigger interface <kbd>+</kbd>"></button></span>
+        <button id="btnLog" class="ib" data-icon="bell" title="Messages — every notice so far <kbd>N</kbd>"></button>
+        <button id="btnFull" class="ib" data-icon="expand" title="Full screen"></button>
+        <button id="btnMenu" class="ib" data-icon="menu" title="Menu <kbd>Esc</kbd>"></button>
+      </div>
+    </div>
+    <div id="mapwrap">
+      <canvas id="minimap" width="168" height="168" title="<b>Island map</b><br>Click or drag to look there. Orange ring: your land · red: demons"></canvas>
+    </div>
+    <div id="bossbar" class="hidden"><span>Mahasura</span><div class="track"><i></i></div></div>
+    <div id="toasts"></div>
+
+    <div id="jobs" class="panel">
+      <div class="panel-head">
+        <h3>Jobs</h3>
+        <span class="idle-row" title="Villagers with no job. Press + next to a job to put them to work."><b id="idleCount">0</b> idle</span>
+        <button id="jobsToggle" class="ib sm" data-icon="chevUp" title="Hide / show jobs <kbd>J</kbd>"></button>
+      </div>
+      <div id="jobsBody"><div id="jobRows"></div></div>
+    </div>
+
+    <div id="info" class="panel hidden"></div>
+
+    <div id="logPanel" class="panel hidden">
+      <div class="panel-head"><h3>Messages</h3><span id="logCount" class="idle-row"></span><button id="logClear" class="ghost">Clear</button><button id="logClose" class="ib sm" data-icon="x" title="Close <kbd>Esc</kbd>"></button></div>
+      <div id="logList"></div>
+    </div>
+
+    <div id="buildbar">
+      <div id="buildCards"></div>
+    </div>
+    <div id="placeBar" class="hidden">
+      <span id="placeMsg">Tap the ground to choose a spot</span>
+      <button id="placeOk" class="primary" data-icon="check" data-label="Place" title="Build it here"></button>
+      <button id="placeCancel" data-icon="x" data-label="Cancel" title="Stop placing <kbd>Esc</kbd>"></button>
+    </div>
+    <div id="removeBar" class="hidden">
+      <span data-icon="trash"></span><span id="removeMsg">Remove mode: click a building to tear it down. You get part of its cost back.</span>
+      <button id="removeDone" class="primary" data-icon="check" data-label="Done" title="Leave remove mode <kbd>Esc</kbd>"></button>
+    </div>
+    <div id="pausedTag" class="hidden"><span data-icon="pause"></span>Paused <small>Space to resume</small></div>
+  </div>
+
+  <!-- ================= Screens ================= -->
+  <div id="title" class="screen title-screen">
+    <div class="title-col">
+      <div class="dev">अग्निकुंड</div>
+      <h1>Agnikund</h1>
+      <p class="sub">Village of the Sacred Flame</p>
+      <p class="lead">Keep the fire alive. Build by day, defend by night, survive fifteen nights.</p>
+      <div class="btns">
+        <button id="btnContinue" class="big primary hidden"><span>Continue</span><small id="contDay"></small></button>
+        <button id="btnNew" class="big"><span>New village</span></button>
+        <button id="btnHow" class="big ghost"><span>How to play</span></button>
+      </div>
+    </div>
+    <p class="credits">Music via <a href="https://opengameart.org" target="_blank" rel="noopener">OpenGameArt.org</a>: “Mystical Enigmatic Background Music” by Cleyton Kauffman (CC0) · “Electronic Indian tabla tune” by obscure music (CC0) · “Ritual” by brainiac256 (<a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC-BY 3.0</a>) · “india rythm” by SouljahdeShiva (CC-BY 3.0)</p>
+  </div>
+
+  <div id="howto" class="screen hidden">
+    <div class="card how-card">
+      <div class="card-head"><h2>How to play</h2><button id="btnHowX" class="ib" data-icon="x" title="Close"></button></div>
+      <div class="how-grid">
+        <section><span class="num">1</span><h3>The Agnikund</h3><p>Your village lives around a sacred fire that burns wood on its own. If demons put it out, the village is lost. Click the fire to upgrade it for more land, homes and buildings.</p></section>
+        <section><span class="num">2</span><h3>Day: build and work</h3><p>Every job works from a building: a <b>Lakdi Taal</b> for woodcutters, a <b>Khadaan</b> for miners, a <b>Khet</b> for farmers. Build it, click it, then press <b>Assign</b>. Huts or fields built side by side join into bigger ones.</p></section>
+        <section><span class="num">3</span><h3>Night: defend</h3><p>At dusk everyone returns to the fire and demons come out of the forest. The warning says from which side. <b>Sainik</b> fight at the walls, <b>Dhanurdhar</b> shoot from behind them. Later nights bring ghosts from Bengali folklore, each with its own trick: click one to read about it. Dawn burns them all away.</p></section>
+        <section><span class="num">4</span><h3>Grain and homes</h3><p>Each villager eats 4 grain at dusk. Travellers settle at dawn if there is room, so build <b>Jhopdis</b>. When demons come near, villagers hide in their hut, or in the sacred grove if they have none.</p></section>
+        <section><span class="num">5</span><h3>Stockpiles</h3><p>Workers carry goods in a tokri to the nearest stockpile with room. Each camp and Bhandar shows what it holds; anything extra goes to the heap by the fire.</p></section>
+        <section><span class="num">6</span><h3>Controls</h3><p><kbd>Drag</kbd> or <kbd>WASD</kbd> move · <kbd>Wheel</kbd> zoom · <kbd>Right-drag</kbd> or <kbd>Q</kbd><kbd>E</kbd> rotate · <kbd>Space</kbd> pause · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> speed · <kbd>H</kbd> home · <kbd>G</kbd> graphics · <kbd>Shift</kbd> place several.</p></section>
+      </div>
+      <div class="card-foot">
+        <p class="credits">All sound effects are synthesised in the game. Music credits are on the title screen.</p>
+        <button id="btnHowClose" class="primary">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="menu" class="screen hidden">
+    <div class="card menu-card">
+      <div class="card-head"><h2>Paused</h2><span class="hint"><kbd>Esc</kbd></span></div>
+      <button id="mResume" class="big primary" data-icon="play" data-label="Resume"></button>
+      <div class="mlist">
+        <div class="mrow"><span data-icon="sound"></span><label>Sound</label><button id="mSound" class="switch on" role="switch" aria-checked="true" title="All sound on / off"><i></i></button></div>
+        <div class="mrow"><span data-icon="music"></span><label>Music</label><button id="mMusic" class="switch on" role="switch" aria-checked="true" title="Music on / off"><i></i></button></div>
+        <div class="mrow"><span data-icon="monitor"></span><label>Graphics</label><div class="seg" id="mGfx" title="<b>Low</b>: fastest, no shadows · <b>Mid</b>: smooth shading and shadows · <b>High</b>: adds ambient occlusion, glow and colour grading <kbd>G</kbd>"><button data-q="low">Low</button><button data-q="mid">Mid</button><button data-q="high">High</button></div></div>
+        <div class="mrow"><span data-icon="textPlus"></span><label>Interface size</label><div class="stepper"><button id="mUiMinus" class="ib sm" data-icon="minus"></button><b class="uiPct">100%</b><button id="mUiPlus" class="ib sm" data-icon="plus"></button></div></div>
+      </div>
+      <div class="mbtns">
+        <button id="mFull" data-icon="expand" data-label="Full screen"></button>
+        <button id="mSave" data-icon="save" data-label="Save village"></button>
+        <button id="mHow" data-icon="help" data-label="How to play"></button>
+        <button id="mQuit" class="danger" data-icon="exit" data-label="Quit to title"></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="over" class="screen hidden">
+    <div class="card over-card">
+      <div class="dev" id="overDev">अग्नि बुझ गई</div>
+      <h2 id="overTitle">The Flame is Extinguished</h2>
+      <p id="overText"></p>
+      <div id="overStats" class="stats"></div>
+      <div class="obtns">
+        <button id="oContinue" class="primary hidden">Keep playing</button>
+        <button id="oRetry" class="primary">New village</button>
+        <button id="oTitle">Title screen</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- post effects for High graphics (optional: the game runs without them) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/Pass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FXAAShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/SSAOShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/math/SimplexNoise.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/MaskPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/SSAOPass.js"></script>
+<script src="js/util.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/game.js"></script>
+<script src="js/models.js"></script>
+<script src="js/render3d.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+Agnikund — music credits
+========================
+
+day_mystical_sitar.mp3
+  "Mystical Enigmatic Background Music" by Cleyton Kauffman
+  https://soundcloud.com/cleytonkauffman
+  Source:  https://opengameart.org/content/mystical-enigmatic-background-music
+  License: CC0 1.0 (public domain dedication) — https://creativecommons.org/publicdomain/zero/1.0/
+
+night_india_rythm.mp3
+  "india rythm" by SouljahdeShiva
+  Source:  https://opengameart.org/content/india-rythm
+  License: CC-BY 3.0 — https://creativecommons.org/licenses/by/3.0/
+  Used unchanged. Attribution is shown in the game's title screen and How to Play page.
+
+All other sounds (tanpura, bansuri, dhol, conch, bells and effects) are synthesised
+in code by js/audio.js. If these files are missing the game falls back to that music.
+
+night_calm_tabla.mp3 — "Electronic Indian tabla tune" by obscure music
+  Source: https://opengameart.org/content/electronic-indian-tabla-tune
+  License: CC0 1.0 (public domain) — https://creativecommons.org/publicdomain/zero/1.0/
+  Plays at night while the village waits.
+
+night_battle_ritual.ogg — "Ritual" by brainiac256
+  Source: https://opengameart.org/content/ritual
+  License: CC-BY 3.0 — https://creativecommons.org/licenses/by/3.0/
+  Plays when the ghosts and demons appear.
