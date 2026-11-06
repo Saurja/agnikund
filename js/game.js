@@ -33,10 +33,10 @@ function newState(seed) {
   return {
     seed: seed || (Math.random() * 1e9) | 0,
     day: 1, t: 6, time: 0,
-    res: { wood: 65, stone: 20, food: 45, gold: 10 },
+    res: { wood: 65, stone: 20, food: 45, gold: 10, clay: 0, ore: 0, brick: 0, charcoal: 0, iron: 0 },
     fire: { level: 1, hp: FIRE_LEVELS[1].hp, fuel: FIRE_LEVELS[1].fuelMax, dim: false, intensity: 1, hurtT: 0, feedT: 0 },
     villagers: [], buildings: [], trees: [], rocks: [], enemies: [],
-    projectiles: [], particles: [], floaters: [], ambient: [], loot: [], armory: {},
+    projectiles: [], particles: [], floaters: [], fx: [], shake: 0, hitStop: 0, ambient: [], loot: [], armory: {},
     spawnQueue: [], fronts: [], upgrades: {}, nextId: 1,
     stats: { killed: 0, lost: 0, built: 0, maxPop: 0, bosses: 0 },
     weather: 'clear', festival: false, hungry: false,
@@ -68,7 +68,13 @@ function genWorld(s) {
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (r > islandR(x, z) - 6) continue;
     s.trees = s.trees.filter((t) => distXZ(t.x, t.z, x, z) > 1.3);
-    s.rocks.push(makeRock(s, x, z, Math.floor(rnd() * 8), 36 + Math.floor(rnd() * 40), rnd));
+    const rock = makeRock(s, x, z, Math.floor(rnd() * 8), 36 + Math.floor(rnd() * 40), rnd);
+    if (r > 11 && rnd() < 0.3) rock.ore = true; // rusty iron boulders, out beyond the first clearing
+    s.rocks.push(rock);
+  }
+  // make sure a few ore boulders lie within reach of a level-2 village
+  if (!s.rocks.some((k) => k.ore && Math.hypot(k.x, k.z) < 17)) {
+    for (const k of s.rocks.filter((q) => Math.hypot(q.x, q.z) > 9 && Math.hypot(q.x, q.z) < 17).slice(0, 3)) k.ore = true;
   }
   // Pavitra Van — the sacred grove where homeless villagers hide from demons
   const ga = rnd() * Math.PI * 2, gd = 17;
@@ -124,7 +130,15 @@ function canAfford(s, cost) { for (const k in cost) if ((s.res[k] || 0) < cost[k
 /** Pay a cost. Goods are taken from the stockpiles nearest to (x, z) — the build site — or nearest the Agnikund. */
 function spend(s, cost, x, z) { for (const k in cost) { s.res[k] -= cost[k]; takeStock(s, k, cost[k], x || 0, z || 0); } }
 function refund(s, cost, f) { for (const k in cost) s.res[k] += Math.floor(cost[k] * f); }
-function floater(s, x, y, z, text, color) { s.floaters.push({ x, y, z, text, color, life: 1.5 }); }
+/** Floating text. cls: 'dmg' / 'dmg crit' / 'dmg hurt' / 'dmg heal' numbers, 'tag' (Blocked, Stunned), 'callout' (moves, streaks). */
+function floater(s, x, y, z, text, color, cls) {
+  const life = !cls ? 1.5 : cls === 'callout' ? 1.4 : cls === 'tag' ? 0.9 : 0.8;
+  if (cls === 'callout' || cls === 'tag') { // stack instead of printing on top of one another
+    for (const f of s.floaters) if (f.cls === cls && Math.abs(f.x - x) < 1.6 && Math.abs(f.z - z) < 1.2 && Math.abs(f.y - y) < 0.45) y = f.y + 0.45;
+  }
+  s.floaters.push({ x, y, z, text, color, cls: cls || '', life, max: life, vx: cls && cls.startsWith('dmg') ? rand(-0.35, 0.35) : 0 });
+  if (s.floaters.length > 70) { const i = s.floaters.findIndex((f) => f.cls.startsWith('dmg')); s.floaters.splice(i >= 0 ? i : 0, 1); }
+}
 function addRes(s, k, n, x, z, y) {
   if (n <= 0) return;
   s.res[k] += n;
@@ -195,12 +209,12 @@ function syncStock(s) {
 }
 /** What a stockpile holds, for the UI: [{ r, n, cap }] for every good it takes. */
 function stockList(s, b) {
-  const goods = !b ? RES_ORDER : b.type === 'store' ? RES_ORDER.filter((r) => storeBays(b).includes(r) || (b.stock && b.stock[r] >= 1)) : BUILDINGS[b.type].drop || [];
+  const goods = !b ? RES_ORDER.filter((r) => !RES[r].mat || (stockOf(s, null)[r] || 0) >= 1) : b.type === 'store' ? RES_ORDER.filter((r) => storeBays(b).includes(r) || (b.stock && b.stock[r] >= 1)) : BUILDINGS[b.type].drop || [];
   const st = stockOf(s, b);
   return goods.map((r) => ({ r, n: Math.floor(st[r] || 0), cap: b ? stockCap(b, r) : Infinity }));
 }
 const isDefender = (v) => slotKey(v.job) === 'army';
-const isMelee = (v) => isDefender(v) && v.job !== 'archer';
+const isMelee = (v) => isDefender(v) && v.job !== 'archer' && v.job !== 'medic';
 function jobCount(s, job) { let n = 0; for (const v of s.villagers) if (v.job === job) n++; return n; }
 /** Total places for a job (soldiers of every kind share the same 'army' places). */
 function jobSlots(s, job) {
@@ -303,7 +317,7 @@ function setJob(s, v, job) {
   if (v.carryAmt > 0) deliver(s, v);
   const old = JOBS[v.job];
   if (old && old.weapon && v.job !== job) s.armory[old.weapon] = (s.armory[old.weapon] || 0) + 1; // the weapon goes back to the armoury
-  v.job = job; v.target = null; v.workplace = null; v.workT = 0; v.foe = null;
+  v.job = job; v.target = null; v.workplace = null; v.workT = 0; v.foe = null; v.atk = null; v.patient = null; v.healTo = null; v.abilT = 3;
   const st = SOLDIERS[job];
   const newMax = st ? st.hp + (job === 'warrior' && s.upgrades.talwar ? 30 : 0) : 40;
   v.hp = Math.min(newMax, v.hp + Math.max(0, newMax - v.maxHp));
@@ -367,8 +381,9 @@ function craftWeapon(s, key, n) {
   for (let i = 0; i < (n || 1) && canAfford(s, W.cost); i++) { spend(s, W.cost, b.x, b.z); made++; }
   s.armory[key] = (s.armory[key] || 0) + made;
   floater(s, b.x, 2.6, b.z, '+' + made, '#ffe0a0');
-  sfx(W.at === 'forge' ? 'anvil' : 'saw', b.x, b.z);
-  emit(s, b.x, 1.2, b.z, 10, { spread: 0.5, vx: 1.2, vyMin: 1, vyMax: 3, life: 0.6, colors: W.at === 'forge' ? ['#ffcc33', '#ff8a1f', '#fff3b0'] : ['#e8c896', '#c89a5e'], g: 6, add: W.at === 'forge' });
+  const herbal = W.at === 'vaidyashala';
+  sfx(W.at === 'forge' ? 'anvil' : herbal ? 'heal' : 'saw', b.x, b.z);
+  emit(s, b.x, 1.2, b.z, 10, { spread: 0.5, vx: 1.2, vyMin: 1, vyMax: 3, life: 0.6, colors: W.at === 'forge' ? ['#ffcc33', '#ff8a1f', '#fff3b0'] : herbal ? ['#8ef09a', '#d8ffd0', '#5fd36f'] : ['#e8c896', '#c89a5e'], g: herbal ? -0.5 : 6, add: W.at === 'forge' || herbal });
   tip('equip', `${W.name} ready! In Kaam, press + next to ${JOBS[W.job].name} to hand it to a Sainik.`);
   return made;
 }
@@ -381,9 +396,10 @@ function startUpgrade(s, b) {
   spend(s, L.cost, b.x, b.z);
   b.upgrading = true;
   b.upProg = 0;
-  toast(`Upgrading the ${def.name} to level ${bLevel(b) + 1}. A Mistri will build it.`, 'info');
+  toast(`Upgrading the ${def.name} to level ${bLevel(b) + 1}. Its workers, your Mistri and any helpers you send will build it by day.`, 'info', 5);
   sfx('place', b.x, b.z);
-  if (jobCount(s, 'build') === 0) toast('You have no Mistri (builder) — assign one or the upgrade will never finish!', 'danger', 6);
+  const own = s.villagers.some((v) => v.workplace === b.id) || s.villagers.some((v) => v.home === b.id && v.job === 'idle');
+  if (!canBuildNow(s) && !own) toast('Nobody can work on it yet: assign a Mistri (builder), or free a villager from their job (idle villagers build too).', 'danger', 6);
   return true;
 }
 function finishUpgrade(s, b) {
@@ -391,6 +407,8 @@ function finishUpgrade(s, b) {
   const L = def.levels[bLevel(b) + 1];
   b.level = bLevel(b) + 1;
   b.upgrading = false;
+  b.crew = null;
+  for (const v of s.villagers) if (v.helpB === b.id) v.helpB = null; // helpers go back to what they were doing
   b.popT = 0.6;
   // every level makes the building sturdier (and fully repaired)
   b.maxHp = Math.round(def.hp * (1 + 0.4 * (b.level - 1)));
@@ -448,7 +466,7 @@ function placeBuilding(s, type, cx, cz, rot, quiet) {
   addBuilding(s, b);
   emit(s, c.x, 0.2, c.z, 10, { spread: def.fw / 2, vx: 1.2, vyMin: 1, vyMax: 3, life: 0.8, colors: ['#c8a46a', '#a77c4b', '#e0bf88'], g: 6 });
   if (!quiet) sfx('place', c.x, c.z);
-  if (jobCount(s, 'build') === 0) tip('needBuilder', 'Construction sites need a Mistri (builder). Assign one in the Kaam panel.');
+  if (!canBuildNow(s)) tip('needBuilder', 'Construction sites need a builder. Assign a Mistri in the Kaam panel, or leave someone idle: idle villagers build too.');
   return b;
 }
 /** Cells on a straight line between two cells (for dragging walls). */
@@ -476,6 +494,7 @@ function placeWallLine(s, type, cells, rot) {
 function demolish(s, b) {
   const def = BUILDINGS[b.type];
   refund(s, def.cost, b.done ? 0.5 : 0.9);
+  for (const r in b.hopper || {}) if (b.hopper[r] > 0) s.res[r] += b.hopper[r]; // whatever waited in the hopper goes back to the heap
   removeBuilding(s, b);
   emit(s, b.x, 0.5, b.z, 16, { spread: def.fw / 2, vx: 2, vyMin: 1, vyMax: 4, life: 0.9, colors: ['#8a8a8a', '#a77c4b', '#6b4a2e'], g: 9 });
   sfx('demolish', b.x, b.z);
@@ -644,7 +663,7 @@ function assignDefenders(s) {
   const fronts = s.fronts.length ? s.fronts : [{ a: 0, w: 1 }, { a: Math.PI / 2, w: 1 }, { a: Math.PI, w: 1 }, { a: -Math.PI / 2, w: 1 }];
   const W = (f) => f.w || 0.001;
   const tot = fronts.reduce((a, f) => a + W(f), 0);
-  for (const group of [['warrior', 'brute', 'spear'], ['archer']]) {
+  for (const group of [['warrior', 'brute', 'spear'], ['archer', 'medic']]) {
     const list = s.villagers.filter((v) => group.includes(v.job)).sort((a, b) => a.id - b.id);
     const n = list.length;
     const counts = fronts.map((f) => Math.floor((n * W(f)) / tot));
@@ -756,12 +775,15 @@ function deliverAI(s, v, dt, spd) {
   v.task = `Carrying ${v.carryAmt} ${RES[v.carry].en.toLowerCase()} to the ${d.fire ? 'Agnikund heap' : BUILDINGS[d.b.type].name}`;
   if (moveTo(v, tx, tz, spd, dt)) deliver(s, v, d);
 }
+/** Does this mining camp dig iron ore instead of stone? (from Agnikund level 2, set in its panel) */
+const minesOre = (s, camp) => !!(camp && camp.mine === 'ore' && s.fire.level >= 2);
 function findResource(s, v, kind, camp) {
   const list = kind === 'wood' ? s.trees : s.rocks;
   const base = camp || { x: 0, z: 0 };
+  const ore = kind !== 'wood' && minesOre(s, camp);
   let best = null, bs = Infinity;
   for (const r of list) {
-    if (kind === 'wood' ? (r.stump || r.wood <= 0 || r.sacred) : r.stone <= 0) continue;
+    if (kind === 'wood' ? (r.stump || r.wood <= 0 || r.sacred) : r.stone <= 0 || !!r.ore !== ore) continue;
     const score = distXZ(base.x, base.z, r.x, r.z) * 0.85 + distXZ(r.x, r.z, v.x, v.z) * 0.15;
     if (score >= bs) continue;
     let n = 0;
@@ -774,39 +796,42 @@ function findResource(s, v, kind, camp) {
 }
 function gatherAI(s, v, dt, spd, kind) {
   const isWood = kind === 'wood';
-  const cap = CARRY_CAP[kind];
-  if (v.carryAmt >= cap) return deliverAI(s, v, dt, spd);
   const camp = validWorkplace(s, v);
+  const ore = !isWood && minesOre(s, camp);
+  const good = isWood ? 'wood' : ore ? 'ore' : 'stone';
+  if (v.carryAmt > 0 && v.carry !== good && v.carry) return deliverAI(s, v, dt, spd); // switched from stone to ore: drop the old load first
+  const cap = CARRY_CAP[good];
+  if (v.carryAmt >= cap) return deliverAI(s, v, dt, spd);
   if (!camp) {
     if (v.carryAmt > 0) return deliverAI(s, v, dt, spd);
     v.task = `Needs a ${BUILDINGS[JOBS[v.job].building].name} to work from`;
     return idleAI(s, v, dt, spd);
   }
   let r = v.target;
-  const valid = r && (isWood ? (!r.stump && r.wood > 0 && s.trees.includes(r)) : (r.stone > 0 && s.rocks.includes(r)));
+  const valid = r && (isWood ? (!r.stump && r.wood > 0 && s.trees.includes(r)) : (r.stone > 0 && s.rocks.includes(r) && !!r.ore === ore));
   if (!valid) r = v.target = findResource(s, v, kind, camp);
   if (!r) {
     if (v.carryAmt > 0) return deliverAI(s, v, dt, spd);
-    v.task = isWood ? 'No trees left to chop!' : 'No rocks left to mine!';
+    v.task = isWood ? 'No trees left to chop!' : ore ? 'No iron ore boulders left in reach!' : 'No rocks left to mine!';
     return idleAI(s, v, dt, spd);
   }
   const d = distXZ(v.x, v.z, r.x, r.z) || 1;
   const off = isWood ? 0.6 : 0.75;
   const sx = r.x + ((v.x - r.x) / d) * off, sz = r.z + ((v.z - r.z) / d) * off;
   if (d > off + 0.05 && !moveTo(v, sx, sz, spd, dt)) {
-    v.task = v.carryAmt > 0 ? (isWood ? 'Fetching more wood' : 'Fetching more stone') : (isWood ? 'Walking to a tree' : 'Walking to the rocks');
+    v.task = v.carryAmt > 0 ? `Fetching more ${RES[good].en.toLowerCase()}` : (isWood ? 'Walking to a tree' : ore ? 'Walking to the iron boulders' : 'Walking to the rocks');
     return;
   }
   faceTo(v, r.x, r.z);
-  v.task = isWood ? `Chopping a ${TREE_INFO[r.type].name} (${r.wood} wood left)` : `Breaking stone (${r.stone} left)`;
+  v.task = isWood ? `Chopping a ${TREE_INFO[r.type].name} (${r.wood} wood left)` : ore ? `Breaking iron ore (${r.stone} left)` : `Breaking stone (${r.stone} left)`;
   const rate = workRate(s) * (isWood ? (s.upgrades.axe ? 1.6 : 1) : (s.upgrades.pick ? 1.6 : 1));
   v.workT += dt * rate;
   v.anim = 'work';
-  const interval = isWood ? 2.0 : 2.6;
+  const interval = isWood ? 2.0 : ore ? 3.2 : 2.6;
   if (v.workT >= interval) {
     v.workT -= interval;
     v.carryAmt++;
-    v.carry = kind;
+    v.carry = good;
     if (isWood) {
       r.wood--; r.shake = 0.3;
       emitChips(s, r.x, 0.8, r.z, '#c89a5e');
@@ -818,9 +843,9 @@ function gatherAI(s, v, dt, spd, kind) {
       }
     } else {
       r.stone--;
-      emitChips(s, r.x, 0.4, r.z, '#b8b4ab');
+      emitChips(s, r.x, 0.4, r.z, r.ore ? '#b06a48' : '#b8b4ab');
       sfx('mine', v.x, v.z);
-      if (Math.random() < 0.07) { v.gold++; floater(s, r.x, 1.4, r.z, '!', '#ffd84a'); sfx('coin', r.x, r.z); }
+      if (!r.ore && Math.random() < 0.07) { v.gold++; floater(s, r.x, 1.4, r.z, '!', '#ffd84a'); sfx('coin', r.x, r.z); }
       if (r.stone <= 0) { s.rocks.splice(s.rocks.indexOf(r), 1); v.target = null; }
       s.rockVer++;
     }
@@ -850,12 +875,125 @@ function farmAI(s, v, dt, spd) {
     emit(s, f.x, 0.5, f.z, 14, { spread: 1.2, vx: 0.8, vyMin: 1, vyMax: 3, life: 0.9, colors: ['#f2d16b', '#e0b84a', '#a6cc4a'], g: 8 });
   }
 }
+/* ---------- materials: clay, bricks, charcoal, iron ---------- */
+const workBonus = (b) => 1 + 0.25 * (bLevel(b) - 1); // upgraded workshops work faster
+/** Beldar: dig clay in the pit, fill the tokri, stack it beside the pit (or carry it to storage when full). */
+function clayAI(s, v, dt, spd) {
+  const cap = carryCap(s, 'clay');
+  if (v.carryAmt >= cap || (v.carryAmt > 0 && v.carry !== 'clay')) return deliverAI(s, v, dt, spd);
+  const pit = validWorkplace(s, v);
+  if (!pit) { if (v.carryAmt > 0) return deliverAI(s, v, dt, spd); v.task = 'Needs a Mitti Khaan (clay pit)'; return idleAI(s, v, dt, spd); }
+  const i = workplaceIndex(s, v);
+  const p = localToWorld(pit, i % 2 ? 0.35 : -0.35, -0.1);
+  if (!moveTo(v, p.x, p.z, spd, dt) && distXZ(v.x, v.z, p.x, p.z) > 0.4) { v.task = 'Walking to the Mitti Khaan'; return; }
+  faceTo(v, pit.x, pit.z);
+  v.anim = 'work';
+  v.task = `Digging clay (${v.carryAmt} / ${cap} in the tokri)`;
+  v.workT += dt * workRate(s) * workBonus(pit) * (s.upgrades.pick ? 1.6 : 1) * (s.weather === 'rain' ? 1.2 : 1);
+  if (v.workT >= 2.4) {
+    v.workT -= 2.4;
+    v.carryAmt++; v.carry = 'clay';
+    emitChips(s, pit.x, 0.25, pit.z, '#a8603a');
+    if (Math.random() < 0.35) sfx('splash', v.x, v.z); else sfx('drop_food', v.x, v.z);
+  }
+}
+/** Which recipe a workshop is running. The kiln on 'auto' burns charcoal when the smelters run short, bricks otherwise. */
+function recipeOf(s, b) {
+  const def = BUILDINGS[b.type];
+  const r = b.recipe || def.recipes[0];
+  if (r !== 'auto') return r;
+  const smelting = s.buildings.some((o) => o.type === 'smelter' && o.done);
+  return smelting && (s.res.charcoal || 0) < 12 && (s.res.wood || 0) >= 6 ? 'charcoal' : 'brick';
+}
+/** The nearest stockpile holding at least one of a good (skipping the workshop itself). */
+function nearestSource(s, x, z, r, not) {
+  let best = null, bd = Infinity;
+  for (const p of stockpiles(s, r)) {
+    if (p.b && p.b === not) continue;
+    if ((stockOf(s, p.b)[r] || 0) < 1) continue;
+    const d = distXZ(p.x, p.z, x, z);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+/**
+ * Kumhar and Agariya: keep the hopper stocked by carrying in the inputs, then work batches at the furnace.
+ * Inputs leave the village stock when picked up; the output lands in the workshop's own stock, or is
+ * carried to the nearest storage with room when that is full.
+ */
+function processAI(s, v, dt, spd) {
+  const b = validWorkplace(s, v);
+  if (!b) {
+    if (v.carryAmt > 0) { v.fetching = false; return deliverAI(s, v, dt, spd); }
+    v.task = `Needs a ${BUILDINGS[JOBS[v.job].building].name}`;
+    return idleAI(s, v, dt, spd);
+  }
+  const def = BUILDINGS[b.type];
+  const hop = b.hopper || (b.hopper = {});
+  if (v.carryAmt > 0 && !v.fetching) return deliverAI(s, v, dt, spd); // finished goods with no room at the workshop
+  if (v.fetching && v.carryAmt > 0) { // bring an input to the hopper
+    const door = edgePoint(b, v.x, v.z, 0.35);
+    if (distToBuilding(b, v.x, v.z) > 0.6 && !moveTo(v, door.x, door.z, spd, dt)) { v.task = `Bringing ${v.carryAmt} ${RES[v.carry].en.toLowerCase()} to the ${def.name}`; return; }
+    hop[v.carry] = (hop[v.carry] || 0) + v.carryAmt;
+    sfx('drop_' + v.carry, v.x, v.z);
+    v.carryAmt = 0; v.carry = null; v.fetching = false;
+    return;
+  }
+  v.fetching = false;
+  const R = RECIPES[recipeOf(s, b)];
+  const short = Object.keys(R.in).find((r) => (hop[r] || 0) < R.in[r]);
+  if (!short) { // enough for a batch: work the furnace
+    const p = frontSpot(s, v, b, workplaceIndex(s, v) === 0 ? -0.45 : 0.45);
+    if (!moveTo(v, p.x, p.z, spd, dt) && distXZ(v.x, v.z, p.x, p.z) > 0.4) { v.task = `Walking to the ${def.name}`; return; }
+    faceTo(v, b.x, b.z);
+    v.anim = 'work';
+    b.batch = (b.batch || 0) + dt * workRate(s) * workBonus(b);
+    b.activeT = s.time;
+    v.task = `${R.verb} (${Math.floor((b.batch / R.time) * 100)}%)`;
+    const top = localToWorld(b, b.type === 'kiln' ? 0.55 : -0.1, b.type === 'kiln' ? -0.5 : -0.15);
+    if (Math.random() < dt * 5) emit(s, top.x, b.type === 'kiln' ? 3.1 : 1.95, top.z, 1, { spread: 0.12, vx: 0.25, vyMin: 0.5, vyMax: 1.1, life: 2.6, colors: ['#8a8790', '#a3a0a8', '#6f6c74'], g: -0.25 }); // chimney smoke
+    if (Math.random() < dt * 3) { const m = localToWorld(b, 0, BUILDINGS[b.type].fd / 2 - 0.2); emitFire(s, m.x, 0.3, m.z); }
+    v.workT += dt;
+    if (v.workT > 1.1) { v.workT = 0; sfx(b.type === 'smelter' ? 'anvil' : 'hammer', v.x, v.z); }
+    if (b.batch >= R.time) {
+      b.batch = 0;
+      for (const r in R.in) hop[r] -= R.in[r];
+      if (stockFree(b, R.out) >= R.n) { addRes(s, R.out, R.n, b.x, b.z, def.ht + 0.4); putStock(s, b, R.out, R.n); b.stockPop = 0.35; }
+      else { v.carry = R.out; v.carryAmt = R.n; } // the workshop's stack is full: carry this batch to storage
+      emit(s, b.x, 1.0, b.z, 10, { spread: 0.4, vx: 1, vyMin: 1, vyMax: 2.5, life: 0.8, colors: b.type === 'smelter' ? ['#ffcc33', '#ff8a1f', '#fff3b0'] : ['#ff9a40', '#d8643c', '#ffcc33'], g: 4, add: true });
+      sfx(b.type === 'smelter' ? 'anvil' : 'drop_stone', b.x, b.z);
+    }
+    return;
+  }
+  // fetch what the hopper is missing (enough for two batches when it can)
+  const src = nearestSource(s, v.x, v.z, short, b);
+  if (!src) {
+    const p = frontSpot(s, v, b, workplaceIndex(s, v) === 0 ? -0.45 : 0.45);
+    if (moveTo(v, p.x, p.z, spd, dt)) { v.anim = 'stand'; faceTo(v, b.x, b.z); }
+    v.task = `Waiting for ${RES[short].en.toLowerCase()} (${RES[short].from})`;
+    return;
+  }
+  const near = src.b ? distToBuilding(src.b, v.x, v.z) <= 0.6 : distXZ(v.x, v.z, src.x, src.z) <= 0.75;
+  if (!near) {
+    const tp = src.b ? edgePoint(src.b, v.x, v.z, 0.35) : { x: src.x + ((v.x - src.x) / (distXZ(v.x, v.z, src.x, src.z) || 1)) * 0.7, z: src.z + ((v.z - src.z) / (distXZ(v.x, v.z, src.x, src.z) || 1)) * 0.7 };
+    moveTo(v, tp.x, tp.z, spd, dt);
+    v.task = `Fetching ${RES[short].en.toLowerCase()} from the ${src.b ? BUILDINGS[src.b.type].name : 'Agnikund heap'}`;
+    return;
+  }
+  const st = stockOf(s, src.b);
+  const want = Math.max(1, R.in[short] * 2 - (hop[short] || 0));
+  const n = Math.floor(Math.min(carryCap(s, short), want, st[short] || 0, s.res[short] || 0));
+  if (n <= 0) return;
+  st[short] -= n; s.res[short] -= n;
+  v.carry = short; v.carryAmt = n; v.fetching = true;
+  sfx('drop_' + short, v.x, v.z);
+}
 function findBuildJob(s, v) {
   let best = null, bs = Infinity;
   for (const b of s.buildings) {
     if (b.done && b.hp >= b.maxHp - 0.5 && !b.upgrading) continue;
     let n = 0;
-    for (const o of s.villagers) if (o !== v && o.job === 'build' && o.target === b) n++;
+    for (const o of s.villagers) if (o !== v && (o.job === 'build' || o.job === 'idle') && o.target === b) n++;
     const score = dist(b, v) + n * 6 + (b.done && !b.upgrading ? 25 : 0);
     if (score < bs) { bs = score; best = b; }
   }
@@ -957,39 +1095,108 @@ function lootAI(s, v, dt, spd) {
   if (moveTo(v, l.x, l.z, spd * 1.1, dt)) { collectLoot(s, l, v); v.lootT = null; }
   return true;
 }
+/** Idle villagers lend a hand as Mistri (a little slower than a trained one). */
+const IDLE_BUILD_EFF = 0.8;
 function builderAI(s, v, dt, spd) {
+  const eff = v.job === 'idle' ? IDLE_BUILD_EFF : 1;
   let b = v.target && s.bById.get(v.target.id) === v.target ? v.target : null;
   if (b && b.done && b.hp >= b.maxHp - 0.5 && !b.upgrading) b = null;
   if (!b) b = v.target = findBuildJob(s, v);
-  if (!b) { v.task = 'Nothing to build — waiting'; return idleAI(s, v, dt, spd); }
+  if (!b) { v.target = null; v.task = v.job === 'idle' ? 'Resting — nothing to build' : 'Nothing to build — waiting'; return idleAI(s, v, dt, spd); }
   const def = BUILDINGS[b.type];
   const p = edgePoint(b, v.x, v.z, 0.35);
   if (distToBuilding(b, v.x, v.z) > 0.55 && !moveTo(v, p.x, p.z, spd, dt)) { v.task = (b.done ? 'Going to repair the ' : 'Going to build the ') + def.name; return; }
   faceTo(v, b.x, b.z);
   v.anim = 'work';
-  const rate = workRate(s);
-  v.workT += dt;
-  if (v.workT > 0.6) {
-    v.workT = 0;
-    sfx('hammer', v.x, v.z);
-    const hy = b.done ? 0.4 + Math.random() * def.ht * 0.5 : 0.15 + def.ht * clamp((b.progress / def.time - 0.12) / 0.88, 0, 1);
-    emitChips(s, p.x, hy, p.z, b.done ? '#c8a46a' : pick(['#c8a46a', '#b5794a', '#d9ab55']));
-    if (!b.done && Math.random() < 0.5) emit(s, b.x, 0.1, b.z, 2, { spread: BUILDINGS[b.type].fw / 2, vx: 0.4, vyMin: 0.3, vyMax: 0.8, life: 1.2, colors: ['#d8c4a0', '#c8b08a'], g: -0.2 });
-  }
+  const rate = workRate(s) * eff;
+  hammerAt(s, v, b, p, dt);
+  const who = v.job === 'idle' ? ' (lending a hand)' : '';
   if (!b.done) {
     b.progress += dt * rate;
     b.hp = Math.max(b.hp, (def.hp * b.progress) / def.time);
-    v.task = `Building the ${def.name} (${Math.floor((b.progress / def.time) * 100)}%)`;
+    v.task = `Building the ${def.name} (${Math.floor((b.progress / def.time) * 100)}%)${who}`;
     if (b.progress >= def.time) completeBuilding(s, b);
   } else if (b.upgrading) {
-    const L = def.levels[bLevel(b) + 1];
-    b.upProg = (b.upProg || 0) + dt * rate;
-    v.task = `Upgrading the ${def.name} to level ${bLevel(b) + 1} (${Math.floor((b.upProg / L.time) * 100)}%)`;
-    if (b.upProg >= L.time) finishUpgrade(s, b);
+    upgradeWork(s, v, b, dt, eff);
+    v.task += who;
   } else {
     b.hp = Math.min(b.maxHp, b.hp + 12 * dt * rate);
-    v.task = `Repairing the ${def.name}`;
+    v.task = `Repairing the ${def.name}${who}`;
   }
+}
+/** Is anyone able to build? (Mistri, or idle villagers, who pitch in automatically) */
+const canBuildNow = (s) => jobCount(s, 'build') > 0 || idleVillagers(s).length > 0;
+/** Hammer blows, wood chips and dust while someone works on a building. */
+function hammerAt(s, v, b, p, dt) {
+  const def = BUILDINGS[b.type];
+  v.workT += dt;
+  if (v.workT <= 0.6) return;
+  v.workT = 0;
+  sfx('hammer', v.x, v.z);
+  const hy = b.done ? 0.4 + Math.random() * def.ht * 0.5 : 0.15 + def.ht * clamp((b.progress / def.time - 0.12) / 0.88, 0, 1);
+  emitChips(s, p.x, hy, p.z, b.done ? '#c8a46a' : pick(['#c8a46a', '#b5794a', '#d9ab55']));
+  if ((!b.done || b.upgrading) && Math.random() < 0.5) emit(s, b.x, 0.1, b.z, 2, { spread: def.fw / 2, vx: 0.4, vyMin: 0.3, vyMax: 0.8, life: 1.2, colors: ['#d8c4a0', '#c8b08a'], g: -0.2 });
+}
+/*
+ * Upgrades take real work: L.time is the work-seconds one person needs. Every pair of hands adds to it — a
+ * Mistri counts fully, the building's own workers and helpers a little less — so more people finish sooner.
+ */
+const UPGRADE_EFF = { build: 1, own: 0.8, helper: 0.8 };
+function upgradeWork(s, v, b, dt, eff) {
+  const def = BUILDINGS[b.type], L = def.levels[bLevel(b) + 1];
+  if (!L) return;
+  b.upProg = (b.upProg || 0) + dt * workRate(s) * eff;
+  (b.crew || (b.crew = {}))[v.id] = [s.time, eff];
+  v.task = `Upgrading the ${def.name} to level ${bLevel(b) + 1} (${Math.floor((b.upProg / L.time) * 100)}%)`;
+  if (b.upProg >= L.time) finishUpgrade(s, b);
+}
+/** Who is working on an upgrade right now, and how fast it goes (work-seconds per second). */
+function upgradeCrew(s, b) {
+  let n = 0, rate = 0;
+  for (const id in b.crew || {}) { const [t, eff] = b.crew[id]; if (s.time - t < 0.6) { n++; rate += eff * workRate(s); } else delete b.crew[id]; }
+  return { n, rate };
+}
+/** The upgrade this villager should lend a hand to, if any: one they were sent to, their workplace, or their home. */
+function upgradeToHelp(s, v) {
+  if (v.helpB) {
+    const b = getB(s, v.helpB);
+    if (b && b.done && b.upgrading) return b;
+    v.helpB = null;
+  }
+  if (v.job === 'build' || v.carryAmt > 0) return null;
+  if ((v.job === 'vaidya' || v.job === 'medic') && s.villagers.some((o) => o.hp < o.maxHp * 0.7 && !o.inside)) return null; // healing comes first
+  const w = v.workplace != null ? getB(s, v.workplace) : null;
+  if (w && w.done && w.upgrading) return w;
+  if (v.job === 'idle' && v.home) { const h = getB(s, v.home); if (h && h.done && h.upgrading) return h; }
+  return null;
+}
+function upgradeHelpAI(s, v, b, dt, spd) {
+  const def = BUILDINGS[b.type];
+  const p = edgePoint(b, v.x, v.z, 0.35);
+  if (distToBuilding(b, v.x, v.z) > 0.55 && !moveTo(v, p.x, p.z, spd, dt)) { v.task = `Going to help upgrade the ${def.name}`; return; }
+  faceTo(v, b.x, b.z);
+  v.anim = 'work';
+  hammerAt(s, v, b, p, dt);
+  upgradeWork(s, v, b, dt, v.helpB === b.id ? UPGRADE_EFF.helper : UPGRADE_EFF.own);
+}
+/** Send an idle villager to help with an upgrade (the player's "Send helper" button). */
+const MAX_HELPERS = 6;
+function sendHelper(s, b) {
+  if (!b || !b.upgrading) return false;
+  if (s.villagers.filter((v) => v.helpB === b.id).length >= MAX_HELPERS) { toast(`The ${BUILDINGS[b.type].name} already has ${MAX_HELPERS} helpers.`, 'warn'); return false; }
+  const idle = idleVillagers(s).filter((v) => !v.helpB).sort((a, c) => distXZ(a.x, a.z, b.x, b.z) - distXZ(c.x, c.z, b.x, b.z));
+  if (!idle.length) { toast('No idle villagers to send. Free someone from their job, or invite a traveller.', 'warn'); sfx('error'); return false; }
+  idle[0].helpB = b.id;
+  toast(`${idle[0].name} goes to help upgrade the ${BUILDINGS[b.type].name}.`, 'info', 3);
+  sfx('click');
+  return true;
+}
+function recallHelper(s, b) {
+  const list = s.villagers.filter((v) => v.helpB === b.id);
+  if (!list.length) return false;
+  list[list.length - 1].helpB = null;
+  sfx('click');
+  return true;
 }
 function priestHeal(s, v, dt) {
   for (const o of s.villagers) {
@@ -1182,9 +1389,118 @@ function shelterAI(s, v, dt, spd) {
   return true;
 }
 
+/* ---------- combat ----------
+ * Every blow is a little sequence: a wind-up, the strike (damage lands here), recovery. Soldiers chain
+ * combos and use one special move on a cooldown; demons telegraph their attacks, get knocked back and
+ * stunned. Visual effects go out as events in s.fx for the renderer (slash arcs, impacts, shockwaves).
+ */
+function fx(s, kind, o) { if (s.fx && s.fx.length < 200) s.fx.push(Object.assign({ kind }, o)); }
+function shake(s, a) { s.shake = Math.max(s.shake || 0, a); }
+function hitStop(s, t) { if (!s.demo) s.hitStop = Math.max(s.hitStop || 0, t); }
+const WEAPON_FX = { warrior: 0xf4f6ff, brute: 0xffb347, spear: 0x9fd0ff, archer: 0xffe9a8, medic: 0x8ef09a };
+function soldierDmg(s, v) {
+  const st = SOLDIERS[v.job] || SOLDIERS.warrior;
+  return (st.dmg || 6) * (v.job === 'warrior' && s.upgrades.talwar ? 1.6 : 1) * (s.festival ? 1.5 : 1);
+}
+const canReach = (v, o, reach) => !o.dead && !(ENEMIES[o.type].fly && o.y > 1.2) && distXZ(o.x, o.z, v.x, v.z) <= reach + ENEMIES[o.type].r;
+function enemiesNear(s, x, z, r) { let n = 0; for (const e of s.enemies) if (!e.dead && !(ENEMIES[e.type].fly && e.y > 1.2) && distXZ(e.x, e.z, x, z) < r + ENEMIES[e.type].r) n++; return n; }
+/** Begin a melee swing: the next move of the combo, or the special move when it is ready and worth it. */
+function startMelee(s, v, e) {
+  const M = SOLDIER_MOVES[v.job] || SOLDIER_MOVES.warrior, st = SOLDIERS[v.job] || SOLDIERS.warrior;
+  const def = ENEMIES[e.type];
+  let kind, mult = 1, ab = null;
+  const big = def.boss || def.cost >= 6;
+  if ((v.abilT || 0) <= 0 && M.ability) {
+    const k = M.ability.key;
+    if ((k === 'bash' && !(e.stunT > 0)) || (k === 'slam' && (enemiesNear(s, v.x, v.z, 2.2) >= 2 || big)) || k === 'lunge') { ab = M.ability; kind = k; }
+  }
+  if (!ab) {
+    v.combo = ((v.combo || 0) + 1) % M.atk.length;
+    kind = M.atk[v.combo];
+    if (v.job === 'warrior' && v.combo === M.atk.length - 1) mult = 1.5; // the combo ends in a heavy thrust
+  }
+  const S2 = SWINGS[kind];
+  v.atk = { kind, t: 0, dur: S2.dur, hit: S2.hit, foe: e, mult, side: v.combo % 2 ? 1 : -1, ab: !!ab, done: false };
+  if (kind === 'lunge') { const d = distXZ(e.x, e.z, v.x, v.z) || 1; v.atk.dx = (e.x - v.x) / d; v.atk.dz = (e.z - v.z) / d; v.atk.dist = clamp(d - st.reach * 0.5, 0.3, 1.6); }
+  v.atkCd = Math.max(st.cd, S2.dur) * (0.92 + Math.random() * 0.16);
+  if (ab) { v.abilT = ab.cd; floater(s, v.x, 2.0, v.z, ab.name + '!', '#ffd27a', 'callout'); }
+}
+/** Advance a swing; the blow lands at its hit moment. Returns true while the soldier is committed to it. */
+function tickAttack(s, v, dt) {
+  const a = v.atk;
+  if (!a) return false;
+  a.t += dt;
+  v.anim = 'atk';
+  const hitT = a.dur * a.hit;
+  if (!a.done && a.foe && !a.foe.dead && a.kind !== 'lunge') faceTo(v, a.foe.x, a.foe.z);
+  if (a.kind === 'lunge' && a.t < hitT) { const step = (a.dist / hitT) * dt; v.x += a.dx * step; v.z += a.dz * step; v.rot = Math.atan2(a.dx, a.dz); }
+  if (!a.done && a.t >= hitT) { a.done = true; resolveAttack(s, v, a); }
+  if (a.t >= a.dur) v.atk = null;
+  return true;
+}
+function resolveAttack(s, v, a) {
+  const st = SOLDIERS[v.job] || SOLDIERS.warrior, M = SOLDIER_MOVES[v.job] || {};
+  const base = soldierDmg(s, v) * a.mult;
+  const crit = Math.random() < (M.crit || 0);
+  const C = crit ? 1.8 : 1;
+  const bonus = (o) => (st.bigBonus && (ENEMIES[o.type].boss || o.type === 'danav') ? st.bigBonus : 1);
+  const col = WEAPON_FX[v.job] || 0xffffff;
+  const e = a.foe;
+  const reach = (st.reach || 0.75) + 0.45;
+  switch (a.kind) {
+    case 'slash': case 'thrust': case 'smash': case 'bash': {
+      fx(s, a.kind === 'thrust' ? 'thrust' : a.kind === 'smash' ? 'smash' : 'slash', { x: v.x, z: v.z, rot: v.rot, side: a.side, c: a.kind === 'bash' ? 0xffd27a : col, len: reach + 0.3, heavy: a.mult > 1 || crit });
+      if (e && canReach(v, e, reach)) {
+        const knock = a.kind === 'smash' ? 1.4 : a.kind === 'bash' ? 1.3 : a.mult > 1 ? 1.0 : 0.45;
+        hitEnemy(s, e, base * C * bonus(e) * (a.kind === 'bash' ? 0.8 : 1), v, { crit, knock, stun: a.kind === 'bash' ? 1.5 : a.kind === 'smash' ? 0.35 : 0, big: a.kind === 'smash' || a.mult > 1 });
+        if (a.kind === 'smash' && st.splash) {
+          for (const o of s.enemies) if (o !== e && !o.dead && distXZ(o.x, o.z, e.x, e.z) < st.splash + ENEMIES[o.type].r) hitEnemy(s, o, base * 0.5, e, { knock: 1.0 });
+          emit(s, e.x, 0.15, e.z, 10, { spread: 0.35, vx: 1.8, vyMin: 0.4, vyMax: 1.4, life: 0.6, colors: ['#d8c4a0', '#c8b08a', '#a89070'], g: 3 });
+          shake(s, 0.08);
+        }
+        if (a.kind === 'bash') { floater(s, e.x, e.y + ENEMIES[e.type].h + 0.5, e.z, 'Stunned', '#ffe27a', 'tag'); sfx('thud', v.x, v.z); }
+        sfx(v.job === 'brute' ? 'thud' : 'sword', v.x, v.z);
+        if (crit) hitStop(s, 0.05);
+      } else sfx('whoosh', v.x, v.z);
+      break;
+    }
+    case 'slam': { // Gadadhari leaps and brings the gada down: a shockwave knocks back and stuns everything around
+      const R = 2.4;
+      let hit = 0;
+      for (const o of s.enemies) {
+        if (o.dead || (ENEMIES[o.type].fly && o.y > 1.2) || distXZ(o.x, o.z, v.x, v.z) > R + ENEMIES[o.type].r) continue;
+        hitEnemy(s, o, base * 1.4 * C, v, { crit, knock: 2.0, stun: 1.1, big: true });
+        hit++;
+      }
+      fx(s, 'ring', { x: v.x, z: v.z, r: R + 0.3, c: 0xffb347, dur: 0.55 });
+      fx(s, 'ring', { x: v.x, z: v.z, r: 1.4, c: 0xfff0c0, dur: 0.3 });
+      fx(s, 'impact', { x: v.x + Math.sin(v.rot) * 0.6, y: 0.2, z: v.z + Math.cos(v.rot) * 0.6, c: 0xffd27a, s: 1.8 });
+      emit(s, v.x, 0.1, v.z, 26, { spread: 1.2, vx: 3, vyMin: 0.5, vyMax: 2.5, life: 0.9, colors: ['#d8c4a0', '#c8b08a', '#a89070', '#8a7a66'], g: 5 });
+      shake(s, 0.32); hitStop(s, 0.07);
+      sfx('boom', v.x, v.z); sfx('thud', v.x, v.z);
+      if (hit >= 3) floater(s, v.x, 2.5, v.z, `×${hit}`, '#ffd27a', 'callout');
+      break;
+    }
+    case 'lunge': { // Bhaladhari dashes and skewers every demon along the line
+      const fx0 = Math.sin(v.rot), fz0 = Math.cos(v.rot), L = (st.reach || 1.5) + 0.7;
+      for (const o of s.enemies) {
+        if (o.dead || (ENEMIES[o.type].fly && o.y > 1.2)) continue;
+        const rx = o.x - v.x, rz = o.z - v.z, along = rx * fx0 + rz * fz0, side = Math.abs(rx * fz0 - rz * fx0);
+        if (along < -0.2 || along > L + ENEMIES[o.type].r || side > 0.5 + ENEMIES[o.type].r) continue;
+        hitEnemy(s, o, base * 1.8 * C * bonus(o), v, { crit, knock: 1.3, big: true });
+      }
+      fx(s, 'thrust', { x: v.x - fx0 * 0.6, z: v.z - fz0 * 0.6, rot: v.rot, c: 0xbfe2ff, len: L + 0.9, heavy: true });
+      sfx('sword', v.x, v.z); sfx('whoosh', v.x, v.z);
+      if (crit) hitStop(s, 0.05);
+      break;
+    }
+  }
+  if (Math.random() < 0.12) sfx('warcry', v.x, v.z); // "Har Har Mahadev!"
+}
 function warriorAI(s, v, dt, phase, spd) {
   const night = phase !== 'day';
   const R = territory(s);
+  if (tickAttack(s, v, dt)) return; // committed to a swing
   if (v.hp < v.maxHp * 0.3) v.retreat = true;
   if (v.retreat) {
     if (v.hp > v.maxHp * 0.75 || !s.enemies.length) v.retreat = false;
@@ -1217,34 +1533,24 @@ function warriorAI(s, v, dt, phase, spd) {
     const def = ENEMIES[e.type];
     const reach = st.reach + def.r;
     const d = distXZ(e.x, e.z, v.x, v.z);
-    if (d > reach) {
+    // a spearman can start his lunge from further out
+    const lungeOK = v.job === 'spear' && (v.abilT || 0) <= 0 && d < reach + 1.4 && d > reach * 0.6;
+    if (d > reach && !lungeOK) {
       const k = (d - reach + 0.1) / d;
       moveTo(v, v.x + (e.x - v.x) * k, v.z + (e.z - v.z) * k, spd * 1.25 * st.speed, dt);
       v.task = 'Charging the ' + def.name;
     } else {
       faceTo(v, e.x, e.z);
-      v.anim = 'work';
+      v.anim = 'fight';
       v.task = 'Fighting the ' + def.name;
-      if (v.atkCd <= 0) {
-        let dmg = st.dmg * (v.job === 'warrior' && s.upgrades.talwar ? 1.6 : 1) * (s.festival ? 1.5 : 1);
-        if (st.bigBonus && (def.boss || e.type === 'danav')) dmg *= st.bigBonus; // spears skewer the giants
-        hitEnemy(s, e, dmg, v);
-        if (st.splash) { // the gada smashes everything around the target
-          for (const o of s.enemies) if (o !== e && !o.dead && distXZ(o.x, o.z, e.x, e.z) < st.splash) hitEnemy(s, o, dmg * 0.5, v);
-          if (!def.boss) { const kk = st.knock / (d || 1); e.x += (e.x - v.x) * kk; e.z += (e.z - v.z) * kk; }
-          emit(s, e.x, 0.2, e.z, 8, { spread: 0.3, vx: 1.5, vyMin: 0.3, vyMax: 1.2, life: 0.6, colors: ['#d8c4a0', '#c8b08a'], g: 2 });
-        }
-        v.atkCd = st.cd;
-        sfx(v.job === 'brute' ? 'thud' : 'sword', v.x, v.z);
-        if (Math.random() < 0.15) sfx('warcry', v.x, v.z); // "Har Har!"
-      }
+      if (v.atkCd <= 0) startMelee(s, v, e);
     }
     return;
   }
   if (night) {
     const p = postPos(s, v);
     if (moveTo(v, p.x, p.z, spd * 1.2, dt)) {
-      v.anim = 'stand';
+      v.anim = s.enemies.length ? 'fight' : 'stand'; // weapons up once demons are out
       v.rot = Math.atan2(p.x, p.z);
       v.task = 'Guarding the ' + compassOf(p.x, p.z);
     } else v.task = 'Taking position for the night';
@@ -1260,9 +1566,37 @@ function warriorAI(s, v, dt, phase, spd) {
     v.task = 'Training at the Akhara';
   } else v.task = 'Walking to the Akhara';
 }
+/** Loose an arrow from an archer (crits fly gold; volleys and Agni Baan burn). */
+function archerShot(s, v, target, o) {
+  o = o || {};
+  const crit = Math.random() < (SOLDIER_MOVES.archer.crit || 0);
+  const dmg = 6 * (s.upgrades.bow ? 1.5 : 1) * (s.festival ? 1.5 : 1) * (o.mult || 1) * (crit ? 1.8 : 1);
+  const p = shootArrow(s, v.x, 1.0, v.z, target, dmg, false, 'arrow', 17);
+  p.crit = crit; p.fire = !!(o.fire || s.upgrades.agnibaan); p.byArcher = true;
+  return p;
+}
 function archerAI(s, v, dt, phase, spd) {
   const night = phase !== 'day';
   const range = 10 + (s.upgrades.bow ? 2.5 : 0);
+  if (v.atk) { // drawing the bow: the arrow flies at the release point
+    const a = v.atk;
+    a.t += dt;
+    v.anim = 'atk';
+    if (a.foe && !a.foe.dead) faceTo(v, a.foe.x, a.foe.z);
+    if (!a.done && a.t >= a.dur * a.hit) {
+      a.done = true;
+      if (a.kind === 'volley') { // Baan Varsha: five fire arrows rain on the crowd around the target
+        const c = a.foe && !a.foe.dead ? a.foe : nearestEnemy(s, v.x, v.z, range, false);
+        if (c) {
+          const pool = s.enemies.filter((o) => !o.dead && distXZ(o.x, o.z, c.x, c.z) < 3).sort(() => Math.random() - 0.5);
+          for (let i = 0; i < 5; i++) archerShot(s, v, pool[i % pool.length] || c, { fire: true, mult: 0.9 });
+        }
+        sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
+      } else if (a.foe && !a.foe.dead) { archerShot(s, v, a.foe); sfx('bow', v.x, v.z); }
+    }
+    if (a.t >= a.dur) v.atk = null;
+    return;
+  }
   const close = nearestEnemy(s, v.x, v.z, 0.9, true);
   if (close && !(close.type === 'bhoot' && v.hp > 20)) {
     const d = distXZ(v.x, v.z, close.x, close.z) || 1;
@@ -1284,9 +1618,12 @@ function archerAI(s, v, dt, phase, spd) {
     v.combatT = 1.5;
     v.task = 'Shooting at the ' + ENEMIES[target.type].name;
     if (v.atkCd <= 0) {
-      shootArrow(s, v.x, 1.0, v.z, target, 6 * (s.upgrades.bow ? 1.5 : 1) * (s.festival ? 1.5 : 1), false);
+      const ab = SOLDIER_MOVES.archer.ability;
+      const volley = (v.abilT || 0) <= 0 && enemiesNear(s, target.x, target.z, 3) >= 3;
+      const kind = volley ? 'volley' : 'shoot';
+      v.atk = { kind, t: 0, dur: SWINGS[kind].dur, hit: SWINGS[kind].hit, foe: target, done: false };
       v.atkCd = 1.35;
-      sfx('bow', v.x, v.z);
+      if (volley) { v.abilT = ab.cd; floater(s, v.x, 2.0, v.z, ab.name + '!', '#ffd27a', 'callout'); }
     }
     return;
   }
@@ -1307,7 +1644,9 @@ function updateVillager(s, v, dt, phase) {
   if (v.hurtT > 0) v.hurtT -= dt;
   if (v.atkCd > 0) v.atkCd -= dt;
   if (v.combatT > 0) v.combatT -= dt;
-  if (v.combatT <= 0 && v.hp < v.maxHp) v.hp = Math.min(v.maxHp, v.hp + (Math.hypot(v.x, v.z) < 4.5 ? 2.2 : 0.3) * dt);
+  if (v.blockT > 0) v.blockT -= dt;
+  if (v.abilT > 0) v.abilT -= dt;
+  naturalHealing(s, v, dt);
   v.task = '';
   const spd = villagerSpeed(s, v);
   if (v.arriving) {
@@ -1326,8 +1665,14 @@ function updateVillager(s, v, dt, phase) {
     }
     v.entranced = 0;
   }
+  // by day, a building being upgraded gets help from its own workers, its idle residents and anyone sent there
+  if (phase === 'day' && !(isDefender(v) && (v.atk || (v.foe && !v.foe.dead)))) {
+    const ub = upgradeToHelp(s, v);
+    if (ub && !nearestEnemy(s, v.x, v.z, 6, true)) return upgradeHelpAI(s, v, ub, dt, spd);
+  }
   if (isMelee(v)) return warriorAI(s, v, dt, phase, spd);
   if (v.job === 'archer') return archerAI(s, v, dt, phase, spd);
+  if (v.job === 'medic') return medicAI(s, v, dt, phase, spd);
   if (shelterAI(s, v, dt, spd)) return;
   if (v.job === 'priest') priestHeal(s, v, dt);
   if (v.job === 'vaidya') return vaidyaAI(s, v, dt, spd, phase); // healers keep working at night, inside the village
@@ -1336,21 +1681,148 @@ function updateVillager(s, v, dt, phase) {
     case 'wood': return gatherAI(s, v, dt, spd, 'wood');
     case 'stone': return gatherAI(s, v, dt, spd, 'stone');
     case 'farm': return farmAI(s, v, dt, spd);
+    case 'clay': return clayAI(s, v, dt, spd);
+    case 'kiln': case 'smelt': return processAI(s, v, dt, spd);
     case 'build': return builderAI(s, v, dt, spd);
     case 'priest': return priestAI(s, v, dt, spd);
     case 'trader': return traderAI(s, v, dt, spd);
-    default: if (lootAI(s, v, dt, spd)) return; return idleAI(s, v, dt, spd);
+    default: if (lootAI(s, v, dt, spd)) return; return builderAI(s, v, dt, spd); // idle hands build, upgrade and repair
   }
 }
-function damageVillager(s, v, dmg) {
+function damageVillager(s, v, dmg, from) {
   if (isDefender(v) && s.upgrades.kavach) dmg *= 0.65;
+  v.combatT = 4; // no natural recovery until a few seconds after the last blow
+  const M = SOLDIER_MOVES[v.job];
+  if (M && M.block && !v.atk && Math.random() < M.block) { // a Sainik catches the blow on the dhaal
+    dmg *= 0.15;
+    v.blockT = 0.35;
+    floater(s, v.x, 1.75, v.z, 'Blocked', '#9fd0ff', 'tag');
+    fx(s, 'impact', { x: v.x + Math.sin(v.rot) * 0.3, y: 0.75, z: v.z + Math.cos(v.rot) * 0.3, c: 0xbfe2ff, s: 0.9 });
+    sfx('thunk', v.x, v.z);
+  } else {
+    v.hurtT = 0.25;
+    fx(s, 'impact', { x: v.x, y: 0.85, z: v.z, c: 0xff5a4a, s: 0.7 });
+    emit(s, v.x, 0.8, v.z, 3, { spread: 0.1, vx: 1.5, vyMin: 1, vyMax: 3, life: 0.5, colors: ['#e03c31', '#a3161f'], g: 14 });
+    sfx('hurt', v.x, v.z);
+  }
   v.hp -= dmg;
-  v.hurtT = 0.25;
-  v.combatT = 3;
+  if (dmg >= 1) floater(s, v.x + rand(-0.12, 0.12), 1.6, v.z, String(Math.round(dmg)), '#ff7a6b', 'dmg hurt');
   if (!isDefender(v)) v.scared = true;
-  emit(s, v.x, 0.8, v.z, 3, { spread: 0.1, vx: 1.5, vyMin: 1, vyMax: 3, life: 0.5, colors: ['#e03c31', '#a3161f'], g: 14 });
-  sfx('hurt', v.x, v.z);
   if (v.hp <= 0) killVillager(s, v);
+}
+/*
+ * Natural recovery: quick by the warm Agnikund, steady while resting indoors, slow anywhere else as long as
+ * no demon is near and the villager has not been hit for a few seconds.
+ */
+const REGEN = { fire: 4, home: 2.5, calm: 0.8 };
+function naturalHealing(s, v, dt) {
+  v.regenT = (v.regenT || 0) - dt;
+  if (v.regenT <= 0) {
+    v.regenT = 0.5;
+    let kind = null;
+    if (v.combatT > 0 || v.arriving) kind = null;
+    else if (v.inside) kind = 'home';
+    else if (Math.hypot(v.x, v.z) < scorchRadius(s) + 1.8) kind = 'fire';
+    else if (!nearestEnemy(s, v.x, v.z, 7, false)) kind = 'calm';
+    v.regen = kind;
+  }
+  if (!v.regen || v.hp >= v.maxHp) return;
+  v.hp = Math.min(v.maxHp, v.hp + REGEN[v.regen] * dt);
+  if (v.regen === 'fire' && !v.inside && Math.random() < dt * 1.5) emit(s, v.x, 0.9, v.z, 1, { spread: 0.25, vx: 0.15, vyMin: 0.5, vyMax: 1.1, life: 1, colors: ['#ffd27a', '#8ef09a', '#fff3b0'], g: -0.4, add: true });
+}
+/*
+ * Chikitsak (field medic): follows the fighting at a safe distance, channels healing into the most hurt
+ * person nearby, and every so often pours Amrit Varsha over everyone around.
+ */
+function medicAI(s, v, dt, phase, spd) {
+  const night = phase !== 'day';
+  const R = territory(s);
+  const heal = (SOLDIERS.medic.heal || 9) * workRate(s);
+  if (v.atk) { // the healing rain
+    const a = v.atk;
+    a.t += dt;
+    v.anim = 'atk';
+    if (!a.done && a.t >= a.dur * a.hit) {
+      a.done = true;
+      let n = 0;
+      for (const o of s.villagers) {
+        if (o.inside || distXZ(o.x, o.z, v.x, v.z) > 3.6 || o.hp >= o.maxHp) continue;
+        o.hp = Math.min(o.maxHp, o.hp + 25);
+        floater(s, o.x, 1.7, o.z, '+25', '#8ef09a', 'dmg heal');
+        for (let i = 0; i < 2; i++) healGlow(s, o);
+        n++;
+      }
+      fx(s, 'ring', { x: v.x, z: v.z, r: 3.6, c: 0x8ef09a, dur: 0.7 });
+      fx(s, 'impact', { x: v.x, y: 1.6, z: v.z, c: 0xb8ffc0, s: 1.6 });
+      emit(s, v.x, 2.2, v.z, 24, { spread: 2.2, vx: 0.2, vyMin: -1.6, vyMax: -0.6, life: 1.1, colors: ['#8ef09a', '#d8ffd0', '#fff3b0'], g: 0.5, add: true });
+      sfx('heal', v.x, v.z); sfx('bellSoft', v.x, v.z);
+    }
+    if (a.t >= a.dur) v.atk = null;
+    return;
+  }
+  v.healTo = null;
+  const close = nearestEnemy(s, v.x, v.z, 1.5, true);
+  if (close) { // never stand in the melee
+    const d = distXZ(v.x, v.z, close.x, close.z) || 1;
+    moveTo(v, v.x + ((v.x - close.x) / d) * 2, v.z + ((v.z - close.z) / d) * 2, spd * 1.3, dt);
+    v.task = 'Ducking away from the ' + ENEMIES[close.type].name;
+    v.combatT = 1.5;
+    return;
+  }
+  v.thinkT -= dt;
+  if (v.thinkT <= 0 || (v.patient && (v.patient.hp >= v.patient.maxHp || !s.villagers.includes(v.patient)))) {
+    v.thinkT = 0.3;
+    let best = null, bs = Infinity, cur = Infinity;
+    for (const o of s.villagers) {
+      if (o === v || o.inside || o.arriving || o.hp >= o.maxHp * 0.95) continue;
+      const d = distXZ(o.x, o.z, v.x, v.z);
+      if (d > 14 || Math.hypot(o.x, o.z) > R + 4) continue;
+      const score = (o.hp / o.maxHp) * 10 + d * 0.35 - (isDefender(o) ? 2 : 0);
+      if (o === v.patient) cur = score;
+      if (score < bs) { bs = score; best = o; }
+    }
+    if (!(cur < Infinity && bs > cur - 1.5)) v.patient = best; // stick with the patient unless someone is clearly worse off
+  }
+  const p = v.patient;
+  if (p) {
+    // Amrit Varsha when several around are hurt
+    if ((v.abilT || 0) <= 0) {
+      let hurt = 0;
+      for (const o of s.villagers) if (!o.inside && o.hp < o.maxHp * 0.8 && distXZ(o.x, o.z, v.x, v.z) < 3.6) hurt++;
+      if (hurt >= 2) {
+        const ab = SOLDIER_MOVES.medic.ability;
+        v.abilT = ab.cd;
+        v.atk = { kind: 'pulse', t: 0, dur: SWINGS.pulse.dur, hit: SWINGS.pulse.hit, done: false };
+        floater(s, v.x, 2.0, v.z, ab.name + '!', '#b8ffc0', 'callout');
+        return;
+      }
+    }
+    const d = distXZ(p.x, p.z, v.x, v.z);
+    if (d > 2.6) { moveTo(v, p.x, p.z, spd * 1.15, dt); v.task = `Running to heal ${p.name}`; return; }
+    faceTo(v, p.x, p.z);
+    v.anim = 'heal';
+    v.healTo = p.id;
+    p.hp = Math.min(p.maxHp, p.hp + heal * dt);
+    p.healBy = v.name; p.healT = s.time + 0.6; p.healNear = true;
+    if (night) v.combatT = 1.5;
+    v.task = `Healing ${p.name} (${Math.ceil(p.hp)} / ${p.maxHp})`;
+    if (Math.random() < dt * 5) healGlow(s, p);
+    sfx('heal', v.x, v.z);
+    return;
+  }
+  if (night || s.enemies.length) {
+    const pp = postPos(s, v);
+    if (moveTo(v, pp.x, pp.z, spd * 1.2, dt)) { v.anim = 'stand'; v.rot = Math.atan2(pp.x, pp.z); v.task = 'Standing behind the soldiers with the medicine kit'; }
+    else v.task = 'Following the soldiers';
+    return;
+  }
+  const a = validWorkplace(s, v);
+  if (!a) { v.task = 'Needs an Akhara'; return idleAI(s, v, dt, spd); }
+  const sp = frontSpot(s, v, a, 0.9);
+  if (!moveTo(v, sp.x, sp.z, spd, dt)) { v.task = 'Walking to the Akhara'; return; }
+  faceTo(v, a.x, a.z);
+  v.anim = 'work';
+  v.task = 'Rolling bandages and mixing medicine';
 }
 function killVillager(s, v) {
   const i = s.villagers.indexOf(v);
@@ -1381,9 +1853,12 @@ function explode(s, p) {
     if (e.dead) continue;
     const d = distXZ(p.x, p.z, e.x, e.z);
     if (d > p.splash + ENEMIES[e.type].r || e.y > 2.5) continue;
-    hitEnemy(s, e, p.dmg * (d < 0.6 ? 1 : 0.6), p);
+    hitEnemy(s, e, p.dmg * (d < 0.6 ? 1 : 0.6), p, { knock: 1.5, big: true, fire: p.kind === 'pot' });
     if (p.kind === 'pot') { e.fireT = 3; e.fireDps = p.burn || 4; }
   }
+  fx(s, 'ring', { x: p.x, z: p.z, r: p.splash + 0.4, c: p.kind === 'pot' ? 0xff8a1f : 0xd8c4a0, dur: 0.45 });
+  fx(s, 'impact', { x: p.x, y: 0.5, z: p.z, c: p.kind === 'pot' ? 0xffb347 : 0xfff0c0, s: 1.7 });
+  shake(s, p.kind === 'ball' ? 0.22 : 0.1);
   if (p.kind === 'pot') {
     emit(s, p.x, 0.3, p.z, 26, { spread: p.splash * 0.6, vx: 2.2, vyMin: 1, vyMax: 4, life: 0.9, colors: ['#ff8a1f', '#ffcc33', '#d8361c', '#fff3b0'], g: 2, add: true });
     emit(s, p.x, 0.5, p.z, 8, { spread: 0.5, vx: 0.6, vyMin: 0.8, vyMax: 1.6, life: 1.8, colors: ['#5a5a66', '#6b6b78'], g: -0.3 });
@@ -1400,6 +1875,7 @@ function updateProjectiles(s, dt) {
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
     p.life -= dt;
     if (p.kind === 'pot' && Math.random() < 0.6) emitFire(s, p.x, p.y, p.z);
+    if (p.fire && Math.random() < 0.45) emitFire(s, p.x, p.y, p.z); // Agni Baan and volley arrows burn as they fly
     if (p.practice) {
       if (p.y < 1.1 && p.vy < 0 && p.life < 3.6) { p.stuck = true; p.life = 1.5; sfx('thunk', p.x, p.z); }
     } else {
@@ -1408,8 +1884,9 @@ function updateProjectiles(s, dt) {
         const d = ENEMIES[e.type];
         if (distXZ(p.x, p.z, e.x, e.z) < d.r + 0.2 && p.y > e.y - 0.1 && p.y < e.y + d.h + 0.1) {
           if (p.kind !== 'arrow') { explode(s, p); break; }
-          hitEnemy(s, e, p.dmg, p);
-          if (s.upgrades.agnibaan) { e.fireT = 2.5; e.fireDps = 3; }
+          hitEnemy(s, e, p.dmg, p, { crit: p.crit, knock: p.crit ? 0.6 : 0.25, fire: p.fire });
+          if (p.fire || s.upgrades.agnibaan) { e.fireT = 2.5; e.fireDps = 3; }
+          if (p.crit) hitStop(s, 0.03);
           p.dead = true;
           break;
         }
@@ -1481,23 +1958,54 @@ function spawnEnemy(s, type, a) {
   if (def.bengali && !s.demo) tip('ghost_' + type, `${def.name} — ${def.en}! ${ENEMY_LORE[type]}`); // introduce each new ghost once
   return e;
 }
-function hitEnemy(s, e, dmg, src) {
-  if (e.dead) return;
-  e.hp -= dmg * (e.vuln || 1);
-  e.hurtT = 0.15;
+/**
+ * Damage a demon. o: { crit, knock (push strength), stun (seconds), big (a heavy blow), quiet (no number) }.
+ * Every hit flashes the demon, pops a damage number and an impact burst, and shoves it back by its weight.
+ */
+function hitEnemy(s, e, dmg, src, o) {
+  if (e.dead) return 0;
+  o = o || {};
   const def = ENEMIES[e.type];
+  const dealt = dmg * (e.vuln || 1);
+  e.hp -= dealt;
+  e.hurtT = 0.18;
+  e.flashT = 0.12;
   if (Math.random() < 0.25 && !def.fly) sfx(def.ghost || def.float ? 'd_ghost' : 'demonHurt', e.x, e.z);
-  if (!def.boss && !def.fly && src && src.x != null) {
-    const d = distXZ(e.x, e.z, src.x, src.z) || 1, k = def.cost >= 6 ? 0.04 : 0.15;
-    e.x += ((e.x - src.x) / d) * k; e.z += ((e.z - src.z) / d) * k;
+  if (!def.boss && src && src.x != null) {
+    const d = distXZ(e.x, e.z, src.x, src.z) || 1, mass = def.fly ? 1.5 : Math.max(1, def.cost || 1);
+    const k = ((o.knock != null ? o.knock : 0.4) * 4.5) / Math.sqrt(mass);
+    e.kx = (e.kx || 0) + ((e.x - src.x) / d) * k; e.kz = (e.kz || 0) + ((e.z - src.z) / d) * k;
   }
-  emit(s, e.x, e.y + def.h * 0.5, e.z, 3, { spread: 0.1, vx: 1.8, vyMin: 0, vyMax: 2.5, life: 0.45, colors: ['#7b3fa0', '#2b1638', '#c58af0'], g: 10 });
+  if (o.stun && !def.boss) { e.stunT = Math.max(e.stunT || 0, o.stun * (def.cost >= 6 ? 0.5 : 1)); e.wind = null; }
+  const hy = e.y + def.h * 0.55;
+  emit(s, e.x, hy, e.z, o.big ? 7 : 3, { spread: 0.1, vx: o.big ? 2.6 : 1.8, vyMin: 0, vyMax: 2.5, life: 0.45, colors: ['#7b3fa0', '#2b1638', '#c58af0'], g: 10 });
+  fx(s, 'impact', { x: e.x, y: hy, z: e.z, c: o.crit ? 0xffd84a : o.fire ? 0xff9a40 : 0xfff2dc, s: o.crit ? 1.45 : o.big ? 1.15 : 0.75 });
+  if (!o.quiet && dealt >= 0.5) {
+    // quick hits on the same demon add up into one number instead of a pile of little ones
+    const f = s.floaters.find((q) => q.eid === e.id && q.max - q.life < 0.3);
+    if (f) {
+      f.val += dealt; f.text = String(Math.round(f.val)); f.life = f.max; f.y = e.y + def.h + 0.2;
+      if (o.crit) { f.cls = 'dmg crit'; f.color = '#ffd84a'; }
+    } else {
+      floater(s, e.x + rand(-0.18, 0.18), e.y + def.h + 0.2, e.z, String(Math.round(dealt)), o.crit ? '#ffd84a' : '#fff4e6', o.crit ? 'dmg crit' : 'dmg');
+      const nf = s.floaters[s.floaters.length - 1]; nf.eid = e.id; nf.val = dealt;
+    }
+  }
   if (e.hp <= 0) killEnemy(s, e, true);
+  return dealt;
 }
+const STREAK_CALLS = { 3: 'Shabash!', 5: 'Jai Ho!', 8: 'Har Har Mahadev!' };
 function killEnemy(s, e, byHand) {
   if (e.dead) return;
   e.dead = true;
   const def = ENEMIES[e.type];
+  fx(s, 'death', { x: e.x, y: e.y + def.h * 0.5, z: e.z, c: def.glow || 0xb07ae0, s: def.scale });
+  if (def.boss) { shake(s, 0.7); hitStop(s, 0.45); } else if (def.cost >= 6) shake(s, 0.18);
+  if (byHand) { // kill streaks get a cheer
+    s.streak = s.time - (s.lastKill || -9) < 1.6 ? (s.streak || 0) + 1 : 1;
+    s.lastKill = s.time;
+    if (STREAK_CALLS[s.streak]) floater(s, e.x, e.y + def.h + 0.9, e.z, `${STREAK_CALLS[s.streak]} ×${s.streak}`, '#ffb347', 'callout');
+  }
   if (e.loot > 0) { // a caught Mechho Bhoot drops the stolen grain
     s.loot.push({ id: s.nextId++, kind: def.thief, amt: e.loot, x: e.x, z: e.z, t: 0 });
     floater(s, e.x, 1.6, e.z, 'Grain dropped!', RES[def.thief].color);
@@ -1520,18 +2028,40 @@ function destroyBuilding(s, b) {
   if (typeof UI !== 'undefined' && UI.selected && UI.selected.ref === b) UI.select(null);
   fixJobOverflow(s);
 }
+/** How long a demon winds up before its blow lands: the bigger the demon, the clearer the warning. */
+function windOf(def) { return def.wind != null ? def.wind : def.fly ? 0 : def.boss ? 0.8 : clamp(0.16 + (def.cost || 1) * 0.07, 0.2, 0.62); }
 function enemyAttack(s, e, target, kind) {
   e.vx = 0; e.vz = 0;
   if (target) faceTo(e, target.x, target.z); else faceTo(e, 0, 0);
-  if (e.atkCd > 0) return;
+  if (e.atkCd > 0 || e.wind || e.stunT > 0) return;
   const def = ENEMIES[e.type];
-  e.atkCd = def.atkCd;
+  const w = windOf(def);
+  if (w <= 0) return enemyStrike(s, e, target, kind);
+  e.wind = { t: 0, dur: w, target, kind };
+  if ((def.cost || 0) >= 2 || def.boss) fx(s, 'telegraph', { x: e.x, y: e.y + def.h * 0.95, z: e.z, c: 0xff4a3a, s: 0.55 * def.scale, dur: w });
+}
+/** The blow lands (if the target is still in reach). */
+function enemyStrike(s, e, target, kind) {
+  const def = ENEMIES[e.type];
+  e.atkCd = Math.max(0.2, def.atkCd - windOf(def)); // the wind-up counts toward the cooldown: same hits per minute as before
   e.atkAnim = 0.4;
+  if (kind === 'villager' && (!target || !s.villagers.includes(target) || target.inside || distXZ(target.x, target.z, e.x, e.z) > def.reach + def.r * 0.5 + 0.7)) { sfx('whoosh', e.x, e.z); return; } // it dodged
   const ES = ENEMY_SFX[e.type];
   if (ES && ES.attack) sfx(ES.attack, e.x, e.z);
   const dmg = def.dmg * (s.festival ? 0.75 : 1);
+  if (def.boss || e.type === 'danav') { // giants pound the ground: everyone close by is caught in it
+    e.pounds = (e.pounds || 0) + 1;
+    if (def.boss ? e.pounds % 3 === 0 : true) {
+      const R = def.boss ? 2.4 : 1.2;
+      for (const o of s.villagers) if (o !== target && !o.inside && distXZ(o.x, o.z, e.x, e.z) < R) damageVillager(s, o, dmg * (def.boss ? 0.6 : 0.35), e);
+      fx(s, 'ring', { x: e.x, z: e.z, r: R + 0.3, c: 0xff5a3a, dur: 0.5 });
+      emit(s, e.x, 0.1, e.z, def.boss ? 24 : 10, { spread: R * 0.5, vx: 2.4, vyMin: 0.5, vyMax: 2, life: 0.8, colors: ['#6b5a48', '#8a7a66', '#3d2552'], g: 5 });
+      shake(s, def.boss ? 0.45 : 0.12);
+      sfx('stomp', e.x, e.z);
+    }
+  }
   if (kind === 'villager') {
-    damageVillager(s, target, dmg);
+    damageVillager(s, target, dmg, e);
     if (def.drain) { // Shakchunni feeds on the blow
       e.hp = Math.min(e.maxHp, e.hp + dmg * def.drain * 2);
       emit(s, e.x, 1.0, e.z, 4, { spread: 0.2, vx: 0.4, vyMin: 0.5, vyMax: 1.5, life: 0.7, colors: ['#ff6b6b', '#ffd6d6'], g: -1, add: true });
@@ -1623,7 +2153,13 @@ function updateEnemy(s, e, dt) {
   enemySounds(s, e, dt);
   if (e.atkCd > 0) e.atkCd -= dt;
   if (e.hurtT > 0) e.hurtT -= dt;
+  if (e.flashT > 0) e.flashT -= dt;
   if (e.atkAnim > 0) e.atkAnim -= dt;
+  if (e.kx || e.kz) { // knockback slides and slows
+    e.x += e.kx * dt; e.z += e.kz * dt;
+    const f = Math.exp(-7 * dt); e.kx *= f; e.kz *= f;
+    if (Math.abs(e.kx) + Math.abs(e.kz) < 0.04) e.kx = e.kz = 0;
+  }
   const ph = phaseOf(s.t);
   if (ph === 'day' || ph === 'dawn') e.burning = true;
   if (e.burning) {
@@ -1648,6 +2184,15 @@ function updateEnemy(s, e, dt) {
     if (Math.random() < dt * 3) emitFire(s, e.x, e.y + rand(0.2, def.h), e.z);
   }
   if (e.hp <= 0) return killEnemy(s, e, false);
+  if (e.stunT > 0) { e.stunT -= dt; e.wind = null; e.vx = e.vz = 0; return; } // seeing stars
+  if (e.burning) e.wind = null;
+  if (e.wind) { // winding up a blow
+    const w = e.wind;
+    w.t += dt; e.vx = e.vz = 0;
+    if (w.target && w.kind === 'villager') faceTo(e, w.target.x, w.target.z);
+    if (w.t >= w.dur) { e.wind = null; enemyStrike(s, e, w.target, w.kind); }
+    return;
+  }
   const spd = def.speed * slow;
   if (e.burning && !def.boss) { // flee at dawn
     const k = (spd * 0.8 * dt) / (df || 1);
@@ -1861,9 +2406,14 @@ function updateTips(s, dt) {
   if (s.day === 1 && s.t > 9) tip('camera', 'Look around: drag or WASD to move, mouse wheel to zoom, right-drag or Q / E to rotate the view.');
   if (s.day === 1 && s.t > 4) tip('jobs', 'Every job needs a workplace. Press + next to Mistri (2 builders work from the Agnikund), then press Build at the bottom and place a Lakdi Taal (woodcutter camp) near the trees for your Lakadhara.');
   if (s.day === 1 && s.t > 40 && !s.buildings.some((b) => isFieldType(b.type))) tip('field', 'Press Build at the bottom and choose a Khet (Field), then assign Kisan (farmers). Each villager eats 4 grain every evening.');
-  if (s.buildings.some((b) => !b.done) && jobCount(s, 'build') === 0 && s.t > 3) tip('needBuilder', 'Construction sites need a Mistri (builder). Assign one in the Kaam panel.');
+  if (s.buildings.some((b) => !b.done) && !canBuildNow(s) && s.t > 3) tip('needBuilder', 'Construction sites need a builder. Assign a Mistri in the Kaam panel, or leave someone idle: idle villagers build too.');
   if (s.fire.level < 5 && canAfford(s, FIRE_LEVELS[s.fire.level + 1].cost)) tip('fireUp' + s.fire.level, 'You can upgrade the Agnikund! Click the fire to grow your land and unlock new buildings.');
   if (s.villagers.length >= housing(s) && s.day >= 2 && ph === 'day') tip('housing', 'Your village is full. Build a Jhopdi (hut) so travellers can settle here.');
+  // the materials chain, one step at a time
+  const has = (t) => s.buildings.some((b) => b.type === t);
+  if (s.fire.level === 1 && (s.day >= 2 || s.res.wood >= 60) && !has('kiln')) tip('bricks', 'The Agnikund needs bricks to grow. Build a Mitti Khaan (clay pit) and an Eent Bhatta (brick kiln), then assign Beldar and Kumhar. Bricks also pay for level 2 building upgrades.');
+  if (has('kiln') && !has('claypit')) tip('clay', 'The Eent Bhatta fires clay. Build a Mitti Khaan and assign Beldar to dig it.');
+  if (s.fire.level >= 2) tip('iron', 'Level 3 needs iron. Click a Khadaan and set it to dig iron ore from the rusty boulders, build a Loha Bhatti (smelter), and let the Eent Bhatta burn some charcoal. Iron also pays for level 3 upgrades, steel weapons and tools.');
 }
 function updateParticles(s, dt) {
   for (const p of s.particles) {
@@ -1873,7 +2423,7 @@ function updateParticles(s, dt) {
     if (p.y < 0.02 && p.g > 0) { p.y = 0.02; p.vx *= 0.5; p.vz *= 0.5; p.vy = 0; }
   }
   s.particles = s.particles.filter((p) => p.life > 0);
-  for (const f of s.floaters) { f.life -= dt; f.y += 0.8 * dt; }
+  for (const f of s.floaters) { f.life -= dt; f.y += (f.cls && f.cls !== 'callout' ? 0.5 + 2.2 * (f.life / f.max) : 0.8) * dt; f.x += f.vx * dt; }
   s.floaters = s.floaters.filter((f) => f.life > 0);
   for (const t of s.trees) if (t.shake > 0) t.shake -= dt;
 }
@@ -1904,11 +2454,11 @@ const Game = {
         upgrades: s.upgrades, stats: s.stats, weather: s.weather, festival: s.festival, hungry: s.hungry, won: s.won,
         tips: s.tips, nextId: s.nextId, spawnQueue: s.spawnQueue, fronts: s.fronts, grove: s.grove,
         villagers: s.villagers.map((v) => ({ id: v.id, name: v.name, look: v.look, x: r2(v.x), z: r2(v.z), job: v.job, hp: v.hp, maxHp: v.maxHp, carry: v.carry, carryAmt: v.carryAmt, gold: v.gold, workplace: v.workplace, arriving: v.arriving, ax: v.ax, az: v.az, home: v.home, inside: v.inside, shelter: v.shelter, fearT: v.fearT })),
-        buildings: s.buildings.map((b) => ({ id: b.id, type: b.type, cx: b.cx, cz: b.cz, rot: b.rot, done: b.done, progress: b.progress, hp: b.hp, maxHp: b.maxHp, grow: b.grow, level: b.level, upgrading: b.upgrading, upProg: b.upProg, stock: b.stock, bays: b.bays })),
+        buildings: s.buildings.map((b) => ({ id: b.id, type: b.type, cx: b.cx, cz: b.cz, rot: b.rot, done: b.done, progress: b.progress, hp: b.hp, maxHp: b.maxHp, grow: b.grow, level: b.level, upgrading: b.upgrading, upProg: b.upProg, stock: b.stock, bays: b.bays, hopper: b.hopper, recipe: b.recipe, batch: b.batch, mine: b.mine })),
         fireStock: s.fireStock,
         armory: s.armory,
         trees: s.trees.map((t) => [t.id, r2(t.x), r2(t.z), t.type, t.variant, t.wood, t.maxWood, t.stump ? 1 : 0, t.regrow, r2(t.rot), r2(t.scale), t.sacred ? 1 : 0]),
-        rocks: s.rocks.map((r) => [r.id, r2(r.x), r2(r.z), r.variant, r.stone, r.maxStone, r2(r.rot), r2(r.scale)]),
+        rocks: s.rocks.map((r) => [r.id, r2(r.x), r2(r.z), r.variant, r.stone, r.maxStone, r2(r.rot), r2(r.scale), r.ore ? 1 : 0]),
         enemies: s.enemies.filter((e) => !e.dead).map((e) => ({ id: e.id, type: e.type, x: e.x, z: e.z, y: e.y, hp: e.hp, maxHp: e.maxHp, variant: e.variant, aggro: e.aggro, loot: e.loot || 0 })),
         ambient: s.ambient.map((a) => ({ kind: a.kind, x: a.x, z: a.z })),
         loot: s.loot,
@@ -1926,7 +2476,12 @@ const Game = {
     s.villagers = data.villagers.map((d) => Object.assign(makeVillagerRaw(), d, { wx: d.x, wz: d.z }));
     s.buildings = data.buildings.map((b) => Object.assign({ cd: 0, offerT: 0 }, b, bCenterOf(b.type, b.cx, b.cz)));
     s.trees = data.trees.map((a) => ({ id: a[0], x: a[1], z: a[2], type: a[3], variant: a[4], wood: a[5], maxWood: a[6], stump: !!a[7], regrow: a[8], rot: a[9], scale: a[10], sacred: !!a[11], shake: 0 }));
-    s.rocks = data.rocks.map((a) => ({ id: a[0], x: a[1], z: a[2], variant: a[3], stone: a[4], maxStone: a[5], rot: a[6], scale: a[7] }));
+    s.rocks = data.rocks.map((a) => ({ id: a[0], x: a[1], z: a[2], variant: a[3], stone: a[4], maxStone: a[5], rot: a[6], scale: a[7], ore: !!a[8] }));
+    if (data.rocks.length && data.rocks[0].length < 9) { // a save from before iron: turn some outer boulders into ore
+      for (const r of s.rocks) if (Math.hypot(r.x, r.z) > 11 && hash(r.id * 13 + 7) < 0.3) r.ore = true;
+      if (!s.rocks.some((r) => r.ore)) for (const r of s.rocks.slice(0, 3)) r.ore = true;
+    }
+    for (const r of RES_ORDER) s.res[r] = s.res[r] || 0; // older saves have no materials yet
     s.enemies = (data.enemies || []).map((d) => Object.assign({ vx: 0, vz: 0, rot: 0, atkCd: 1, animT: 0, hurtT: 0, atkAnim: 0, burning: false, dead: false, diveT: 0, bob: rand(0, 6), thinkT: 0, tv: null, tb: null }, d));
     s.ambient = (data.ambient || []).map((a) => ({ kind: a.kind, x: a.x, z: a.z, tx: a.x, tz: a.z, rot: 0, t: 0, fan: 0, sit: false }));
     s.loot = data.loot || [];

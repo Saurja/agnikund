@@ -117,6 +117,26 @@ body.lowgfx .bar, body.lowgfx .panel, body.lowgfx #buildbar, body.lowgfx #placeB
 .res.up b { color: var(--good); transform: translateY(-1px); }
 .res.down b { color: #ffb4a8; }
 .res.low b { color: var(--bad); }
+/* materials: inline after the four basic goods; on phones they fold into a dropdown under the bar */
+#resbar { position: relative; }
+#matGroup { display: contents; }
+#matGroup .res.mat b { font-size: 14px; }
+#matGroup .res.mat small { display: none; }
+body.mobile #matGroup .res.mat small { display: block; flex: 1; font-size: 12px; color: var(--text-2); }
+#matBtn { display: none; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+#matBtn .chev { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; opacity: 0.7; transition: transform 0.2s var(--ease); }
+body.mobile #matBtn { display: flex; }
+body.mobile #matGroup {
+  display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 8;
+  flex-direction: column; align-items: stretch; gap: 2px; padding: 6px; min-width: 150px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow);
+  -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+}
+body.mobile #matGroup .sep { display: none; }
+body.mobile #matGroup .res.mat { justify-content: space-between; }
+body.mobile.mat-open #matGroup { display: flex; }
+body.mobile.mat-open #matBtn .chev { transform: rotate(180deg); }
+body.mobile.mat-open #matBtn { background: var(--raise-2); }
 .ico { display: inline-block; width: 24px; height: 24px; background-size: contain; background-repeat: no-repeat; background-position: center; image-rendering: pixelated; flex: none; }
 .ico.sm { width: 16px; height: 16px; }
 #clock { justify-self: center; gap: 10px; padding: 0 14px 0 6px; transition: box-shadow 0.4s; }
@@ -232,6 +252,18 @@ body.lowgfx .bar, body.lowgfx .panel, body.lowgfx #buildbar, body.lowgfx #placeB
 .jobgrid button small { font-size: 10px; color: var(--text-3); }
 .jobgrid button.cur { background: var(--accent-soft); border-color: rgba(242, 154, 62, 0.5); color: var(--accent-hi); }
 .jobgrid button.cur small { color: var(--accent); }
+/* workshops: recipe picker, the recipe line and the hopper */
+.seg.recipes { display: flex; width: 100%; margin: 2px 0 8px; }
+.seg.recipes button { flex: 1; gap: 5px; justify-content: center; }
+.recipe { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 6px 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.recipe span { display: inline-flex; align-items: center; gap: 3px; }
+.recipe em { font-style: normal; color: var(--text-3); font-weight: 400; }
+.recipe small { flex-basis: 100%; font-weight: 400; color: var(--text-3); }
+.hopper { display: flex; align-items: center; gap: 10px; padding: 6px 8px; margin: 4px 0 2px; border-radius: 9px; background: rgba(0, 0, 0, 0.2); font-variant-numeric: tabular-nums; }
+.hopper small { color: var(--text-3); margin-right: auto; }
+.hopper span { display: inline-flex; align-items: center; gap: 3px; font-weight: 600; color: var(--text-2); }
+.hopper span i { font-style: normal; font-weight: 400; color: var(--text-3); }
+.hopper span.ok { color: var(--good); }
 /* Bhandar storage bays: a tile per bay with its good, amount and a fill line along the bottom */
 .bays { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 4px; }
 .bays .bay { position: relative; flex-direction: column; gap: 1px; padding: 7px 3px 9px; font-size: 11px; line-height: 1.1; border-radius: 9px; overflow: hidden; }
@@ -263,19 +295,32 @@ p.miss { margin: 8px 0; padding: 7px 10px; background: var(--bad-soft); border-r
 
 /* build tray */
 #buildbar { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); border-radius: 18px; padding: 6px; }
-#buildCards { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+/* each card is its own tile: the picture, a name that may take two lines, and the cost pinned along the
+   bottom, wrapping inside the card instead of running into its neighbour */
+#buildCards {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; align-items: stretch; padding: 0 4px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
+}
 #buildCards::-webkit-scrollbar { display: none; }
 .bcard {
-  flex: none; width: 86px; border-radius: 12px; padding: 6px 4px 7px; cursor: pointer; text-align: center; position: relative;
-  border: 1px solid transparent; transition: background 0.15s, border-color 0.15s, transform 0.15s var(--ease);
+  flex: none; width: 92px; border-radius: 12px; padding: 6px 5px 7px; cursor: pointer; text-align: center; position: relative;
+  display: flex; flex-direction: column; align-items: center; min-width: 0;
+  background: var(--raise); border: 1px solid var(--line);
+  transition: background 0.15s, border-color 0.15s, transform 0.15s var(--ease);
 }
-.bcard:hover { background: var(--raise); transform: translateY(-2px); }
+.bcard:hover { background: var(--raise-2); border-color: var(--line-2); transform: translateY(-2px); }
 .bcard.sel { background: var(--accent-soft); border-color: rgba(242, 154, 62, 0.55); }
+.bcard.poor { background: rgba(255, 244, 230, 0.025); }
 .bcard img { width: 70px; height: 48px; object-fit: contain; display: block; margin: 0 auto 4px; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.3)); }
-.bcard b { display: block; font-size: 12px; font-weight: 500; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bcard small { display: block; font-size: 10px; color: var(--text-3); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bcard .cw { display: flex; justify-content: center; margin-top: 4px; }
-.bcard .cost { font-size: 11px; gap: 5px; flex-wrap: nowrap; white-space: nowrap; color: var(--text-2); }
+.bcard b {
+  width: 100%; font-size: 11.5px; font-weight: 600; line-height: 1.15; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bcard small { display: block; width: 100%; font-size: 10px; color: var(--text-3); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bcard .cw { display: flex; justify-content: center; width: 100%; margin-top: auto; padding-top: 5px; }
+.bcard .cost { font-size: 11px; column-gap: 6px; row-gap: 2px; flex-wrap: wrap; justify-content: center; max-width: 100%; color: var(--text-2); line-height: 1.2; }
+.bcard .cost span { gap: 2px; white-space: nowrap; }
 .bcard .cost .ico.sm { width: 13px; height: 13px; }
 .bcard .cost span.no { color: var(--bad); }
 .bcard.locked { cursor: not-allowed; opacity: 0.4; }
@@ -309,7 +354,15 @@ p.miss { margin: 8px 0; padding: 7px 10px; background: var(--bad-soft); border-r
 
 /* floating labels in the world */
 #overlay3d { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.float3d { position: absolute; left: 0; top: 0; margin: -10px 0 0 -12px; font: 700 15px/1 var(--font); white-space: nowrap; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 6px rgba(0, 0, 0, 0.5); will-change: transform; }
+.float3d { position: absolute; left: 0; top: 0; font: 700 15px/1 var(--font); white-space: nowrap; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 6px rgba(0, 0, 0, 0.5); will-change: transform, opacity; pointer-events: none; }
+/* combat text: damage numbers, crits, tags and called-out moves */
+.float3d.dmg { font: 800 13px/1 var(--font); font-variant-numeric: tabular-nums; -webkit-text-stroke: 0.6px rgba(20, 8, 4, 0.85); }
+.float3d.crit { font-size: 20px; text-shadow: 0 0 10px rgba(255, 170, 40, 0.85), 0 1px 2px rgba(0, 0, 0, 0.9); }
+.float3d.hurt { font-size: 12px; }
+.float3d.heal { font-size: 13px; text-shadow: 0 0 8px rgba(90, 230, 120, 0.7), 0 1px 2px rgba(0, 0, 0, 0.9); }
+.float3d.tag { font: 700 10px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; }
+.float3d.callout { font: 400 18px/1 var(--display); letter-spacing: 0.02em; text-shadow: 0 0 12px rgba(255, 140, 30, 0.7), 0 2px 3px rgba(0, 0, 0, 0.95); }
+.bar3d.up { height: 6px; box-shadow: 0 0 0 1px rgba(255, 210, 120, 0.5); }
 .bar3d { position: absolute; left: 0; top: 0; height: 5px; background: rgba(12, 8, 6, 0.7); border-radius: 99px; overflow: hidden; will-change: transform; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
 .bar3d i { display: block; height: 100%; border-radius: 99px; background: var(--good); }
 .bar3d.ehp i { background: var(--bad); }
@@ -370,7 +423,10 @@ p.miss { margin: 8px 0; padding: 7px 10px; background: var(--bad-soft); border-r
 .how-card { width: min(880px, 96vw); }
 .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .how-grid section { background: var(--raise); border-radius: 14px; padding: 14px 16px 16px; }
-.how-grid section:last-child { grid-column: 1 / -1; } /* the controls strip runs the full width under the six topics */
+/* seven topics and the controls: the materials card spans two columns so the last row is materials + controls */
+.how-grid section.wide { grid-column: span 2; }
+@media (max-width: 900px) { .how-grid section:last-child { grid-column: 1 / -1; } }
+@media (max-width: 620px) { .how-grid section.wide { grid-column: auto; } }
 .how-grid .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
 .how-grid h3 { margin: 10px 0 6px; font-size: 14px; font-weight: 600; }
 .how-grid p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-2); }
@@ -486,7 +542,10 @@ body.mobile #buildbar {
 }
 body.mobile #buildCards { scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
 body.mobile #buildCards::before, body.mobile #buildCards::after { content: ''; margin: auto; } /* centres the cards but still scrolls when they overflow */
-body.mobile .bcard { width: 72px; padding: 5px 2px 6px; scroll-snap-align: start; }
+body.mobile .bcard { width: 78px; padding: 5px 3px 6px; scroll-snap-align: start; }
+body.mobile .bcard b { font-size: 11px; }
+body.mobile .bcard .cost { font-size: 10.5px; column-gap: 5px; }
+body.mobile .bcard .cost .ico.sm { width: 12px; height: 12px; }
 body.mobile .bcard:hover { transform: none; }
 body.mobile .bcard img { width: 58px; height: 40px; margin-bottom: 3px; }
 body.mobile .bcard small { display: none; }
@@ -538,10 +597,10 @@ body.landscape .title-screen .credits { left: max(28px, env(safe-area-inset-left
 body.mobile .over-card .obtns { flex-direction: column; }/* toasts float above panels; in portrait they sit below the jobs chip */
 #toasts { z-index: 6; }
 body.portrait #toasts { top: calc(156px + env(safe-area-inset-top, 0px)); }/* short landscape phones: a slimmer build tray and one side panel at a time */
-body.landscape .bcard { width: 62px; padding: 3px 2px 4px; }
+body.landscape .bcard { width: 76px; padding: 3px 3px 4px; }
 body.landscape .bcard img { width: 46px; height: 30px; margin-bottom: 2px; }
-body.landscape .bcard b { font-size: 11px; }
-body.landscape .bcard .cw { margin-top: 2px; }
+body.landscape .bcard b { font-size: 10.5px; }
+body.landscape .bcard .cw { padding-top: 3px; }
 body.landscape #info { bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
 body.landscape #placeBar { bottom: calc(82px + env(safe-area-inset-bottom, 0px)); }
 body.landscape #jobs { max-height: calc(100% - 148px); }

@@ -16,6 +16,10 @@ const SAMPLE_LOOKS = {
   brute:   { g: 'm', skin: '#a0673a', hair: '#1a1212', cloth: '#a0673a', lower: '#ff9933', head: '#d84315', head2: '#ffcc80', stache: true, trim: '#d8cfb6' },
   spear:   { g: 'm', skin: '#8d5524', hair: '#1a1212', cloth: '#3e5f8a', lower: '#e6dbbf', head: '#1565c0', head2: '#e8b830', stache: true, trim: '#d8cfb6' },
   vaidya:  { g: 'm', skin: '#a0673a', hair: '#e8e2d8', cloth: '#f4ecd8', lower: '#e6dbbf', head: '#f4ecd8', head2: '#2e7d32', stache: true, trim: '#2e7d32' },
+  medic:   { g: 'f', skin: '#b5784a', hair: '#1a1212', cloth: '#3f8a4a', lower: '#f4ecd8', trim: '#e8b830', covered: false },
+  clay:    { g: 'm', skin: '#8d5524', hair: '#1a1212', cloth: '#c9a66b', lower: '#e6dbbf', head: '#a8603a', head2: '#e8c896', stache: true, trim: '#8c4e2c' },
+  kiln:    { g: 'f', skin: '#a0673a', hair: '#1a1212', cloth: '#b9482a', lower: '#8c5a34', trim: '#e8b830', covered: true },
+  smelt:   { g: 'm', skin: '#7a4a2a', hair: '#1a1212', cloth: '#5d4037', lower: '#4e342e', head: '#37474f', head2: '#ff8a1f', stache: true, trim: '#d8cfb6' },
   priest:  { g: 'm', skin: '#cf9561', hair: '#1a1212', cloth: '#ff8f1f', lower: '#ffb84d', head: '#ff8f1f', head2: '#ffb84d', stache: false, trim: '#d8cfb6' },
   trader:  { g: 'm', skin: '#b5784a', hair: '#1a1212', cloth: '#6a1b9a', lower: '#f4ecd8', head: '#ffd54f', head2: '#e65100', stache: true, trim: '#d8cfb6' },
 };
@@ -162,6 +166,8 @@ const UI = {
     if (!m) return '';
     return inline ? `<br><span class="miss">Missing ${m}</span>` : `<p class="miss">Missing ${m}</p>`;
   },
+  /** Game seconds as "40 s" or "2 min". */
+  fmtSecs(x) { return !isFinite(x) ? '—' : x < 90 ? `${Math.max(1, Math.ceil(x))} s` : `${Math.round(x / 60)} min`; },
   costHTML(cost, sm) {
     return '<span class="cost">' + Object.keys(cost).map((k) => `<span class="${S && S.res[k] >= cost[k] ? '' : 'no'}">${this.ico(k, sm !== false)}${cost[k]}</span>`).join('') + '</span>';
   },
@@ -425,6 +431,34 @@ const UI = {
     const anyFull = list.some((it) => it.cap !== Infinity && it.n >= it.cap);
     return this.sec(title, h + (note ? `<p><small>${note}</small></p>` : ''), anyFull ? '<span class="tag bad">Full</span>' : '');
   },
+  /** Kiln and smelter: what it makes (and a picker on the kiln), the recipe, the hopper, the batch and what holds it up. */
+  productionHTML(s, b) {
+    const def = BUILDINGS[b.type], key = recipeOf(s, b), R = RECIPES[key], hop = b.hopper || {};
+    const st = (icon, text) => `<div class="status">${svgIcon(icon)}<span>${text}</span></div>`;
+    let h = '';
+    if (def.recipes.length > 1) {
+      const cur = b.recipe || def.recipes[0];
+      h += '<div class="seg recipes">' + def.recipes.map((k) => `<button data-action="recipe" data-k="${k}" class="${cur === k ? 'on' : ''}" data-tip="${k === 'auto' ? 'Burns charcoal when the smelters run low, fires bricks the rest of the time' : RECIPES[k].verb}">${k === 'auto' ? 'Auto' : this.ico(RECIPES[k].out, true) + RES[RECIPES[k].out].en}</button>`).join('') + '</div>';
+    }
+    h += `<p class="recipe">${Object.keys(R.in).map((r) => `<span>${this.ico(r, true)}${R.in[r]}</span>`).join('<em>+</em>')}<em>→</em><span>${this.ico(R.out, true)}${R.n}</span><small>${R.time} s of work${(b.recipe || def.recipes[0]) === 'auto' ? ' · auto' : ''}</small></p>`;
+    h += `<div class="hopper"><small>Hopper</small>${Object.keys(R.in).map((r) => { const n = Math.floor(hop[r] || 0); return `<span class="${n >= R.in[r] ? 'ok' : ''}">${this.ico(r, true)}${n}<i>/${R.in[r]}</i></span>`; }).join('')}</div>`;
+    h += this.meter('prog', (b.batch || 0) / R.time, 'This batch', `${Math.floor(((b.batch || 0) / R.time) * 100)}%`);
+    const workers = s.villagers.filter((v) => v.workplace === b.id).length;
+    const out = Object.keys(R.in).find((r) => (hop[r] || 0) < R.in[r] && (s.res[r] || 0) < 1);
+    if (!workers) h += `<p class="miss">Nobody works here: assign ${JOBS[jobOfBuilding(b.type)].name}.</p>`;
+    else if (out) h += `<p class="miss">Out of ${RES[out].en.toLowerCase()}. ${RES[out].from}.</p>`;
+    else if ((b.activeT || -9) > s.time - 1.5) h += st('flame', `${R.verb}…`);
+    else h += st('info', phaseOf(s.t) === 'day' ? 'Workers are bringing in the inputs' : 'The fire is banked for the night');
+    return this.sec('Production', h);
+  },
+  /** Khadaan: break grey boulders for stone, or rusty ones for iron ore (from Agnikund level 2). */
+  mineHTML(s, b) {
+    const ore = b.mine === 'ore';
+    let h = `<div class="seg recipes"><button data-action="mine" data-k="stone" class="${ore ? '' : 'on'}">${this.ico('stone', true)}Stone</button><button data-action="mine" data-k="ore" class="${ore ? 'on' : ''}">${this.ico('ore', true)}Iron ore</button></div>`;
+    const near = s.rocks.filter((r) => r.ore && distXZ(r.x, r.z, b.x, b.z) < 16).length;
+    h += `<p><small>${ore ? `Khanik break the rusty boulders for iron ore: ${near} within reach.${near ? '' : ' Build a Khadaan nearer to them.'}` : 'Khanik break grey boulders for stone, and now and then find gold.'}</small></p>`;
+    return this.sec('Dig for', h);
+  },
   /** Bhandar bays: one tile per bay showing its good and how full it is; tap one to pick a different good. */
   baysHTML(s, b) {
     const bays = storeBays(b), cap = BAY_CAP[bLevel(b)] || 30, st = b.stock || {}, left = {};
@@ -462,7 +496,11 @@ const UI = {
       html += '<div class="info-body">';
       html += `<p class="task">${v.task || 'Thinking…'}</p>`;
       html += this.meter('', v.hp / v.maxHp, 'Health', `${Math.ceil(v.hp)} / ${v.maxHp}`);
-      if (v.hp < v.maxHp - 0.5) { // hurt: a Vaidya may be on the way, and herbs heal them at once
+      if (v.hp < v.maxHp - 0.5) { // hurt: natural recovery, a healer on the way, and herbs to heal them at once
+        const RG = { fire: ['flame', 'Recovering by the Agnikund'], home: ['home', 'Resting at home'], calm: ['heart', 'Recovering slowly'] }[v.regen];
+        if (RG) html += status(RG[0], `${RG[1]} · <b>+${REGEN[v.regen]}</b> health a second`);
+        else if (v.combatT > 0) html += status('alert', 'In the fight: no recovery until it is over');
+        else html += status('alert', 'Demons nearby: no recovery here');
         if (v.healBy && (v.healT || 0) > s.time) html += status('heart', v.healNear ? `${v.healBy} is healing them` : `${v.healBy} is coming to heal them`);
         else if (!s.buildings.some((b) => b.type === 'vaidyashala' && b.done)) html += '<p><small>Build a Vaidyashala and its Vaidya will walk to the wounded and heal them.</small></p>';
         const wait = Math.ceil((v.herbT || 0) - s.time), ok = canAfford(s, HERB_COST);
@@ -471,7 +509,7 @@ const UI = {
       if (v.carryAmt > 0 && v.carry) {
         const cap = carryCap(s, v.carry);
         html += `<div class="stockrow">${this.ico(v.carry, true)}${this.meter('stock' + (v.carryAmt >= cap ? ' full' : ''), v.carryAmt / cap, `Tokri · ${RES[v.carry].en.toLowerCase()}`, `${v.carryAmt} / ${cap}`)}</div>`;
-      } else if (['wood', 'stone', 'farm'].includes(v.job)) html += `<div class="stockrow">${this.ico(v.job === 'farm' ? 'food' : v.job, true)}${this.meter('stock', 0, 'Tokri', 'empty')}</div>`;
+      } else if (['wood', 'stone', 'farm', 'clay'].includes(v.job)) html += `<div class="stockrow">${this.ico(v.job === 'farm' ? 'food' : v.job, true)}${this.meter('stock', 0, 'Tokri', 'empty')}</div>`;
       if (v.gold > 0) html += status('info', `<b>${v.gold}</b> gold in the hip pouch`);
       if (!isDefender(v)) html += validHome(s, v) ? status('home', 'Hides in their Jhopdi when demons come') : status('tree', 'No hut — hides in the sacred grove');
       if (v.job === 'warrior') { // hand this Sainik a weapon
@@ -517,10 +555,12 @@ const UI = {
       html += `<p>${def.desc}</p>`;
       if (!b.done) {
         html += this.meter('prog', b.progress / def.time, 'Construction', `${Math.floor((b.progress / def.time) * 100)}%`);
-        html += jobCount(s, 'build') ? status('info', 'A Mistri is on the way') : '<p class="miss">No Mistri — assign a builder to construct this.</p>';
+        html += canBuildNow(s) ? status('info', jobCount(s, 'build') ? 'A Mistri is on the way' : 'Idle villagers are building it') : '<p class="miss">Nobody to build it: assign a Mistri, or free a villager (idle villagers build too).</p>';
       } else {
         html += this.meter('', b.hp / b.maxHp, 'Strength', `${Math.ceil(b.hp)} / ${b.maxHp}`);
         if (isFieldType(b.type)) html += this.meter('prog', b.grow / 30, 'Crop', `${Math.floor((b.grow / 30) * 100)}%`);
+        if (def.recipes) html += this.productionHTML(s, b);
+        if (b.type === 'minecamp' && s.fire.level >= 2) html += this.mineHTML(s, b);
         const job = jobOfBuilding(b.type);
         if (job) {
           const k = slotKey(job);
@@ -540,10 +580,15 @@ const UI = {
           if (b.upgrading) {
             const L = def.levels[lv + 1];
             u += this.meter('prog', (b.upProg || 0) / L.time, `To level ${lv + 1}`, `${Math.floor(((b.upProg || 0) / L.time) * 100)}%`);
-            if (!jobCount(s, 'build')) u += '<p class="miss">No Mistri — assign a builder to finish the upgrade.</p>';
+            const crew = upgradeCrew(s, b), left = Math.max(0, L.time - (b.upProg || 0)), day = phaseOf(s.t) === 'day';
+            const helpers = s.villagers.filter((v) => v.helpB === b.id).length, freeIdle = idleVillagers(s).some((v) => !v.helpB);
+            if (crew.n) u += status('user', `<b>${crew.n}</b> working on it · about <b>${this.fmtSecs(left / crew.rate)}</b> left`);
+            else u += `<p class="miss">${day ? 'Nobody is working on it yet. Send a helper, or assign a Mistri.' : 'Work stops for the night and carries on at dawn.'}</p>`;
+            u += `<div class="actions"><button data-action="uphelp" class="${freeIdle && day ? 'primary' : ''}" ${freeIdle ? '' : 'disabled'} data-tip="Send an idle villager to help. More hands finish sooner">${svgIcon('plus')}Send helper</button><button data-action="upunhelp" ${helpers ? '' : 'disabled'} data-tip="Call one helper back">${svgIcon('minus')}Call back</button></div>`;
+            u += `<p><small>By day its own workers, your Mistri, idle villagers and helpers${helpers ? ` (${helpers} sent)` : ''} build it. The more people, the sooner it is done.</small></p>`;
           } else if (lv < max) {
             const L = def.levels[lv + 1];
-            u += `<p>Unlocks <b>${L.unlocks}</b>.</p><p>${this.costHTML(L.cost)}</p>${this.missHTML(L.cost)}`;
+            u += `<p>Unlocks <b>${L.unlocks}</b>.</p><p>${this.costHTML(L.cost)} <small>· about ${this.fmtSecs(L.time)} of work for one person</small></p>${this.missHTML(L.cost)}`;
             u += `<div class="actions"><button data-action="bupgrade" class="${canAfford(s, L.cost) ? 'primary' : 'poorbtn'}" data-tip="A Mistri will build the upgrade">${svgIcon('up')}Upgrade to level ${lv + 1}</button></div>`;
           } else u += '<p>Fully upgraded.</p>';
           html += this.sec('Level', u, `<span class="tag">${lv} / ${max}</span>`);
@@ -554,7 +599,7 @@ const UI = {
               const W = WEAPONS[w], J = JOBS[W.job];
               c += `<div class="up"><div class="d"><b>${W.name} <small>${W.en}</small></b>Makes a ${J.name} · in armoury <b>${s.armory[w] || 0}</b><br>${this.costHTML(W.cost)}${this.missHTML(W.cost, true)}</div><div class="bt2"><button data-action="craft" data-key="${w}" data-n="1" class="${canAfford(s, W.cost) ? 'primary' : 'poorbtn'}" data-tip="Craft one ${W.name}">Make</button><button data-action="craft" data-key="${w}" data-n="5" data-tip="Craft up to five">×5</button>${s.armory[w] ? `<button data-action="equip" data-job="${W.job}" data-tip="Give a ${W.name} to a Sainik now">Arm</button>` : ''}</div></div>`;
             }
-            html += this.sec('Weapons', c + '</div>');
+            html += this.sec(b.type === 'vaidyashala' ? 'Medicine kits' : 'Weapons', c + '</div>');
           }
           const techs = UPGRADE_ORDER.filter((k) => UPGRADES[k].at === b.type && UPGRADES[k].lvl <= lv);
           if (techs.length) {
@@ -646,6 +691,14 @@ const UI = {
       case 'upgrade': buyUpgrade(S, btn.dataset.key); break;
       case 'fortify': fortifyWall(S, sel.ref); break;
       case 'herbs': if (sel && sel.kind === 'villager') healWithHerbs(S, sel.ref); break;
+      case 'recipe': if (sel && sel.kind === 'building') { sel.ref.recipe = btn.dataset.k; sfx('click'); } break;
+      case 'mine': if (sel && sel.kind === 'building') {
+        sel.ref.mine = btn.dataset.k;
+        for (const v of S.villagers) if (v.workplace === sel.ref.id) v.target = null; // miners pick new boulders
+        sfx('click');
+      } break;
+      case 'uphelp': if (sel && sel.kind === 'building') sendHelper(S, sel.ref); break;
+      case 'upunhelp': if (sel && sel.kind === 'building') recallHelper(S, sel.ref); break;
       case 'bay': if (sel && sel.kind === 'building') { const i = +btn.dataset.i; this.bayPick = this.bayPick && this.bayPick.b === sel.ref.id && this.bayPick.i === i ? null : { b: sel.ref.id, i }; sfx('click'); } break;
       case 'bayset': if (sel && sel.kind === 'building') {
         const i = +btn.dataset.i, r = btn.dataset.r, b = sel.ref, was = storeBays(b)[i];
@@ -767,6 +820,17 @@ const UI = {
       this.prevRes[k] = v;
       el.classList.toggle('low', (k === 'food' && v < s.villagers.length * 4) || (k === 'wood' && v < 6 && s.fire.fuel < fireLv(s).fuelMax * 0.4));
     }
+    // materials appear once the village can make them (or has some); phones fold them into a dropdown
+    const has = (t) => s.buildings.some((b) => b.type === t);
+    const shown = {
+      clay: has('claypit') || has('kiln') || s.res.clay >= 1,
+      brick: true,
+      charcoal: has('kiln') || s.res.charcoal >= 1,
+      ore: s.fire.level >= 2 || s.res.ore >= 1,
+      iron: s.fire.level >= 2 || has('smelter') || s.res.iron >= 1,
+    };
+    for (const r of MAT_RES) document.querySelector(`.res[data-res="${r}"]`).classList.toggle('hidden', !shown[r]);
+    $('matBtn').querySelector('b').textContent = String(Math.floor(s.res.brick || 0));
     $('popRes').querySelector('b').textContent = `${s.villagers.length}/${housing(s)}`;
     const ph = phaseOf(s.t);
     $('dayText').textContent = `Day ${s.day}${s.weather === 'rain' ? ' · Rain' : ''}${s.festival ? ' · Diwali' : ''}`;
@@ -952,6 +1016,8 @@ const UI = {
     $('btnRemove').onclick = () => { Sound.init(); this.setRemoveMode(!this.removeMode); sfx('click'); };
     $('btnSpeed').onclick = () => { Sound.init(); this.setSpeed(this.paused ? this.speed : (this.speed % 3) + 1); };
     $('btnLog').onclick = () => this.toggleLog();
+    $('matBtn').onclick = (e) => { e.stopPropagation(); Sound.init(); document.body.classList.toggle('mat-open'); sfx('click'); };
+    document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#matBtn, #matGroup')) document.body.classList.remove('mat-open'); });
     $('logClose').onclick = () => this.toggleLog(false);
     $('logClear').onclick = () => this.clearLog();
     this.updateLogBadge();

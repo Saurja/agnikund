@@ -189,6 +189,10 @@ const JOB_LOOK = {
   farm:    { H: '#f4ecd8', G: '#c8453c' },
   build:   { H: '#8d6e63', G: '#5d4037' },
   vaidya:  { H: '#f4ecd8', G: '#2e7d32', C: '#f4ecd8', c: '#2e7d32', D: '#e6dbbf', d: '#2e7d32' },
+  medic:   { H: '#f4ecd8', G: '#2e7d32', C: '#3f8a4a', c: '#f4ecd8', D: '#e6dbbf', d: '#2e7d32' },
+  clay:    { H: '#a8603a', G: '#e8c896', C: '#c9a66b', c: '#8c4e2c' },
+  kiln:    { H: '#d84315', G: '#6b4223', C: '#e6dbbf', c: '#b9482a', D: '#8c5a34', d: '#6b4223' },
+  smelt:   { H: '#37474f', G: '#ff8a1f', C: '#5d4037', c: '#3e2723', D: '#4e342e', d: '#3e2723' },
   trader:  { H: '#ffd54f', G: '#e65100', C: '#6a1b9a', c: '#e8b830' },
   stone:   { H: '#78909c', G: '#546e7a' },
 };
@@ -508,6 +512,56 @@ const ICONS = {
     '.YyyyyyY.',
     '..YYYYY..',
   ],
+  clay: [
+    '.........',
+    '...qqq...',
+    '..qQqqq..',
+    '.qqqqqQq.',
+    '.qQqqqqq.',
+    'QqqqqQqqQ',
+    '.QQQQQQQ.',
+    '.........',
+  ],
+  ore: [
+    '.........',
+    '...zzZ...',
+    '..zZzzjz.',
+    '.zzzjzzZ.',
+    '.zjzzZzz.',
+    'zzzzzzjzz',
+    '.zzjzzzz.',
+    '.........',
+  ],
+  brick: [
+    '.........',
+    'XxxxXxxxX',
+    'xxxxxxxxx',
+    '.........',
+    'xXxxxxXxx',
+    'xxxxxxxxx',
+    '.........',
+    'XxxxXxxxX',
+    'xxxxxxxxx',
+  ],
+  charcoal: [
+    '.........',
+    '..uU.....',
+    '.uuuu.Uu.',
+    '.uUuuuuuu',
+    'uuuuUuuu.',
+    '.uuuuuUu.',
+    '..uuuuu..',
+    '.........',
+  ],
+  iron: [
+    '.........',
+    '..IIIII..',
+    '.IiiiiiI.',
+    'IiiiiiiiI',
+    'jiiiiiiij',
+    'jjjjjjjjj',
+    '.........',
+  ],
   pop: [
     '..HHHH...',
     '.HHHHHH..',
@@ -550,7 +604,8 @@ const ICONS = {
 const ICON_PAL = {
   w: '#8a5a2e', W: '#d9a86a', o: '#6e4320', L: '#e2ded6', M: '#a9a49a', N: '#6f6a62', y: '#f2c94c', a: '#9c7b45', A: '#d6b47a',
   Y: '#d9a21b', H: '#ff9933', G: '#e8b830', h: '#1a1212', S: '#b5784a', e: '#140c0c', C: '#c8453c', r: '#e03c31', R: '#8f3f22',
-  k: '#111', };
+  k: '#111',
+  q: '#c27e4c', Q: '#8c4e2c', z: '#8a5040', Z: '#c07a48', j: '#3e3a3c', x: '#b9482a', X: '#e27650', u: '#2e2a2b', U: '#6a6466', i: '#9aa3ad', I: '#e2e7ec' };
 ICON_PAL.o = '#6e4320';
 const ICON_PAL_GOLD = Object.assign({}, ICON_PAL, { y: '#fff1a8', o: '#a8770e' });
 const ICON_PAL_FIRE = Object.assign({}, ICON_PAL, { y: '#ffe066', o: '#ff8a1f', w: '#ffffff', r: '#b5532f', R: '#7a3218' });

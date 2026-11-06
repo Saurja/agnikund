@@ -82,13 +82,67 @@ function texturize(mat, amp) {
   mat.customProgramCacheKey = () => 'bld_' + MAT.tier + amp;
   return mat;
 }
+/*
+ * Character surfaces (villagers and demons). The pattern lives in the model's own space, so cloth prints and
+ * demon hides move with the body instead of swimming. Codes come from the per-vertex 'fab' attribute.
+ */
+const NOISE_GLSL = `
+  float hh3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+  float vn3(vec3 x) {
+    vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(hh3(i), hh3(i + vec3(1, 0, 0)), f.x), mix(hh3(i + vec3(0, 1, 0)), hh3(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(hh3(i + vec3(0, 0, 1)), hh3(i + vec3(1, 0, 1)), f.x), mix(hh3(i + vec3(0, 1, 1)), hh3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+  }`;
+function charMat(opts) {
+  const mat = surfaceMat(Object.assign({ vertexColors: true, roughness: 0.8 }, opts || {}));
+  if (MAT.tier === 'low') return mat;
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = 'attribute float fab;\nvarying float vFab;\nvarying vec3 vObj;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vFab = fab; vObj = position;');
+    sh.fragmentShader = 'varying float vFab;\nvarying vec3 vObj;\n' + NOISE_GLSL + '\n' + sh.fragmentShader
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        vec3 op = vObj; float f = vFab;
+        float n1 = vn3(op * 38.0), n2 = vn3(op * 120.0);
+        vec2 cu = vec2(atan(op.z, op.x) * 3.0, op.y * 26.0); // wraps around the body like cloth
+        if (f < 0.5) diffuseColor.rgb *= 0.97 + 0.06 * n1;                                   // skin: a soft, living unevenness
+        else if (f < 1.5) diffuseColor.rgb *= 0.93 + 0.12 * (n1 * 0.4 + n2 * 0.6);           // woven cotton
+        else if (f < 2.5) {                                                                // block print: little rosettes
+          vec2 c = fract(cu) - 0.5; float d = length(c);
+          float m = smoothstep(0.3, 0.24, d) * (1.0 - smoothstep(0.17, 0.11, d)) + smoothstep(0.08, 0.04, d);
+          diffuseColor.rgb *= (0.93 + 0.12 * n2) * (1.0 - 0.24 * m);
+        } else if (f < 3.5) {                                                              // gamcha checks
+          float a = step(0.6, fract(cu.x * 0.5)), b = step(0.6, fract(cu.y * 0.3));
+          diffuseColor.rgb = mix(diffuseColor.rgb * (0.94 + 0.1 * n2), vec3(0.95, 0.92, 0.85), 0.55 * max(a, b) - 0.2 * a * b);
+        } else if (f < 4.5) {                                                              // demon hide: mottled, with scaly seams
+          float m = vn3(op * 14.0) * 0.6 + vn3(op * 42.0) * 0.4;
+          vec2 sc = abs(fract(vec2(op.x * 13.0 + op.y * 7.0, op.z * 13.0 - op.y * 7.0)) - 0.5);
+          diffuseColor.rgb *= (0.74 + 0.5 * m) * (1.0 - 0.18 * smoothstep(0.42, 0.5, max(sc.x, sc.y)));
+        } else if (f < 5.5) diffuseColor.rgb *= 0.86 + 0.26 * vn3(vec3(op.x * 24.0, op.y * 3.0, op.z * 24.0)); // ghost cloth
+        else if (f < 6.5) diffuseColor.rgb *= 0.78 + 0.36 * vn3(vec3(op.x * 70.0, op.y * 8.0, op.z * 70.0));   // fur, hair
+        else if (f < 7.5) {                                                                // tiger skin
+          float st = sin(cu.x * 2.4 + sin(op.y * 28.0) * 1.4 + n1 * 3.0);
+          diffuseColor.rgb = mix(diffuseColor.rgb * (0.92 + 0.12 * n2), vec3(0.09, 0.05, 0.03), smoothstep(0.5, 0.75, st));
+        } else diffuseColor.rgb *= 0.86 + 0.2 * vn3(vec3(op.x * 5.0, op.y * 90.0, op.z * 5.0));               // metal, brushed
+      }`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      totalEmissiveRadiance += diffuseColor.rgb * (vFab < 0.5 ? 0.14 : 0.05); // light scattering through skin and cloth: faces stay readable in shade
+      if (vFab > 4.5 && vFab < 5.5) { // ghosts glow at their edges
+        float rim = 1.0 - abs(dot(normalize(vNormal), normalize(vViewPosition)));
+        totalEmissiveRadiance += vec3(0.42, 0.58, 0.95) * pow(rim, 2.2) * 0.85;
+      }`);
+  };
+  mat.customProgramCacheKey = () => 'char_' + MAT.tier + (opts && opts.transparent ? 't' : '');
+  return mat;
+}
+const ghostMat = () => charMat({ transparent: true, opacity: 0.86, emissive: 0x2a3848, roughness: 0.9 });
 function initMaterials(tier) {
   MAT.tier = tier || MAT.tier || 'high';
   MAT.useOutline = false; // the modern look relies on light, shadow and occlusion rather than ink lines
   MAT.ramp = MAT.ramp || toonRamp([95, 165, 220, 255]);
   MAT.std = surfaceMat({ vertexColors: true });
   MAT.bld = MAT.tier === 'low' ? MAT.std : texturize(surfaceMat({ vertexColors: true, roughness: 0.92 }), 0.14);
-  MAT.bhoot = surfaceMat({ vertexColors: true, transparent: true, opacity: 0.82, emissive: 0x2a3848 });
+  MAT.bhoot = MAT.tier === 'low' ? surfaceMat({ vertexColors: true, transparent: true, opacity: 0.82, emissive: 0x2a3848 }) : ghostMat();
+  MAT.char = charMat();
   MAT.outline = MAT.outline || outlineMat(0.028);
   MAT.outlineBig = MAT.outlineBig || outlineMat(0.045);
   // swaying foliage: the same surface plus a gentle wind in the vertex shader
@@ -146,6 +200,16 @@ function varyHex(hex, dh, dl) {
 
 /* ---------- geometry helpers ---------- */
 const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _eu = new THREE.Euler(), _vp = new THREE.Vector3(), _vs = new THREE.Vector3();
+/*
+ * Surface codes for characters, read by the character material (charMat): parts built while FAB is set
+ * carry it per vertex. 0 skin · 1 woven cotton · 2 block print · 3 gamcha checks · 4 demon hide
+ * 5 ghost cloth (wispy, glowing rim) · 6 fur and hair · 7 tiger skin · 8 metal. Only character
+ * models set it; everything else stays 0 and ignores it.
+ */
+let FAB = 0;
+const V2 = (a) => a.map(([x, y]) => new THREE.Vector2(x, y));
+const mixHex = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
+const darkHex = (a, f) => new THREE.Color(a).multiplyScalar(f).getHex();
 function P(geo, color, x, y, z, rx, ry, rz, sx, sy, sz) {
   const g = geo.index ? geo.toNonIndexed() : geo;
   const out = new THREE.BufferGeometry();
@@ -161,6 +225,7 @@ function P(geo, color, x, y, z, rx, ry, rz, sx, sy, sz) {
   const n = out.attributes.position.count, col = new THREE.Color(typeof color === 'number' ? grade(color) : color), arr = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) { arr[i * 3] = col.r; arr[i * 3 + 1] = col.g; arr[i * 3 + 2] = col.b; }
   out.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  if (FAB) out.setAttribute('fab', new THREE.BufferAttribute(new Float32Array(n).fill(FAB), 1));
   return out;
 }
 /*
@@ -203,20 +268,22 @@ function addOutlineNormals(g) {
   g.setAttribute('onormal', new THREE.BufferAttribute(out, 3));
 }
 function merge(parts) {
-  let n = 0;
-  for (const p of parts) n += p.attributes.position.array.length;
-  const pos = new Float32Array(n), nor = new Float32Array(n), col = new Float32Array(n);
+  let n = 0, anyFab = false;
+  for (const p of parts) { n += p.attributes.position.array.length; if (p.attributes.fab) anyFab = true; }
+  const pos = new Float32Array(n), nor = new Float32Array(n), col = new Float32Array(n), fab = anyFab ? new Float32Array(n / 3) : null;
   let o = 0;
   for (const p of parts) {
     pos.set(p.attributes.position.array, o);
     nor.set(p.attributes.normal.array, o);
     col.set(p.attributes.color.array, o);
+    if (fab && p.attributes.fab) fab.set(p.attributes.fab.array, o / 3);
     o += p.attributes.position.array.length;
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (fab) g.setAttribute('fab', new THREE.BufferAttribute(fab, 1));
   if (MAT.useOutline !== false) addOutlineNormals(g); // only needed for ink outlines, and costly to build
   g.computeBoundingSphere();
   return g;
@@ -256,7 +323,11 @@ function silMat(color, offset) {
       }`,
     fragmentShader: `uniform vec3 uColor; varying float vRim;
       void main() { gl_FragColor = vec4(uColor, 0.28 + 0.5 * vRim * vRim); }`,
-    transparent: true, depthWrite: false, depthFunc: THREE.GreaterDepth,
+    // Drawn in the solid pass after the world (renderOrder 1) but before any unit (renderOrder 2), so the
+    // depth buffer holds only trees, buildings and ground: a unit shows through those, never through
+    // another villager or demon (a crowd would otherwise light up red all over). Blended by hand.
+    transparent: false, depthWrite: false, depthFunc: THREE.GreaterDepth,
+    blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
   });
   m.userData.sil = true;
   MAT.sil[k] = m;
@@ -272,10 +343,11 @@ function addSilhouette(obj, color, offset) {
   });
   if (!best) return null;
   const s = new THREE.Mesh(best.geometry, silMat(color, offset));
-  s.renderOrder = 6; s.castShadow = false; s.receiveShadow = false;
+  s.renderOrder = 1; s.castShadow = false; s.receiveShadow = false;
   s.raycast = () => {};
-  s.userData.sil = true;
+  s.userData.sil = true; s.userData.noAO = true;
   best.add(s);
+  obj.traverse((c) => { if (c.isMesh && !c.userData.sil) c.renderOrder = 2; }); // the unit itself draws after every silhouette
   return s;
 }
 function glowMesh(geo, color, opacity) {
@@ -696,6 +768,59 @@ Models.building = function (type, level) {
       ud.lights.push({ x: 0, y: 0.8, z: 1.0, r: 5, c: 0xffc070, always: true });
       break;
     }
+    case 'claypit': { // a pit of wet clay with a raised rim, a puddle, a spade, drying clay blocks and a little shade
+      p.push(cyl(0.78, 0.82, 0.05, 20, 0x5e341d, -0.15, 0, -0.1)); // the wet floor of the pit
+      p.push(P(new THREE.TorusGeometry(0.8, 0.12, 6, 22), 0x8c5a34, -0.15, 0.05, -0.1, Math.PI / 2, 0, 0, 1, 1, 0.6)); // dug-out rim
+      p.push(cyl(0.28, 0.3, 0.012, 16, 0x6f9fb0, -0.35, 0.05, -0.25)); // rain puddle
+      for (const [x, z, r] of [[0.15, -0.3, 0.16], [0.05, 0.15, 0.13], [-0.45, 0.2, 0.12]]) p.push(sph(r, 0xa8603a, x, 0.06, z, 1.2, 0.55, 1)); // wet lumps
+      p.push(sph(0.32, 0x9c5530, 0.62, 0.02, -0.55, 1.1, 0.6, 0.9)); // the spoil heap
+      for (let i = 0; i < 6; i++) p.push(box(0.16, 0.08, 0.1, i % 2 ? 0xb5703f : 0xc27e4c, -0.75 + (i % 3) * 0.2, (i > 2 ? 0.08 : 0), 0.78)); // clay blocks drying
+      p.push(cylC(0.022, 0.026, 0.7, 6, C.wood, 0.42, 0.42, 0.05, 0.25, 0, -0.3)); p.push(boxC(0.16, 0.2, 0.03, 0x8d939a, 0.5, 0.1, 0.0, 0.25, 0, -0.3)); // spade
+      p.push(sph(0.12, C.brick, -0.82, 0.12, -0.75)); p.push(cyl(0.05, 0.07, 0.05, 10, C.brickD, -0.82, 0.22, -0.75)); // water matka
+      for (const sx of [-0.9, -0.3]) p.push(cyl(0.025, 0.03, 1.0, 6, C.bamboo, sx, 0, -0.92));
+      p.push(boxC(0.8, 0.05, 0.42, C.thatch, -0.6, 0.98, -0.78, -0.35));
+      addPiles(g, [['clay', 0.55, 0, 0.45, 0.55, 0.3]]);
+      break;
+    }
+    case 'kiln': { // Eent Bhatta: a brick firing chamber with glowing mouths, a tall banded chimney, green bricks drying
+      p.push(box(1.9, 0.08, 1.8, C.mudD, 0, 0, 0));
+      p.push(box(1.5, 0.9, 1.15, 0xa84a2c, 0, 0.08, -0.25));
+      for (let i = 1; i < 6; i++) p.push(box(1.52, 0.018, 1.17, 0x7a3420, 0, 0.08 + i * 0.15, -0.25)); // courses of brick
+      p.push(boxC(1.56, 0.08, 1.21, 0x8a3a22, 0, 1.02, -0.25));
+      for (const sx of [-0.38, 0.38]) { // arched firing mouths
+        p.push(box(0.36, 0.38, 0.06, 0x2a1810, sx, 0.08, 0.33));
+        p.push(P(new THREE.CylinderGeometry(0.18, 0.18, 0.06, 12, 1, false, 0, Math.PI), 0x2a1810, sx, 0.46, 0.33, Math.PI / 2, 0, Math.PI / 2));
+        const fl = glowMesh(new THREE.PlaneGeometry(0.28, 0.3), 0xff7a30, 0.9); fl.position.set(sx, 0.26, 0.37); g.add(fl); ud.flames.push(fl);
+      }
+      // the chimney: tapering, with dark bands, set at the back corner
+      p.push(cyl(0.2, 0.3, 2.0, 14, 0xb5532f, 0.55, 1.0, -0.5));
+      for (let i = 0; i < 4; i++) p.push(cyl(0.29 - i * 0.025, 0.29 - i * 0.025, 0.06, 14, 0x7a3420, 0.55, 1.15 + i * 0.5, -0.5));
+      p.push(cyl(0.23, 0.21, 0.08, 14, 0x5a2a18, 0.55, 2.98, -0.5));
+      // green (unfired) bricks drying in a lattice on the left, fired ones and charcoal on the right
+      for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) p.push(box(r % 2 ? 0.08 : 0.2, 0.07, r % 2 ? 0.2 : 0.08, 0x9c7a5a, -0.75 + (r % 2 ? k * 0.1 : 0.05), 0.08 + r * 0.07, 0.55 + (r % 2 ? 0.05 : k * 0.1)));
+      addPiles(g, [['brick', -0.2, 0.08, 0.62, 0.42, 0], ['charcoal', 0.58, 0.08, 0.6, 0.4, 0.3]]);
+      ud.lights.push({ x: 0, y: 0.4, z: 0.7, r: 3.4, c: 0xff7a30, active: true });
+      break;
+    }
+    case 'smelter': { // Loha Bhatti: a clay shaft furnace bound with straw rope, a glowing tuyere, two leather bellows
+      p.push(box(1.9, 0.08, 1.8, C.mudD, 0, 0, 0));
+      p.push(cyl(0.3, 0.58, 1.75, 16, 0x9c5a38, -0.1, 0.08, -0.15));
+      for (let i = 0; i < 3; i++) p.push(P(new THREE.TorusGeometry(0.52 - i * 0.075, 0.025, 5, 18), 0xc9a040, -0.1, 0.45 + i * 0.45, -0.15, Math.PI / 2));
+      p.push(cyl(0.22, 0.24, 0.04, 14, 0x2a1810, -0.1, 1.83, -0.15)); // the mouth at the top
+      const glow = glowMesh(new THREE.CircleGeometry(0.11, 12), 0xffa040, 0.95); glow.position.set(-0.1, 0.3, 0.42); g.add(glow); ud.flames.push(glow);
+      p.push(cylC(0.05, 0.06, 0.32, 10, 0x7a4630, -0.1, 0.3, 0.3, Math.PI / 2)); // clay tuyere pipe
+      for (const sx of [-0.55, 0.35]) { // goatskin bellows on either side, each with a stick to pump it
+        p.push(sph(0.2, 0x6b4223, sx, 0.2, 0.45, 1.2, 0.55, 1));
+        p.push(cylC(0.015, 0.015, 0.5, 6, C.woodL, sx, 0.5, 0.45, 0.3, 0, 0));
+      }
+      // ore and charcoal waiting, and a stone anvil with tongs
+      for (let i = 0; i < 5; i++) p.push(sph(0.1, i % 2 ? 0x8a5040 : 0x7a4636, -0.72 + (i % 3) * 0.13, 0.12 + Math.floor(i / 3) * 0.1, -0.7 + (i % 2) * 0.1, 1, 0.75, 1));
+      p.push(cyl(0.2, 0.16, 0.18, 12, 0xb3843c, 0.65, 0.08, -0.65)); p.push(sph(0.17, 0x2e2a2b, 0.65, 0.26, -0.65, 1, 0.5, 1)); // charcoal basket
+      p.push(box(0.3, 0.22, 0.22, 0x8d8981, 0.72, 0.08, 0.05)); p.push(cylC(0.012, 0.012, 0.4, 5, 0x3a3a40, 0.72, 0.33, 0.05, 0, 0.4, Math.PI / 2 - 0.1));
+      addPiles(g, [['iron', 0.6, 0.08, 0.62, 0.45, 0]]);
+      ud.lights.push({ x: -0.1, y: 0.4, z: 0.6, r: 3.2, c: 0xff9040, active: true });
+      break;
+    }
     case 'vaidyashala': { // healer's hut: square mud room, pyramid thatch, herb beds, drying rack, mortar and pestle
       p.push(box(1.9, 0.1, 1.9, C.mudD, 0, 0, 0));
       p.push(box(1.35, 0.95, 1.25, C.mud, -0.1, 0.1, -0.25));
@@ -980,7 +1105,8 @@ Models.stumpGeo = function (type) {
   const r = type === 'banyan' ? 0.3 : type === 'palm' ? 0.12 : 0.16;
   return merge([cyl(r, r * 1.15, 0.25, 12, 0x7a5638, 0, 0, 0), cyl(r * 0.98, r * 0.98, 0.02, 12, 0xe8c896, 0, 0.25, 0)]);
 };
-Models.rockGeo = function (variant) {
+Models.rockGeo = function (variant, ore) {
+  if (ore) return Models.oreRockGeo(variant);
   const rnd = mulberry32(variant * 977 + 3);
   const p = [];
   const n = 1 + (variant % 3);
@@ -1001,6 +1127,31 @@ Models.rockGeo = function (variant) {
   return merge(p);
 };
 
+/** An iron-ore boulder: the same shapes as the stone ones, rust-red and streaked, with dark metallic nodules. */
+Models.oreRockGeo = function (variant) {
+  const rnd = mulberry32(variant * 977 + 3);
+  const p = [];
+  const n = 1 + (variant % 3);
+  for (let i = 0; i < n; i++) {
+    const r = i === 0 ? 0.5 : 0.28 + rnd() * 0.12;
+    const geo = new THREE.SphereGeometry(r, 10, 7);
+    const pos = geo.attributes.position;
+    const sx = 0.85 + rnd() * 0.3, sy = 0.6 + rnd() * 0.2, sz = 0.85 + rnd() * 0.3;
+    for (let k = 0; k < pos.count; k++) {
+      const w = 1 + Math.sin(pos.getX(k) * 11 + variant) * 0.08 + Math.cos(pos.getZ(k) * 8 + i) * 0.07;
+      pos.setXYZ(k, pos.getX(k) * sx * w, pos.getY(k) * sy * w, pos.getZ(k) * sz * w);
+    }
+    geo.computeVertexNormals();
+    const cx = i === 0 ? 0 : (rnd() - 0.5) * 0.9, cz = i === 0 ? 0 : (rnd() - 0.5) * 0.9;
+    p.push(P(geo, rnd() > 0.5 ? 0x8a5040 : 0x7a4636, cx, r * 0.35, cz));
+    for (let k = 0; k < 4; k++) { // rust streaks and dark iron nodules on the surface
+      const a = rnd() * Math.PI * 2, e = 0.2 + rnd() * 0.9;
+      const px = cx + Math.cos(a) * Math.cos(e) * r * sx * 0.92, py = r * 0.35 + Math.sin(e) * r * sy * 0.92, pz = cz + Math.sin(a) * Math.cos(e) * r * sz * 0.92;
+      p.push(sph(r * (0.12 + rnd() * 0.08), k % 2 ? 0xc07a48 : 0x3e3a3c, px, py, pz, 1, 0.7, 1, 6, 4));
+    }
+  }
+  return merge(p);
+};
 /* ---------- tokri (woven back basket) and stockpile heaps ----------
    Shared, cached geometries: a mesh swaps between them as its fill level changes. */
 const _geoCache = {};
@@ -1010,6 +1161,10 @@ function cachedGeo(key, make) {
 }
 const BARK = [0x8a5a2e, 0x9a6a3a, 0x7e5230], CUT = 0xecd09a;
 const STONES = [0xa8a49c, 0x96918a, 0xb8b2a6, 0x8d8981];
+const MAT_COLS = {
+  clay: [0xb5703f, 0xa8603a, 0xc27e4c], ore: [0x8a5040, 0x7a4636, 0x9a5a44, 0x4e4446], charcoal: [0x2e2a2b, 0x3d3839, 0x242122],
+  brick: [0xc0502e, 0xb04628, 0xcf6040], iron: [0x8f99a4, 0x7d8792, 0xa3acb6],
+};
 /** A log lying along x (turned by ry) with pale, freshly cut ends. */
 function logPart(p, r, len, x, y, z, ry, c) {
   p.push(cylC(r, r, len, 10, c, x, y, z, 0, ry, Math.PI / 2));
@@ -1062,6 +1217,14 @@ Models.packGeo = function (key) {
       p.push(sph(0.12, 0xf2c230, 0, 0.3, 0, 1, [0, 0.25, 0.45, 0.7][lv], 0.8));
       for (let i = 0; i < lv * 2; i++) { const a = i * 2.3; p.push(cylC(0.032, 0.032, 0.012, 10, 0xffd84a, Math.cos(a) * 0.06, 0.32 + lv * 0.025 + (i % 2) * 0.02, Math.sin(a) * 0.05, 0.5 + i * 0.3, 0, 0.4 - i * 0.2)); }
       if (lv === 3) p.push(sph(0.025, 0xd33b2c, 0.02, 0.4, 0.01));
+    } else if (res === 'clay' || res === 'ore' || res === 'charcoal') { // lumps, piled like stones
+      const cols = MAT_COLS[res];
+      const spots = [[-0.055, 0.315, 0.02, 0.07], [0.06, 0.315, -0.015, 0.066], [0.0, 0.32, 0.05, 0.06], [0.01, 0.33, -0.06, 0.062], [-0.065, 0.36, -0.03, 0.058], [0.05, 0.37, 0.03, 0.06], [0, 0.42, 0, 0.065]];
+      spots.slice(0, [0, 2, 4, 7][lv]).forEach(([x, y, z, r], i) => p.push(sph(r, cols[i % cols.length], x, y, z, 1.05, res === 'clay' ? 0.65 : 0.8, 1, 7, 5)));
+    } else if (res === 'brick') {
+      [[0, 0.32, 0], [0, 0.32, 0.06], [0, 0.32, -0.06], [0, 0.38, 0.03], [0, 0.38, -0.03], [0, 0.44, 0]].slice(0, [0, 2, 4, 6][lv]).forEach(([x, y, z], i) => p.push(boxC(0.2, 0.055, 0.075, MAT_COLS.brick[i % 3], x, y, z, 0, 0.05 * (i % 2 ? 1 : -1), 0)));
+    } else if (res === 'iron') {
+      [[0, 0.32, 0.03], [0, 0.32, -0.04], [0, 0.37, 0]].slice(0, lv).forEach(([x, y, z], i) => { p.push(boxC(0.18, 0.05, 0.07, MAT_COLS.iron[i % 3], x, y, z)); p.push(boxC(0.14, 0.02, 0.05, 0xc8d0d8, x, y + 0.035, z)); });
     }
     return merge(p);
   });
@@ -1123,6 +1286,43 @@ Models.pileGeo = function (res, lv) {
       const stacks = [[0.38, 0.12, 4], [-0.36, 0.16, 6], [0.2, 0.3, 3], [-0.12, 0.34, 5], [0.42, -0.14, 7]];
       stacks.slice(0, [0, 0, 1, 2, 3, 5][lv]).forEach(([x, z, k]) => { for (let i = 0; i < k; i++) p.push(cyl(0.06, 0.06, 0.022, 12, i % 2 ? 0xffd84a : 0xf2c230, x + (rnd() - 0.5) * 0.015, i * 0.022, z)); });
       if (lv >= 4) { p.push(sph(0.035, 0xd33b2c, 0.06, 0.3 + lv * 0.02, -0.1)); p.push(sph(0.03, 0x2a9d6f, -0.08, 0.29 + lv * 0.02, -0.14)); }
+    } else if (res === 'clay') { // wet clay lumps slapped into a mound, with a few shaped blocks
+      const n = [0, 3, 6, 9, 12, 15][lv];
+      for (let i = 0; i < n; i++) {
+        const ring = i < 7 ? 0 : i < 12 ? 1 : 2, a = i * 2.1 + ring;
+        const rr = [0.3, 0.16, 0.04][ring];
+        p.push(sph(0.16 - ring * 0.02, MAT_COLS.clay[i % 3], Math.cos(a) * rr, 0.07 + ring * 0.13, Math.sin(a) * rr * 0.85, 1.15, 0.6, 1.05, 8, 6));
+      }
+      if (lv >= 3) for (let k = 0; k < Math.min(4, lv); k++) p.push(box(0.16, 0.07, 0.1, 0xb5703f, -0.38 + k * 0.19, 0, 0.36));
+    } else if (res === 'ore') { // rusty chunks heaped up, darker iron nodules among them
+      const n = [0, 4, 8, 12, 16, 20][lv];
+      for (let i = 0; i < n; i++) {
+        const ring = i < 9 ? 0 : i < 15 ? 1 : 2, a = i * 2.4 + ring * 0.6, rr = [0.3, 0.17, 0.05][ring];
+        p.push(sph(0.11 + rnd() * 0.03, MAT_COLS.ore[i % 4], Math.cos(a) * rr, 0.07 + ring * 0.12, Math.sin(a) * rr * 0.85, 1.05, 0.8, 0.95, 7, 5));
+      }
+    } else if (res === 'brick') { // fired bricks stacked in a criss-cross kiln stack
+      const layers = [0, 1, 2, 3, 4, 5][lv];
+      for (let L = 0; L < layers; L++) {
+        const along = L % 2 === 0;
+        for (let k = 0; k < 4; k++) {
+          const o = -0.27 + k * 0.18;
+          p.push(box(along ? 0.36 : 0.11, 0.075, along ? 0.11 : 0.36, MAT_COLS.brick[(k + L) % 3], along ? -0.19 : o, L * 0.077, along ? o : -0.19));
+          p.push(box(along ? 0.36 : 0.11, 0.075, along ? 0.11 : 0.36, MAT_COLS.brick[(k + L + 1) % 3], along ? 0.19 : o, L * 0.077, along ? o : 0.19));
+        }
+      }
+    } else if (res === 'charcoal') { // a woven basket heaped with black lumps, more spilling out
+      p.push(cyl(0.26, 0.2, 0.22, 14, 0xb3843c, 0, 0, 0)); p.push(P(new THREE.TorusGeometry(0.26, 0.02, 5, 16), 0x7d5226, 0, 0.22, 0, Math.PI / 2));
+      p.push(sph(0.24, 0x2e2a2b, 0, 0.2, 0, 1, [0, 0.25, 0.45, 0.65, 0.85, 1.05][lv], 1, 10, 6));
+      for (let i = 0; i < [0, 0, 2, 4, 6, 9][lv]; i++) { const a = i * 2.2; p.push(sph(0.06 + rnd() * 0.02, MAT_COLS.charcoal[i % 3], Math.cos(a) * 0.36, 0.04, Math.sin(a) * 0.3, 1, 0.7, 1, 6, 4)); }
+    } else if (res === 'iron') { // iron ingots stacked in alternating layers
+      const layers = [0, 1, 2, 3, 4, 5][lv];
+      for (let L = 0; L < layers; L++) {
+        const along = L % 2 === 0;
+        for (let k = 0; k < 3; k++) {
+          const o = -0.16 + k * 0.16;
+          p.push(box(along ? 0.34 : 0.11, 0.06, along ? 0.11 : 0.34, MAT_COLS.iron[(k + L) % 3], along ? 0 : o, L * 0.062, along ? o : 0));
+        }
+      }
     }
     return merge(p);
   });
@@ -1138,69 +1338,155 @@ function addPiles(g, spots) {
   });
 }
 
-/* ---------- villagers (chibi cartoon style) ---------- */
+/* ---------- villagers ----------
+ * Stylised, but proportioned like people: a face with almond eyes, brows, nose and lips; men in a kurta
+ * over a draped dhoti with a wound pagdi, women in a saree with a contrast border and pallu, hair in a
+ * khopa ringed with a gajra, shankha-pola bangles. Cloth carries woven, block-printed or checked
+ * surfaces (see FAB). The rig is unchanged: hips, torso, two legs and two arms (tool in the right hand).
+ */
 function hexOf(c) { return typeof c === 'number' ? c : parseInt(String(c).slice(1), 16); }
 Models.villager = function (look, job) {
   const pal = lookPalette(look, job);
   const H = (k) => hexOf(pal[k]);
   const fem = look.g === 'f';
+  const army = slotKey(job) === 'army';
+  const M = MAT.char || MAT.std;
+  const skin = H('S'), skinD = darkHex(skin, 0.86), lip = mixHex(skin, 0x8a2424, 0.42), hair = H('h');
+  const cloth = H('C'), clothD = H('c'), lower = H('D'), trim = H('d');
+  const printed = fem || ['farm', 'trader', 'idle', 'vaidya', 'kiln', 'clay'].includes(job);
+  const CL = printed ? 2 : 1;
   const g = new THREE.Group();
   const hips = new THREE.Group(); hips.position.y = 0.36; g.add(hips);
+  // legs: a draped dhoti over each thigh (men), bare calves, chappals; women's feet peep from under the saree
   const legs = [];
   for (const sx of [-1, 1]) {
     const L = new THREE.Group(); L.position.set(sx * 0.085, 0, 0); hips.add(L);
-    if (fem) L.add(meshOf([sph(0.065, H('S'), 0, -0.34, 0.04, 1, 0.6, 1.4)]));
-    else L.add(meshOf([...limb(0.07, 0.2, H('D'), 0, -0.02, 0), cyl(0.055, 0.055, 0.08, 10, H('S'), 0, -0.3, 0), sph(0.07, 0x5a3420, 0, -0.33, 0.04, 1, 0.55, 1.45)]));
+    const lp = [];
+    if (!fem) {
+      FAB = 1;
+      lp.push(cyl(0.076, 0.094, 0.25, 12, lower, 0, -0.23, 0));
+      lp.push(boxC(0.02, 0.22, 0.012, darkHex(lower, 0.9), sx * -0.02, -0.11, 0.085, -0.15)); // a fold of the dhoti
+      FAB = 0;
+      lp.push(P(new THREE.TorusGeometry(0.092, 0.008, 4, 16), trim, 0, -0.218, 0, Math.PI / 2)); // its border
+      lp.push(cyl(0.043, 0.036, 0.12, 10, skin, 0, -0.335, 0));
+    }
+    FAB = 0;
+    const fz = fem ? 0.15 : 0.03;
+    lp.push(sph(0.042, skin, 0, -0.335, fz, 1, 0.55, 1.55));
+    lp.push(box(0.074, 0.016, 0.16, 0x5e3a20, 0, -0.36, fz));
+    lp.push(P(new THREE.TorusGeometry(0.04, 0.008, 4, 10, Math.PI), 0x8a4a22, 0, -0.345, fz + 0.03));
+    if (fem) lp.push(P(new THREE.TorusGeometry(0.036, 0.007, 4, 12), 0xd8dde3, 0, -0.318, fz - 0.06, Math.PI / 2)); // silver payal
+    L.add(meshOf(lp, M));
     legs.push(L);
   }
   const body = [];
-  if (fem) {
-    const prof = [[0.255, -0.36], [0.25, -0.33], [0.215, -0.22], [0.18, -0.08], [0.16, 0.04]].map(([x, y]) => new THREE.Vector2(x, y));
-    body.push(P(new THREE.LatheGeometry(prof, 16), H('D'), 0, 0, 0));
-    body.push(P(new THREE.TorusGeometry(0.25, 0.022, 6, 18), H('d'), 0, -0.34, 0, Math.PI / 2));
-    body.push(cyl(0.14, 0.165, 0.28, 16, H('C'), 0, 0, 0));
-    body.push(boxC(0.07, 0.36, 0.3, H('D'), -0.05, 0.16, 0.02, 0, 0, -0.55));
-    body.push(sph(0.15, H('D'), -0.1, 0.27, -0.02, 0.6, 0.45, 1.0));
-  } else {
-    body.push(cyl(0.165, 0.18, 0.14, 16, H('D'), 0, -0.1, 0));
-    body.push(cyl(0.15, 0.175, 0.3, 16, H('C'), 0, 0, 0));
-    body.push(P(new THREE.TorusGeometry(0.175, 0.02, 6, 18), H('c'), 0, 0.01, 0, Math.PI / 2));
+  if (fem) { // the saree: pleated skirt with its paar, a blouse, the pallu across the chest and down the back
+    FAB = CL;
+    body.push(P(new THREE.LatheGeometry(V2([[0.236, -0.36], [0.233, -0.33], [0.206, -0.2], [0.176, -0.08], [0.158, 0.0], [0.15, 0.03]]), 22), lower, 0, 0, 0));
+    for (let k = -1; k <= 1; k++) body.push(boxC(0.032, 0.3, 0.012, darkHex(lower, 0.9), k * 0.042, -0.2, 0.198 - Math.abs(k) * 0.006, -0.14, 0, k * 0.06));
+    FAB = 0;
+    body.push(P(new THREE.CylinderGeometry(0.237, 0.239, 0.05, 22, 1, true), trim, 0, -0.335, 0));
+    body.push(P(new THREE.TorusGeometry(0.236, 0.006, 4, 24), 0xe8b830, 0, -0.306, 0, Math.PI / 2));
+    FAB = 1;
+    body.push(P(new THREE.LatheGeometry(V2([[0.15, 0.0], [0.156, 0.1], [0.15, 0.2], [0.122, 0.27], [0.07, 0.3], [0.001, 0.306]]), 18), cloth, 0, 0, 0));
+    FAB = CL;
+    body.push(boxC(0.1, 0.36, 0.018, lower, -0.035, 0.14, 0.153, -0.12, 0, -0.5));
+    body.push(boxC(0.12, 0.44, 0.018, lower, -0.09, 0.08, -0.156, 0.1, 0, 0.08));
+    body.push(sph(0.07, lower, -0.11, 0.27, 0, 0.9, 0.6, 1.4));
+    FAB = 0;
+    body.push(boxC(0.018, 0.36, 0.02, trim, 0.009, 0.116, 0.155, -0.12, 0, -0.5)); // the pallu's border
+  } else if (job === 'brute') { // pehelwan: bare, broad and oiled, in a dhoti and langot
+    FAB = 0;
+    body.push(P(new THREE.LatheGeometry(V2([[0.17, -0.06], [0.18, 0.06], [0.195, 0.18], [0.16, 0.27], [0.08, 0.31], [0.001, 0.315]]), 18), skin, 0, 0, 0));
+    for (const sx of [-1, 1]) body.push(sph(0.075, skin, sx * 0.075, 0.2, 0.13, 1.1, 0.75, 0.6));
+    FAB = 1;
+    body.push(cyl(0.18, 0.19, 0.16, 18, lower, 0, -0.17, 0));
+    FAB = 0;
+    body.push(P(new THREE.TorusGeometry(0.18, 0.02, 6, 18), H('G'), 0, -0.01, 0, Math.PI / 2));
+  } else { // kurta: an A-line tunic over the dhoti, a buttoned placket and a cloth waistband
+    FAB = CL;
+    body.push(P(new THREE.LatheGeometry(V2([[0.172, -0.17], [0.166, -0.08], [0.152, 0.02], [0.158, 0.14], [0.16, 0.22], [0.13, 0.28], [0.075, 0.31], [0.001, 0.316]]), 20), cloth, 0, 0, 0));
+    FAB = 0;
+    body.push(P(new THREE.CylinderGeometry(0.173, 0.175, 0.022, 20, 1, true), clothD, 0, -0.16, 0));
+    body.push(boxC(0.034, 0.16, 0.012, clothD, 0, 0.2, 0.159, -0.06));
+    for (let i = 0; i < 3; i++) body.push(sph(0.009, 0xe8b830, 0, 0.15 + i * 0.045, 0.167));
+    body.push(P(new THREE.TorusGeometry(0.157, 0.018, 6, 20), H('G'), 0, 0.02, 0, Math.PI / 2));
+    if (['wood', 'stone', 'farm', 'build', 'clay', 'kiln', 'idle', 'smelt'].includes(job)) { // a checked gamcha over the shoulder
+      FAB = 3;
+      body.push(P(new THREE.TorusGeometry(0.1, 0.022, 5, 12, Math.PI), 0xb83a30, 0.115, 0.25, 0, 0, Math.PI / 2, 0));
+      body.push(boxC(0.045, 0.13, 0.012, 0xb83a30, 0.115, 0.19, 0.142, -0.12));
+      body.push(boxC(0.045, 0.16, 0.012, 0xb83a30, 0.115, 0.17, -0.142, 0.12));
+      FAB = 0;
+    }
+    if (army) body.push(boxC(0.034, 0.42, 0.012, 0x6b3a1e, 0, 0.12, 0.162, 0, 0, 0.62)); // leather baldric
   }
-  body.push(sph(0.155, H('C'), 0, 0.28, 0, 1, 0.5, 0.85));
-  // big round head
-  const hy = 0.56;
-  body.push(cyl(0.06, 0.07, 0.08, 10, H('S'), 0, 0.3, 0));
-  body.push(sph(0.215, H('S'), 0, hy, 0));
+  // neck and face
+  FAB = 0;
+  const hy = 0.47;
+  body.push(cyl(0.045, 0.052, 0.08, 10, skin, 0, 0.29, 0));
+  body.push(sph(0.158, skin, 0, hy, 0.005, 0.95, 1.06, 0.98));
+  body.push(sph(0.07, skin, 0, hy - 0.085, 0.04, 1.3, 0.7, 1.1));
   for (const sx of [-1, 1]) {
-    body.push(sph(0.048, 0xffffff, sx * 0.078, hy + 0.02, 0.178, 1, 1.15, 0.6));
-    body.push(sph(0.028, 0x1a0f0a, sx * 0.078, hy + 0.015, 0.205, 1, 1.2, 0.6));
-    body.push(sph(0.009, 0xffffff, sx * 0.07, hy + 0.03, 0.222));
-    body.push(sph(0.036, 0xf08a8a, sx * 0.125, hy - 0.06, 0.165, 1, 0.6, 0.5));
-    body.push(sph(0.035, H('S'), sx * 0.212, hy, 0, 0.5, 1, 0.8));
+    body.push(sph(0.03, skin, sx * 0.152, hy - 0.005, -0.005, 0.45, 1, 0.8));
+    body.push(sph(0.027, 0xf6f1e8, sx * 0.055, hy + 0.012, 0.135, 1.45, 0.85, 0.45));
+    body.push(sph(0.018, 0x2a1810, sx * 0.055, hy + 0.01, 0.146, 1.1, 1.1, 0.45));
+    body.push(sph(0.006, 0xffffff, sx * 0.049, hy + 0.019, 0.153));
+    body.push(boxC(0.058, 0.011, 0.012, hair, sx * 0.057, hy + 0.052, 0.142, 0, 0, sx * -0.14));
+    if (fem) body.push(boxC(0.05, 0.006, 0.006, 0x1a1010, sx * 0.058, hy + 0.027, 0.147, 0, 0, sx * -0.1)); // kajal
   }
-  body.push(sph(0.03, new THREE.Color(H('S')).multiplyScalar(0.85).getHex(), 0, hy - 0.025, 0.215, 1, 0.8, 0.8));
-  body.push(boxC(0.06, 0.012, 0.01, 0x6b2a1e, 0, hy - 0.1, 0.2));
+  body.push(sph(0.02, skinD, 0, hy - 0.022, 0.155, 0.85, 1.2, 1));
+  body.push(sph(0.024, lip, 0, hy - 0.07, 0.137, 1.5, 0.48, 0.6));
   if (fem) {
-    body.push(P(new THREE.SphereGeometry(0.228, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), H('h'), 0, hy + 0.005, -0.012, -0.3));
-    body.push(sph(0.1, H('h'), 0, hy + 0.06, -0.21));
-    body.push(sph(0.022, 0xd01c1c, 0, hy + 0.095, 0.205));
-    if (look.covered) body.push(P(new THREE.SphereGeometry(0.24, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), H('D'), 0, hy + 0.01, -0.03, -0.45));
-  } else {
-    if (look.stache) body.push(sphR(0.055, H('m'), 0, hy - 0.07, 0.2, 0, 0, 0, 1.3, 0.35, 0.5));
-    body.push(P(new THREE.TorusGeometry(0.17, 0.065, 8, 18), H('H'), 0, hy + 0.13, 0, Math.PI / 2));
-    body.push(sph(0.19, H('H'), 0, hy + 0.16, 0, 1, 0.62, 1));
-    body.push(P(new THREE.TorusGeometry(0.175, 0.025, 6, 18), H('G'), 0, hy + 0.1, 0.005, Math.PI / 2 - 0.1));
-    body.push(sph(0.06, H('H'), 0, hy + 0.15, -0.21));
+    FAB = 6;
+    body.push(P(new THREE.SphereGeometry(0.166, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), hair, 0, hy + 0.008, -0.012, -0.32));
+    body.push(sph(0.082, hair, 0, hy - 0.005, -0.16));
+    FAB = 0;
+    for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; body.push(sph(0.017, 0xfaf6ee, Math.cos(a) * 0.078, hy - 0.005 + Math.sin(a) * 0.072, -0.185)); } // gajra
+    body.push(sph(0.011, 0xc81e1e, 0, hy + 0.076, 0.152)); // bindi
+    if (hexOf(look.cloth) % 3 !== 0) body.push(boxC(0.008, 0.06, 0.006, 0xc81e1e, 0, hy + 0.14, 0.11, -0.62)); // sindoor in the parting
+    body.push(sph(0.006, 0xf2c230, 0.032, hy - 0.026, 0.153)); // nose stud
+    for (const sx of [-1, 1]) { body.push(cone(0.014, 0.03, 6, 0xf2c230, sx * 0.158, hy - 0.04, 0.0, Math.PI)); body.push(sph(0.009, 0xf2c230, sx * 0.158, hy - 0.035, 0.0)); } // jhumka
+    if (look.covered) { FAB = CL; body.push(P(new THREE.SphereGeometry(0.184, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), lower, 0, hy, -0.035, -0.5)); FAB = 0; }
+  } else if (job === 'priest') { // a shaved head with a choti, and the three lines of the tripundra
+    body.push(coneC(0.022, 0.08, 6, hair, 0, hy + 0.17, -0.07, -0.6));
+    for (let k = 0; k < 3; k++) body.push(boxC(0.075, 0.006, 0.006, 0xf4ecd8, 0, hy + 0.06 + k * 0.014, 0.148 - k * 0.002, -0.3));
+    body.push(sph(0.01, 0xd33b2c, 0, hy + 0.075, 0.152));
+  } else { // pagdi: a dome wound round with bands in two colours, a knot at the front and a tail (or a plume)
+    FAB = 1;
+    body.push(sph(0.17, H('H'), 0, hy + 0.06, -0.01, 1.02, 0.66, 1.02));
+    for (let i = 0; i < 3; i++) body.push(P(new THREE.TorusGeometry(0.163 - i * 0.012, 0.03, 6, 22), i % 2 ? H('G') : H('H'), 0, hy + 0.05 + i * 0.04, -0.008 - i * 0.004, Math.PI / 2 + (i % 2 ? 0.12 : -0.1)));
+    body.push(sph(0.03, H('G'), 0.03, hy + 0.13, 0.15, 1, 1, 0.6));
+    if (army) { body.push(boxC(0.05, 0.12, 0.014, H('G'), 0, hy + 0.15, 0.155, -0.25)); FAB = 6; body.push(coneC(0.014, 0.1, 6, 0xfff0d0, 0.01, hy + 0.24, 0.13, -0.35)); }
+    else body.push(boxC(0.06, 0.13, 0.012, H('H'), 0, hy - 0.02, -0.165, 0.15));
+    FAB = 0;
+    if (look.stache) for (const sx of [-1, 1]) { body.push(sphR(0.03, hair, sx * 0.028, hy - 0.047, 0.152, 0, 0, sx * 0.35, 1.5, 0.45, 0.55)); body.push(sph(0.012, hair, sx * 0.064, hy - 0.038, 0.142)); }
   }
   if (job === 'archer') { body.push(cylC(0.055, 0.05, 0.38, 10, 0x7a4b26, 0.07, 0.22, -0.18, 0, 0, 0.35)); for (let i = 0; i < 3; i++) body.push(coneC(0.025, 0.08, 3, 0xd33b2c, 0.13 + i * 0.02, 0.44, -0.18)); }
-  if (job === 'priest' && !fem) body.push(boxC(0.07, 0.022, 0.01, 0xffffff, 0, hy + 0.12, 0.205));
-  const torso = meshOf(body);
+  FAB = 0;
+  const torso = meshOf(body, M);
   hips.add(torso);
-  // arms
+  // arms: a sleeve to the elbow (a short one for women), bare forearms, mitten hands with a thumb
   const arms = [];
   for (const sx of [-1, 1]) {
     const A = new THREE.Group(); A.position.set(sx * 0.19, 0.25, 0); hips.add(A);
-    A.add(meshOf([sph(0.06, H('C'), 0, 0, 0), ...limb(0.05, 0.15, H('C'), 0, 0, 0), cyl(0.044, 0.044, 0.1, 10, H('S'), 0, -0.25, 0), sph(0.056, H('S'), 0, -0.29, 0)]));
+    const ap = [];
+    const sleeve = job === 'brute' ? skin : cloth;
+    FAB = job === 'brute' ? 0 : fem ? 1 : CL;
+    ap.push(sph(0.056, sleeve, 0, 0, 0));
+    ap.push(cyl(0.05, 0.046, fem ? 0.07 : 0.14, 10, sleeve, 0, fem ? -0.07 : -0.14, 0));
+    FAB = 0;
+    if (fem) ap.push(cyl(0.043, 0.04, 0.08, 10, skin, 0, -0.15, 0));
+    ap.push(sph(0.04, skin, 0, -0.145, 0));
+    ap.push(cyl(0.039, 0.035, 0.13, 10, skin, 0, -0.275, 0));
+    ap.push(sph(0.042, skin, 0, -0.3, 0.008, 0.85, 1.15, 0.8));
+    ap.push(sph(0.017, skin, -sx * 0.028, -0.285, 0.028, 1, 1.3, 1));
+    if (fem) { // shankha-pola: a white shell bangle, a red one, and a thin gold one
+      ap.push(P(new THREE.TorusGeometry(0.041, 0.009, 4, 12), 0xf6f1e8, 0, -0.245, 0, Math.PI / 2));
+      ap.push(P(new THREE.TorusGeometry(0.039, 0.008, 4, 12), 0xc81e1e, 0, -0.26, 0, Math.PI / 2));
+      ap.push(P(new THREE.TorusGeometry(0.037, 0.005, 4, 12), 0xe8b830, 0, -0.272, 0, Math.PI / 2));
+    } else if (army) ap.push(cyl(0.044, 0.044, 0.05, 10, 0x8a5a22, 0, -0.27, 0));
+    else if (job === 'brute') ap.push(P(new THREE.TorusGeometry(0.05, 0.012, 5, 12), 0xd4a234, 0, -0.08, 0, Math.PI / 2));
+    A.add(meshOf(ap, M));
     arms.push(A);
   }
   const T = [];
@@ -1217,11 +1503,21 @@ Models.villager = function (look, job) {
   else if (tool === 'herbs') { T.push(cyl(0.09, 0.06, 0.06, 12, 0x8a5a2e, 0, hy2 - 0.08, 0.08)); T.push(sph(0.075, 0x5fae4a, 0, hy2 - 0.02, 0.08, 1, 0.45, 1)); T.push(coneC(0.025, 0.12, 5, 0x3f8a3a, 0.03, hy2 + 0.06, 0.08, 0, 0, -0.4)); } // a bowl of crushed herbs
   else if (tool === 'gada') { T.push(cyl(0.03, 0.035, 0.55, 10, 0x6b4223, 0, hy2 - 0.5, 0.06)); T.push(sph(0.15, 0xf2c230, 0, hy2 - 0.58, 0.06)); T.push(cyl(0.07, 0.07, 0.04, 12, 0xfff0a0, 0, hy2 - 0.45, 0.06)); T.push(cone(0.04, 0.09, 8, 0xfff0a0, 0, hy2 - 0.81, 0.06, Math.PI)); }
   else if (tool === 'spear') { T.push(cyl(0.02, 0.02, 1.5, 8, 0x8a5a2e, 0, hy2 - 0.55, 0.05)); T.push(cone(0.05, 0.22, 8, 0xe0e4ea, 0, hy2 + 0.95, 0.05)); T.push(sph(0.035, 0xd33b2c, 0, hy2 + 0.92, 0.05)); }
+  else if (tool === 'spade') { T.push(cyl(0.022, 0.022, 0.6, 8, 0x8a5a2e, 0, hy2 - 0.5, 0.04)); T.push(boxC(0.13, 0.16, 0.02, 0x8d939a, 0, hy2 - 0.58, 0.06)); }
+  else if (tool === 'mould') { for (const [w, d, x, z] of [[0.24, 0.02, 0, -0.06], [0.24, 0.02, 0, 0.06], [0.02, 0.14, -0.11, 0], [0.02, 0.14, 0.11, 0]]) T.push(boxC(w, 0.05, d, 0x9a6a3a, x, hy2 - 0.06, 0.06 + z)); } // wooden brick mould
+  else if (tool === 'tongs') { for (const sx of [-0.02, 0.02]) T.push(cylC(0.01, 0.01, 0.5, 5, 0x3a3a40, sx, hy2 - 0.25, 0.06, 0, 0, sx * 2)); T.push(sph(0.035, 0xff7a30, 0, hy2 - 0.5, 0.06)); } // tongs holding a glowing bloom
+  else if (tool === 'potli') { // the medicine kit: a cloth bundle with a tied neck, and a vial of green tonic
+    T.push(sph(0.1, 0xe8dcc0, 0, hy2 - 0.14, 0.05, 1, 0.9, 1)); T.push(cyl(0.035, 0.05, 0.05, 8, 0xc84030, 0, hy2 - 0.06, 0.05)); T.push(sph(0.03, 0xe8dcc0, 0, hy2 - 0.01, 0.05));
+  }
   if (T.length) arms[1].add(meshOf(T));
   let toolFlame = null;
   if (tool === 'thali') { toolFlame = glowMesh(new THREE.ConeGeometry(0.03, 0.1, 6), 0xffcc33); toolFlame.position.set(0, hy2 + 0.03, 0.08); arms[1].add(toolFlame); }
+  if (tool === 'potli') { toolFlame = glowMesh(new THREE.CylinderGeometry(0.028, 0.032, 0.11, 8), 0x7dff9a, 0.9); toolFlame.position.set(0, hy2 - 0.04, 0.06); arms[0].add(toolFlame); }
+  if (job === 'medic') torso.add(meshOf([P(new THREE.TorusGeometry(0.17, 0.022, 6, 20), 0x2e7d32, 0, 0.13, 0, Math.PI / 2 - 0.15, 0, 0.7)], M)); // a green healer's sash
   if (job === 'brute') { // pehelwan: broad shoulders and a rudraksha mala
-    torso.add(meshOf([sph(0.11, H('S'), -0.15, 0.27, 0, 1, 0.8, 0.9), sph(0.11, H('S'), 0.15, 0.27, 0, 1, 0.8, 0.9), P(new THREE.TorusGeometry(0.12, 0.018, 6, 16), 0x6b2a1e, 0, 0.3, 0.05, Math.PI / 2 - 0.5)]));
+    const mala = [];
+    for (let i = 0; i < 14; i++) { const a = (i / 13) * Math.PI - Math.PI; mala.push(sph(0.014, 0x6b2a1e, Math.cos(a) * 0.1, 0.28 + Math.sin(a) * 0.09, 0.12 + Math.abs(Math.sin(a)) * 0.04)); }
+    torso.add(meshOf([sph(0.1, H('S'), -0.15, 0.27, 0, 1, 0.8, 0.9), sph(0.1, H('S'), 0.15, 0.27, 0, 1, 0.8, 0.9), ...mala], M));
   }
   if (job === 'spear') arms[0].add(meshOf([cylC(0.13, 0.13, 0.03, 16, 0x3e5f8a, -0.05, -0.24, 0.02, 0, 0, Math.PI / 2), sph(0.035, 0xc9962e, -0.07, -0.24, 0.02)]));
   if (job === 'warrior') arms[0].add(meshOf([cylC(0.17, 0.17, 0.035, 18, 0xd4a234, -0.05, -0.24, 0.02, 0, 0, Math.PI / 2), sph(0.045, 0x8a5a22, -0.075, -0.24, 0.02), P(new THREE.TorusGeometry(0.15, 0.015, 5, 18), 0x8a5a22, -0.07, -0.24, 0.02, 0, Math.PI / 2, 0)]));
@@ -1253,28 +1549,41 @@ Models.enemy = function (type, variant) {
   // both glowing eyes in one mesh: half the draw calls for every demon on screen
   const eyePair = (c, r, x, y, z) => glowMesh(merge([P(new THREE.SphereGeometry(r, 8, 6), c, -x, y, z), P(new THREE.SphereGeometry(r, 8, 6), c, x, y, z)]), c);
   const eye = (c, r) => glowMesh(new THREE.SphereGeometry(r || 0.05, 8, 6), c);
-  if (type === 'bhoot') {
+  const M = MAT.char || MAT.std;
+  if (type === 'bhoot') { // a sheet ghost: wispy cloth that glows at its edges, a tattered hem, hollow eyes with a cold light
+    FAB = 5;
     const prof = [[0.42, 0.05], [0.44, 0.1], [0.4, 0.3], [0.37, 0.55], [0.36, 0.85], [0.3, 1.05], [0.18, 1.18], [0.001, 1.22]].map(([x, y]) => new THREE.Vector2(x, y));
-    const p = [P(new THREE.LatheGeometry(prof, 18), 0xeef3fb, 0, 0, 0)];
-    for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2; p.push(sph(0.1, 0xe2e9f6, Math.cos(a) * 0.36, 0.07, Math.sin(a) * 0.36, 1, 1.3, 1)); }
+    const p = [P(new THREE.LatheGeometry(prof, 22), 0xeef3fb, 0, 0, 0)];
+    for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; p.push(coneC(0.09, 0.18 + (i % 3) * 0.06, 6, 0xe2e9f6, Math.cos(a) * 0.37, 0.03, Math.sin(a) * 0.37, Math.PI)); }
     p.push(sph(0.09, 0xeef3fb, -0.38, 0.7, 0.05, 1.6, 0.8, 0.8)); p.push(sph(0.09, 0xeef3fb, 0.38, 0.7, 0.05, 1.6, 0.8, 0.8));
-    p.push(sph(0.07, 0x10131f, -0.12, 0.92, 0.28, 1, 1.5, 0.5)); p.push(sph(0.07, 0x10131f, 0.12, 0.92, 0.28, 1, 1.5, 0.5));
-    p.push(sph(0.06, 0x2a2f48, 0, 0.74, 0.32, 1, 1.3, 0.5));
+    for (const sx of [-1, 1]) p.push(coneC(0.05, 0.14, 5, 0xe2e9f6, sx * 0.5, 0.64, 0.05, 0, 0, sx * 2.4)); // trailing sleeve tips
+    FAB = 0;
+    p.push(sph(0.075, 0x10131f, -0.12, 0.92, 0.28, 1, 1.5, 0.5)); p.push(sph(0.075, 0x10131f, 0.12, 0.92, 0.28, 1, 1.5, 0.5));
+    p.push(sph(0.065, 0x1a1f33, 0, 0.72, 0.32, 0.9, 1.4, 0.5));
     const m = meshOf(p, MAT.bhoot, true, false);
     g.add(m);
+    m.add(eyePair(0xbfe4ff, 0.022, 0.12, 0.92, 0.31));
     ud.body = m;
-  } else if (type === 'vetala') {
+  } else if (type === 'vetala') { // bat-winged spirit: furred body, big ears, fangs, veined leather wings
+    FAB = 6;
     const p = [sph(0.24, 0x6a3a8e, 0, 0, 0, 1, 1.1, 1), sph(0.17, 0x6a3a8e, 0, 0.3, 0.05),
-      coneC(0.06, 0.2, 12, 0x6a3a8e, -0.1, 0.47, 0.03, 0, 0, 0.3), coneC(0.06, 0.2, 12, 0x6a3a8e, 0.1, 0.47, 0.03, 0, 0, -0.3),
-      coneC(0.02, 0.06, 6, 0xffffff, -0.04, 0.2, 0.2, Math.PI), coneC(0.02, 0.06, 6, 0xffffff, 0.04, 0.2, 0.2, Math.PI),
-      sph(0.04, 0xd8cbb0, -0.07, -0.27, 0), sph(0.04, 0xd8cbb0, 0.07, -0.27, 0)];
-    g.add(meshOf(p));
+      coneC(0.07, 0.24, 12, 0x6a3a8e, -0.11, 0.5, 0.0, 0, 0, 0.35), coneC(0.07, 0.24, 12, 0x6a3a8e, 0.11, 0.5, 0.0, 0, 0, -0.35)];
+    FAB = 0;
+    p.push(coneC(0.04, 0.12, 8, 0xd09ab8, -0.11, 0.49, 0.03, 0, 0, 0.35), coneC(0.04, 0.12, 8, 0xd09ab8, 0.11, 0.49, 0.03, 0, 0, -0.35)); // inner ears
+    p.push(sph(0.06, 0x8a5aa8, 0, 0.26, 0.18, 1.3, 0.8, 0.7)); // snout
+    p.push(coneC(0.02, 0.07, 6, 0xffffff, -0.04, 0.2, 0.2, Math.PI), coneC(0.02, 0.07, 6, 0xffffff, 0.04, 0.2, 0.2, Math.PI));
+    for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) p.push(coneC(0.012, 0.06, 4, 0xd8cbb0, sx * 0.07 + (k - 1) * 0.02, -0.3, 0.03, Math.PI)); // talons
+    g.add(meshOf(p, M));
     for (const sx of [-1, 1]) {
       const wg = new THREE.Group(); wg.position.set(sx * 0.18, 0.05, 0); g.add(wg);
       const wp = [];
+      FAB = 4;
       for (let k = 0; k < 3; k++) wp.push(sphR(0.24, 0x3a1d52, sx * (0.22 + k * 0.18), 0.05 - k * 0.07, 0, 0, 0, sx * (0.3 + k * 0.25), 1, 0.45, 0.06));
+      FAB = 0;
       wp.push(cylC(0.02, 0.02, 0.7, 6, 0x2a1238, sx * 0.33, 0.12, 0, 0, 0, sx * 1.25));
-      const wm = meshOf(wp);
+      for (let k = 0; k < 3; k++) wp.push(cylC(0.01, 0.006, 0.36, 5, 0x2a1238, sx * (0.3 + k * 0.17), -0.02 - k * 0.06, 0.005, 0, 0, sx * (0.25 + k * 0.3))); // finger bones
+      wp.push(coneC(0.02, 0.07, 5, 0xd8cbb0, sx * 0.62, 0.36, 0, 0, 0, -sx * 0.6)); // the claw at the wrist
+      const wm = meshOf(wp, M);
       wg.add(wm);
       ud.wings.push(wg);
     }
@@ -1287,15 +1596,19 @@ Models.enemy = function (type, variant) {
     for (let i = 0; i < 3; i++) { const t = glowMesh(new THREE.SphereGeometry(0.065 - i * 0.015, 8, 6), 0xd4ff7a, 0.7 - i * 0.2); t.position.set(0, 0.03 * i, -0.2 - i * 0.15); body.add(t); }
     g.add(body); ud.body = body; ud.halo = halo;
   } else if (type === 'shakchunni') { // bride ghost: white saree with a red border, shell bangles, hair over the face
-    const V2 = (a) => a.map(([x, y]) => new THREE.Vector2(x, y));
-    const p = [P(new THREE.LatheGeometry(V2([[0.4, 0.02], [0.43, 0.08], [0.37, 0.35], [0.3, 0.62], [0.25, 0.86], [0.22, 1.0], [0.001, 1.03]]), 18), 0xf4f1ea, 0, 0, 0)];
+    FAB = 5;
+    const p = [P(new THREE.LatheGeometry(V2([[0.4, 0.02], [0.43, 0.08], [0.37, 0.35], [0.3, 0.62], [0.25, 0.86], [0.22, 1.0], [0.001, 1.03]]), 20), 0xf4f1ea, 0, 0, 0)];
+    for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2 + 0.2; p.push(coneC(0.07, 0.14 + (i % 2) * 0.05, 5, 0xeeeae0, Math.cos(a) * 0.4, 0.02, Math.sin(a) * 0.4, Math.PI)); } // a torn hem
+    FAB = 0;
     p.push(P(new THREE.TorusGeometry(0.42, 0.035, 6, 22), 0xd22b2b, 0, 0.07, 0, Math.PI / 2)); // laal paar
     p.push(P(new THREE.TorusGeometry(0.31, 0.03, 6, 20), 0xd22b2b, 0, 0.5, 0, Math.PI / 2 - 0.35)); // border on the pallu
     p.push(sph(0.17, 0xf2e8e0, 0, 1.15, 0.01));
     const m = meshOf(p, MAT.bhoot, true, false);
     g.add(m); ud.body = m;
+    FAB = 6;
     m.add(meshOf([sph(0.19, 0x15111a, 0, 1.18, -0.04, 1.06, 1.05, 1.04), boxC(0.32, 0.6, 0.07, 0x15111a, 0, 0.9, -0.15),
-      boxC(0.07, 0.42, 0.03, 0x15111a, -0.07, 1.0, 0.17), boxC(0.07, 0.46, 0.03, 0x15111a, 0.05, 0.98, 0.175), boxC(0.05, 0.36, 0.03, 0x15111a, 0.13, 1.02, 0.15)], null, true));
+      boxC(0.07, 0.42, 0.03, 0x15111a, -0.07, 1.0, 0.17), boxC(0.07, 0.46, 0.03, 0x15111a, 0.05, 0.98, 0.175), boxC(0.05, 0.36, 0.03, 0x15111a, 0.13, 1.02, 0.15)], M, true));
+    FAB = 0;
     m.add(eyePair(0xff4a4a, 0.028, 0.09, 1.14, 0.17));
     const sindoor = eye(0xff2a2a, 0.022); sindoor.position.set(0, 1.3, 0.12); m.add(sindoor);
     for (const sx of [-1, 1]) {
@@ -1309,24 +1622,39 @@ Models.enemy = function (type, variant) {
     const hips = new THREE.Group(); hips.position.y = head ? 0.42 : 0.5; g.add(hips);
     for (const sx of [-1, 1]) {
       const L = new THREE.Group(); L.position.set(sx * (head ? 0.13 : 0.17), 0, 0); hips.add(L);
-      L.add(meshOf([...limb(head ? 0.07 : 0.11, head ? 0.24 : 0.3, skinD, 0, 0, 0), sph(head ? 0.1 : 0.13, head ? 0x4c6656 : 0x2e2430, 0, head ? -0.36 : -0.45, 0.06, 1.2, 0.45, 1.5)]));
+      FAB = 4;
+      const lp = [...limb(head ? 0.07 : 0.11, head ? 0.24 : 0.3, skinD, 0, 0, 0)];
+      FAB = 0;
+      lp.push(sph(head ? 0.1 : 0.13, head ? 0x4c6656 : 0x2e2430, 0, head ? -0.36 : -0.45, 0.06, 1.2, 0.45, 1.5));
+      if (head) for (let k = -1; k <= 1; k++) lp.push(sph(0.035, 0x4c6656, k * 0.045, -0.37, 0.17, 1, 0.5, 1.2)); // webbed toes
+      L.add(meshOf(lp, M));
       ud.legs.push(L);
     }
     const p = [];
-    if (head) { // Mechho Bhoot: pot-bellied pond ghost in a checked lungi
+    if (head) { // Mechho Bhoot: pot-bellied pond ghost in a checked lungi, slimy and dripping
+      FAB = 3;
       p.push(cyl(0.27, 0.3, 0.2, 14, 0x3e6f9e, 0, -0.08, 0));
-      for (let i = 0; i < 4; i++) p.push(P(new THREE.TorusGeometry(0.29, 0.012, 4, 20), 0xd8e4f0, 0, -0.04 + i * 0.045, 0, Math.PI / 2));
+      FAB = 0;
+      for (let i = 0; i < 2; i++) p.push(P(new THREE.TorusGeometry(0.29, 0.012, 4, 20), 0xd8e4f0, 0, -0.04 + i * 0.13, 0, Math.PI / 2));
+      FAB = 4;
       p.push(sph(0.33, skin, 0, 0.24, 0.05, 1, 0.95, 1));
       p.push(sph(0.25, skin, 0, 0.42, -0.1));
       const hy = 0.64;
       p.push(sph(0.21, skin, 0, hy, 0.13, 1.1, 0.9, 1));
+      FAB = 0;
+      for (let i = 0; i < 5; i++) p.push(sph(0.025, 0x9fd0b8, -0.2 + i * 0.1, 0.05 + (i % 2) * 0.1, 0.32 - Math.abs(i - 2) * 0.04, 0.8, 1.6, 0.8)); // pond-weed drips
+      for (let i = 0; i < 3; i++) p.push(P(new THREE.TorusGeometry(0.05, 0.01, 4, 10, Math.PI), 0x6a8a74, 0, 0.3 + i * 0.07, 0.36 - i * 0.01, 0, 0, Math.PI)); // fish-scale ridges on the belly
       p.push(boxC(0.2, 0.035, 0.02, 0x2a1a1a, 0, hy - 0.09, 0.32));
       for (const sx of [-1, 1]) { p.push(coneC(0.02, 0.05, 5, 0xf2ead0, sx * 0.05, hy - 0.11, 0.32, Math.PI)); p.push(sph(0.07, 0xe8f0e0, sx * 0.085, hy + 0.04, 0.27, 1, 1, 0.6)); }
       for (let i = 0; i < 5; i++) p.push(coneC(0.03, 0.16, 5, 0x2f4a3a, -0.1 + i * 0.05, hy + 0.2, 0.08 - Math.abs(i - 2) * 0.02, -0.5, 0, (i - 2) * 0.25));
     } else { // Skondhokata: a headless giant in a white dhoti, a blue ghost-flame where his head should be
+      FAB = 1;
       p.push(cyl(0.32, 0.36, 0.26, 16, 0xe9e2d0, 0, -0.14, 0));
+      FAB = 4;
       p.push(sph(0.4, skin, 0, 0.36, 0, 1.1, 1.0, 0.85));
       for (const sx of [-1, 1]) p.push(sph(0.16, skin, sx * 0.36, 0.6, 0));
+      for (const sx of [-1, 1]) p.push(sph(0.13, skin, sx * 0.14, 0.5, 0.26, 1.1, 0.8, 0.5)); // a heavy chest
+      FAB = 0;
       p.push(cyl(0.12, 0.14, 0.1, 12, 0x7a2a2a, 0, 0.68, 0));
       p.push(cyl(0.1, 0.1, 0.02, 12, 0x3a0c10, 0, 0.78, 0));
       p.push(P(new THREE.TorusGeometry(0.36, 0.014, 5, 24), 0xf4ecd8, 0, 0.36, 0.02, Math.PI / 2 - 0.2, 0.5, 0));
@@ -1335,31 +1663,43 @@ Models.enemy = function (type, variant) {
       const c2 = glowMesh(new THREE.ConeGeometry(0.05, 0.2, 6), 0xdcecff); c2.position.y = 0.1;
       fl.add(c1, c2); hips.add(fl); ud.neckFlame = fl;
     }
-    hips.add(meshOf(p, null, false, false, !head));
+    hips.add(meshOf(p, M, false, false, !head));
     if (head) hips.add(eyePair(0xb8ff6a, 0.035, 0.085, 0.68, 0.3));
     for (const sx of [-1, 1]) {
       const A = new THREE.Group(); A.position.set(sx * (head ? 0.31 : 0.46), head ? 0.36 : 0.55, head ? 0.06 : 0); hips.add(A);
-      A.add(meshOf([sph(head ? 0.07 : 0.12, skin, 0, 0, 0), ...limb(head ? 0.06 : 0.1, head ? 0.26 : 0.34, skin, 0, 0, 0), sph(head ? 0.07 : 0.12, skinD, 0, head ? -0.36 : -0.46, 0)]));
+      FAB = 4;
+      const ap = [sph(head ? 0.07 : 0.12, skin, 0, 0, 0), ...limb(head ? 0.06 : 0.1, head ? 0.26 : 0.34, skin, 0, 0, 0), sph(head ? 0.07 : 0.12, skinD, 0, head ? -0.36 : -0.46, 0)];
+      FAB = 0;
+      for (let k = -1; k <= 1; k++) ap.push(coneC(0.014, 0.05, 4, head ? 0x2f4a3a : 0xe8dcc0, k * 0.03, head ? -0.42 : -0.56, 0.03, Math.PI)); // claws
+      A.add(meshOf(ap, M));
       ud.arms.push(A);
     }
     if (head) { // a stolen fish in his fist
-      ud.arms[1].add(meshOf([sph(0.07, 0xd9a14a, 0, -0.44, 0.14, 0.7, 0.85, 2.2), coneC(0.08, 0.12, 4, 0xc28a3a, 0, -0.44, -0.03, -Math.PI / 2, 0, 0, 1, 1, 0.4), sph(0.015, 0x111111, 0.04, -0.42, 0.27)]));
+      ud.arms[1].add(meshOf([sph(0.07, 0xd9a14a, 0, -0.44, 0.14, 0.7, 0.85, 2.2), coneC(0.08, 0.12, 4, 0xc28a3a, 0, -0.44, -0.03, -Math.PI / 2, 0, 0, 1, 1, 0.4), sph(0.015, 0x111111, 0.04, -0.42, 0.27)], M));
     } else { // he carries his own head under his arm
-      ud.arms[0].add(meshOf([sph(0.17, skin, 0, -0.5, 0.14), sph(0.13, 0x1b1020, 0, -0.42, 0.08, 1.2, 0.6, 1.1), boxC(0.1, 0.02, 0.02, 0x2a0a0a, 0, -0.58, 0.3)]));
+      FAB = 4;
+      const hp = [sph(0.17, skin, 0, -0.5, 0.14)];
+      FAB = 6;
+      hp.push(sph(0.13, 0x1b1020, 0, -0.42, 0.08, 1.2, 0.6, 1.1));
+      FAB = 0;
+      hp.push(boxC(0.1, 0.02, 0.02, 0x2a0a0a, 0, -0.58, 0.3));
+      ud.arms[0].add(meshOf(hp, M));
       ud.arms[0].add(eyePair(0xff6a3a, 0.03, 0.06, -0.49, 0.3));
     }
     ud.hips = hips; ud.hipY = hips.position.y;
   } else if (type === 'nishi') { // night caller: a hooded shadow reaching out with long pale arms
-    const V2 = (a) => a.map(([x, y]) => new THREE.Vector2(x, y));
-    const p = [P(new THREE.LatheGeometry(V2([[0.34, 0.0], [0.4, 0.06], [0.33, 0.45], [0.27, 0.9], [0.24, 1.2], [0.2, 1.42], [0.12, 1.56], [0.001, 1.6]]), 16), 0x2a2542, 0, 0, 0)];
+    FAB = 5;
+    const p = [P(new THREE.LatheGeometry(V2([[0.34, 0.0], [0.4, 0.06], [0.33, 0.45], [0.27, 0.9], [0.24, 1.2], [0.2, 1.42], [0.12, 1.56], [0.001, 1.6]]), 20), 0x2a2542, 0, 0, 0)];
+    for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; p.push(coneC(0.07, 0.16 + (i % 2) * 0.06, 5, 0x241f3a, Math.cos(a) * 0.36, 0.02, Math.sin(a) * 0.36, Math.PI)); } // a shroud that frays into the dark
+    FAB = 0;
     p.push(sph(0.16, 0x0b0a14, 0, 1.36, 0.1, 1, 1.05, 0.7));
     p.push(P(new THREE.TorusGeometry(0.17, 0.035, 6, 16), 0x443d66, 0, 1.36, 0.13));
-    const m = meshOf(p, null, true, false);
+    const m = meshOf(p, M, true, false);
     g.add(m); ud.body = m;
     m.add(eyePair(0xcfe0ff, 0.032, 0.055, 1.38, 0.21));
     for (const sx of [-1, 1]) {
       const A = new THREE.Group(); A.position.set(sx * 0.24, 1.1, 0.06); m.add(A);
-      A.add(meshOf([...limb(0.032, 0.5, 0xb9bfd6, 0, 0, 0), ...[-1, 0, 1].map((k) => cylC(0.008, 0.008, 0.12, 4, 0xb9bfd6, k * 0.02, -0.6, 0.02))], null, true));
+      A.add(meshOf([...limb(0.032, 0.5, 0xb9bfd6, 0, 0, 0), ...[-1, 0, 1].map((k) => cylC(0.008, 0.008, 0.12, 4, 0xb9bfd6, k * 0.02, -0.6, 0.02))], M, true));
       ud.arms.push(A);
     }
     ud.armBase = -1.15; // arms held out, beckoning
@@ -1371,55 +1711,101 @@ Models.enemy = function (type, variant) {
     const skin = big ? 0x4b3666 : type === 'danav' ? 0x7a2a3c : skins[variant % skins.length];
     const sD = new THREE.Color(skin).multiplyScalar(0.78).getHex();
     const sL = new THREE.Color(skin).lerp(new THREE.Color(0xffffff), 0.25).getHex();
+    const giant = type === 'danav';
+    const metal = 0x4a4e58, bone = 0xe8dcc0;
     const hips = new THREE.Group(); hips.position.y = 0.5; g.add(hips);
-    for (const sx of [-1, 1]) {
+    for (const sx of [-1, 1]) { // thick legs, shaggy shins, clawed feet
       const L = new THREE.Group(); L.position.set(sx * 0.15, 0, 0); hips.add(L);
-      L.add(meshOf([...limb(0.1, 0.3, sD, 0, 0, 0), sph(0.12, 0x3a2420, 0, -0.45, 0.05, 1, 0.55, 1.4)]));
+      FAB = 4;
+      const lp = [...limb(0.1, 0.3, sD, 0, 0, 0)];
+      FAB = 6;
+      lp.push(cyl(0.118, 0.11, 0.12, 12, darkHex(skin, 0.55), 0, -0.36, 0));
+      FAB = 0;
+      lp.push(sph(0.12, 0x3a2420, 0, -0.45, 0.05, 1, 0.55, 1.4));
+      for (let k = -1; k <= 1; k++) lp.push(coneC(0.022, 0.07, 6, bone, k * 0.05, -0.45, 0.2, Math.PI / 2));
+      if (giant) { FAB = 8; lp.push(cyl(0.12, 0.13, 0.16, 12, metal, 0, -0.24, 0.0)); FAB = 0; } // iron greaves
+      L.add(meshOf(lp, M));
       ud.legs.push(L);
     }
     const p = [];
-    const cloth = big ? 0xa82222 : type === 'danav' ? 0x3d3d48 : 0xf09a32;
-    p.push(cyl(0.3, 0.33, 0.2, 16, cloth, 0, -0.1, 0));
-    if (!big && type !== 'danav') for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; p.push(boxC(0.04, 0.18, 0.04, 0x1a1010, Math.cos(a) * 0.32, 0, Math.sin(a) * 0.32, 0, -a, 0)); }
+    // loincloth: tiger skin for the rakshasa, studded iron for the Danav, red silk for the Demon King, with a ragged hem
+    const cloth = big ? 0xa82222 : giant ? 0x3d3d48 : 0xf09a32;
+    FAB = big ? 2 : giant ? 8 : 7;
+    p.push(cyl(0.3, 0.34, 0.22, 16, cloth, 0, -0.12, 0));
+    for (let i = 0; i < 9; i++) { const a = (i / 9) * Math.PI * 2; p.push(coneC(0.055, 0.12, 4, cloth, Math.cos(a) * 0.32, -0.15, Math.sin(a) * 0.32, Math.PI)); }
+    FAB = 4;
     p.push(sph(0.36, skin, 0, 0.32, 0, 1, 1.0, 0.85));
     p.push(sph(0.24, sL, 0, 0.28, 0.17, 1, 1.05, 0.45));
+    for (const sx of [-1, 1]) p.push(sph(0.14, skin, sx * 0.14, 0.5, 0.16, 1.1, 0.75, 0.6)); // heavy chest
+    FAB = 0;
     if (big) { p.push(P(new THREE.TorusGeometry(0.3, 0.05, 8, 20), 0xf2c230, 0, 0.55, 0.02, Math.PI / 2 - 0.3)); p.push(cyl(0.34, 0.36, 0.08, 16, 0xf2c230, 0, -0.02, 0)); }
-    else for (let i = 0; i < 7; i++) { const a = -0.9 + (i / 6) * 1.8; p.push(sph(0.04, 0xf2ead0, Math.sin(a) * 0.25, 0.55 - Math.cos(a) * 0.05, Math.cos(a) * 0.2)); }
+    else for (let i = 0; i < 7; i++) { // a mala of little skulls
+      const a = -0.9 + (i / 6) * 1.8, x = Math.sin(a) * 0.26, y = 0.57 - Math.cos(a) * 0.06, z = Math.cos(a) * 0.22 + 0.04;
+      p.push(sph(0.045, 0xeee6d2, x, y, z, 1, 1.1, 0.9));
+      for (const ex of [-1, 1]) p.push(sph(0.012, 0x1b1020, x + ex * 0.016 * Math.cos(a), y + 0.006, z + 0.038));
+    }
+    if (giant) { // an iron breastplate with gold rivets, and spiked pauldrons
+      FAB = 8;
+      p.push(sph(0.31, metal, 0, 0.44, 0.1, 1.1, 0.8, 0.55));
+      for (const sx of [-1, 1]) p.push(sph(0.17, metal, sx * 0.37, 0.6, 0, 1.2, 0.7, 1.1));
+      FAB = 0;
+      for (let i = 0; i < 6; i++) p.push(sph(0.02, 0xd4a234, -0.2 + (i % 3) * 0.2, 0.36 + Math.floor(i / 3) * 0.16, 0.27));
+      for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) p.push(coneC(0.03, 0.12, 6, 0x8a8e98, sx * (0.32 + k * 0.06), 0.72, -0.06 + k * 0.06, 0, 0, -sx * 0.5));
+    }
+    if (big) { FAB = 2; p.push(boxC(0.66, 0.95, 0.04, 0x8a1a1a, 0, 0.3, -0.33, 0.12)); FAB = 0; p.push(boxC(0.68, 0.06, 0.05, 0xf2c230, 0, 0.76, -0.31, 0.12)); } // the royal cape
     const hy = 0.82;
+    FAB = 4;
     p.push(sph(0.25, skin, 0, hy, 0.02));
     p.push(sph(0.09, sL, 0, hy - 0.08, 0.22, 1.3, 0.8, 0.7));
+    p.push(boxC(0.3, 0.06, 0.08, sD, 0, hy + 0.1, 0.19, 0.35)); // a heavy brow
+    FAB = 0;
+    p.push(boxC(0.17, 0.03, 0.02, 0x1b1020, 0, hy - 0.12, 0.235)); // the grim mouth
     for (const sx of [-1, 1]) {
       p.push(coneC(0.025, 0.08, 8, 0xffffff, sx * 0.06, hy - 0.16, 0.22, Math.PI));
+      p.push(coneC(0.03, 0.12, 8, bone, sx * 0.1, hy - 0.06, 0.2, 0, 0, -sx * 0.3)); // tusks
       p.push(boxC(0.12, 0.03, 0.03, 0x1b1020, sx * 0.08, hy + 0.12, 0.22, 0, 0, sx * -0.4));
-      p.push(sph(0.06, 0xffffff, sx * 0.085, hy + 0.04, 0.2, 1, 1, 0.5));
+      p.push(sph(0.06, 0x3a0a0a, sx * 0.085, hy + 0.04, 0.2, 1, 1, 0.5));
     }
-    p.push(sph(0.2, 0x1b1020, 0, hy + 0.16, -0.06, 1.2, 0.6, 1.1));
     if (big) {
       p.push(cyl(0.2, 0.22, 0.14, 16, 0xf2c230, 0, hy + 0.2, 0));
       for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; p.push(cone(0.05, 0.16, 8, 0xf2c230, Math.cos(a) * 0.18, hy + 0.34, Math.sin(a) * 0.18)); }
       p.push(sph(0.05, 0xff3a3a, 0, hy + 0.27, 0.2));
       for (const sx of [-1, 1]) p.push(P(new THREE.TorusGeometry(0.3, 0.06, 8, 14, Math.PI * 0.62), 0xece0c4, sx * 0.25, hy + 0.08, 0, 0, sx < 0 ? 0 : Math.PI, Math.PI * 0.05));
     } else {
-      for (const sx of [-1, 1]) { p.push(coneC(0.06, 0.28, 10, 0xf2ead0, sx * 0.17, hy + 0.27, 0, 0, 0, -sx * 0.4)); }
+      FAB = 6; // a wild mane
+      for (let i = 0; i < 7; i++) { const a = (i / 6 - 0.5) * 2.4; p.push(coneC(0.07, 0.3, 6, 0x1b1020, Math.sin(a) * 0.15, hy + 0.12 + Math.cos(a) * 0.05, -0.15, -1.0, 0, a * 0.55)); }
+      p.push(sph(0.2, 0x1b1020, 0, hy + 0.14, -0.06, 1.2, 0.6, 1.1));
+      FAB = giant ? 8 : 0;
+      if (giant) p.push(sph(0.265, metal, 0, hy + 0.07, -0.01, 1, 0.72, 1)); // horned iron helmet
+      FAB = 0;
+      for (const sx of [-1, 1]) {
+        p.push(coneC(giant ? 0.075 : 0.06, giant ? 0.36 : 0.28, 10, bone, sx * 0.17, hy + 0.27, 0, 0, 0, -sx * 0.4));
+        for (let k = 0; k < 2; k++) p.push(P(new THREE.TorusGeometry(0.05 - k * 0.012, 0.01, 4, 12), 0x9a8a70, sx * (0.13 + k * 0.035), hy + 0.18 + k * 0.08, 0, Math.PI / 2, 0, -sx * 0.4)); // ridges on the horns
+      }
     }
-    hips.add(meshOf(p, null, false, false, big));
+    hips.add(meshOf(p, M, false, false, big));
     hips.add(eyePair(0xff3d2e, 0.035, 0.085, hy + 0.04, 0.23));
     for (const sx of [-1, 1]) {
       const A = new THREE.Group(); A.position.set(sx * 0.38, 0.45, 0); hips.add(A);
+      FAB = 4;
       const ap = [sph(0.11, skin, 0, 0, 0), ...limb(0.085, 0.32, skin, 0, 0, 0), sph(0.1, sD, 0, -0.42, 0)];
-      if (big) ap.push(P(new THREE.TorusGeometry(0.09, 0.025, 6, 14), 0xf2c230, 0, -0.18, 0, Math.PI / 2));
-      A.add(meshOf(ap));
+      FAB = 0;
+      for (let k = -1; k <= 1; k++) ap.push(coneC(0.018, 0.07, 5, bone, k * 0.04, -0.5, 0.05, Math.PI)); // claws
+      ap.push(P(new THREE.TorusGeometry(0.09, 0.022, 6, 14), big ? 0xf2c230 : giant ? metal : 0xb8860b, 0, -0.16, 0, Math.PI / 2)); // arm ring
+      A.add(meshOf(ap, M));
       ud.arms.push(A);
     }
+    FAB = 0;
     const W = [];
     if (big) { W.push(cyl(0.04, 0.04, 0.85, 10, 0x6b4223, 0, -1.25, 0.1)); W.push(sph(0.22, 0xf2c230, 0, -1.5, 0.1)); for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; W.push(coneC(0.04, 0.12, 8, 0xfff0a0, Math.cos(a) * 0.22, -1.5, 0.1 + Math.sin(a) * 0.22, Math.PI / 2, 0, a + Math.PI / 2)); } }
     else {
       W.push(cylC(0.05, 0.1, 0.75, 12, 0x7a4a28, 0, -0.78, 0.12));
       for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; W.push(coneC(0.03, 0.09, 8, 0xf2ead0, Math.cos(a) * 0.1, -0.98, 0.12 + Math.sin(a) * 0.1, 0, 0, Math.PI / 2 + a)); }
     }
-    ud.arms[1].add(meshOf(W));
+    ud.arms[1].add(meshOf(W, M));
     ud.hips = hips;
   }
+  FAB = 0;
   g.userData = Object.assign(g.userData, ud);
   return g;
 };

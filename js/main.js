@@ -316,6 +316,7 @@ const App = {
       } else if (this.mode === 'play' && S) {
         if (!UI.paused && !S.over) {
           let total = dt * UI.speed;
+          if (S.hitStop > 0) { S.hitStop -= dt; total *= 0.15; } // a heartbeat of slow motion on the biggest blows
           while (total > 1e-6) { const st = Math.min(1 / 30, total); Game.update(st); total -= st; }
         }
         const K = this.keys;
@@ -343,6 +344,8 @@ const App = {
         Sound.amb.day = ph === 'day' ? (S.weather === 'rain' ? 0.2 : 1) : 0;
         Sound.amb.night = clamp(dark * 1.2 - 0.2, 0, 1) * (foes ? 0.5 : 1);
         Sound.amb.rain = S.weather === 'rain' ? 1 : 0;
+        Sound.amb.dawn = ph === 'dawn' || (ph === 'day' && S.t < 12) ? 1 : 0; // the rooster's moment
+        Sound.amb.foes = foes > 0 ? 1 : 0;
         R3.render(dt);
       }
     } catch (err) {

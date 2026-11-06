@@ -28,6 +28,11 @@ const SFX = {
   drop_stone: { f: ['drop_stone1.ogg', 'drop_stone2.ogg'], vol: 0.55, gap: 0.1 },
   drop_food: { f: ['drop_food1.ogg', 'drop_food2.ogg'], vol: 0.5, pitch: [0.7, 0.85], gap: 0.1 },
   drop_gold: { f: ['drop_gold.ogg'], vol: 0.45, gap: 0.1 },
+  drop_clay: { f: ['drop_food1.ogg', 'drop_food2.ogg'], vol: 0.45, pitch: [0.55, 0.65], gap: 0.1 }, // a wet slap
+  drop_ore: { f: ['drop_stone1.ogg', 'drop_stone2.ogg'], vol: 0.55, pitch: [0.8, 0.9], gap: 0.1 },
+  drop_brick: { f: ['drop_stone1.ogg', 'drop_stone2.ogg'], vol: 0.5, pitch: [1.15, 1.3], gap: 0.1 },
+  drop_charcoal: { f: ['drop_wood1.ogg', 'drop_wood2.ogg'], vol: 0.35, pitch: [1.3, 1.5], gap: 0.1 },
+  drop_iron: { f: ['anvil.ogg'], vol: 0.25, pitch: [1.5, 1.7], gap: 0.15 },
   heal: { f: ['aleya_twinkle2.ogg', 'aleya_twinkle1.ogg'], vol: 0.16, pitch: [1.3, 1.55], verb: true, gap: 1.2 },
   // combat
   sword: { f: ['blade1.ogg', 'blade2.ogg', 'blade3.ogg'], vol: 0.42, gap: 0.05 },
@@ -83,7 +88,7 @@ const ENEMY_SFX = {
 };
 
 const Sound = {
-  buffers: {}, loops: {}, amb: { fire: 0, night: 0, day: 0, rain: 0 },
+  buffers: {}, loops: {}, amb: { fire: 0, night: 0, day: 0, rain: 0, dawn: 0, foes: 0 },
   ctx: null, master: null, sfxBus: null, musicBus: null, verb: null,
   muted: false, musicOn: true, noise: null, tanpura: [], last: {},
   mode: 'day', threat: 0, nextTan: 0, tanStep: 0, nextFlute: 0, nextDrum: 0, drumStep: 0,
@@ -176,8 +181,24 @@ const Sound = {
       this[key] = now + every[0] + Math.random() * (every[1] - every[0]);
       if (Math.random() < chance) this.playSample(name, 1, (Math.random() - 0.5) * 1.4);
     };
-    if (this.amb.day > 0.3) one('bird', [3, 8], this.amb.day);
-    if (this.amb.night > 0.4) { one('owl', [16, 32], 0.8); one('frog', [7, 15], 0.7); one('cricket', [2, 5], 0.6); }
+    // a Bengal village: songbirds, the koel, mynas and crows by day, parakeets and doves, goats; dogs and
+    // jackals out in the dark; a rooster at first light. Sounds that have no clip simply stay silent.
+    const day = this.amb.day, night = this.amb.night;
+    if (day > 0.3) {
+      one('bird', [3, 8], day);
+      one('koel', [16, 38], 0.8 * day);
+      one('myna', [9, 20], 0.7 * day);
+      one('crow', [11, 28], 0.6 * day);
+      one('parakeet', [15, 34], 0.55 * day);
+      one('dove', [20, 42], 0.65 * day);
+      one('goat', [28, 65], 0.5 * day);
+    }
+    if (this.amb.dawn > 0.5) one('rooster', [5, 12], 0.9);
+    if (night > 0.4) {
+      one('owl', [16, 32], 0.8); one('frog', [7, 15], this.amb.rain > 0.5 ? 0.95 : 0.7); one('cricket', [2, 5], 0.6);
+      one('dog', [18, 45], this.amb.foes ? 0.8 : 0.45); // village dogs bark at what moves in the dark
+      one('jackal', [40, 85], 0.6);
+    }
     if (this.amb.rain > 0.5) one('thunder', [16, 38], 0.85);
   },
 
