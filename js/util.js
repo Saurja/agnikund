@@ -4,6 +4,8 @@
    Core constants, helpers and game data tables
    ========================================================= */
 
+/** Shown on the title screen and in the pause menu. Bump with each release. */
+const GAME_VERSION = '1.8.0';
 const VIEW_H = 270;           // internal (pixel-art) resolution height
 const GROUND_Y = 208;       // screen-space y of the ground surface
 const WORLD_MIN = -2600, WORLD_MAX = 2600;
@@ -160,7 +162,34 @@ const SWINGS = { // dur: seconds per swing, hit: fraction of it when the blow la
   slash: { dur: 0.4, hit: 0.5 }, thrust: { dur: 0.45, hit: 0.5 }, smash: { dur: 0.75, hit: 0.6 },
   bash: { dur: 0.42, hit: 0.45 }, slam: { dur: 1.0, hit: 0.62 }, lunge: { dur: 0.6, hit: 0.42 },
   shoot: { dur: 0.5, hit: 0.7 }, volley: { dur: 0.8, hit: 0.65 }, pulse: { dur: 0.7, hit: 0.5 },
+  // ultimates (hits: several blows in one move)
+  whirl: { dur: 1.05, hit: 0.25, hits: [0.25, 0.55, 0.85] }, leap: { dur: 1.0, hit: 0.72 }, barrage: { dur: 1.2, hit: 0.22, hits: [0.22, 0.5, 0.8] },
+  astra: { dur: 0.9, hit: 0.72 }, sanjeevani: { dur: 1.0, hit: 0.55 },
 };
+/*
+ * Shakti: every fighter's power bar fills as they land blows, take hits and heal. When it is full they
+ * call their ultimate at the next good moment.
+ */
+const SHAKTI = { hit: 6, struck: 4, arrow: 4, healPerSec: 7, pulse: 12 };
+const ULTIMATES = {
+  warrior: { key: 'whirl',      name: 'Veer Chakra',    en: "Hero's Wheel",   desc: 'spins through every demon around, three times' },
+  brute:   { key: 'leap',       name: 'Hanuman Kudaan', en: "Hanuman's Leap", desc: 'leaps into the thick of them and shatters the ground' },
+  spear:   { key: 'barrage',    name: 'Trishul Varsha', en: 'Trident Storm',  desc: 'three lunges in a row, each through a line of demons' },
+  archer:  { key: 'astra',      name: 'Agni Astra',     en: 'Fire Weapon',    desc: 'a blazing arrow that bursts into a sea of flame' },
+  medic:   { key: 'sanjeevani', name: 'Sanjeevani',     en: 'Herb of Life',   desc: 'heals everyone nearby to full' },
+};
+/*
+ * Power moves for the stronger demons, used between ordinary blows. cd: seconds between uses, wind:
+ * how long they telegraph it, range: how near a target must be.
+ */
+const DEMON_POWERS = {
+  rakshasa:    { key: 'roar',    name: 'Garjan',       en: 'War Roar',      cd: 14, wind: 0.7, range: 5,  desc: 'roars: nearby demons rage, nearby fighters stagger' },
+  danav:       { key: 'boulder', name: 'Shila Prahaar', en: 'Boulder Throw', cd: 11, wind: 0.9, range: 9,  desc: 'hurls a boulder from afar' },
+  skondhokata: { key: 'nova',    name: 'Bhoot-agun',   en: 'Ghost Fire',    cd: 12, wind: 0.8, range: 2.6, desc: 'bursts with blue ghost-fire' },
+  boss:        { key: 'charge',  name: 'Mahish Dhakka', en: 'Buffalo Charge', cd: 15, wind: 1.0, range: 9, desc: 'charges through everything in his path' },
+  mamdo:       { key: 'grab',    name: 'Ghaar Motkano', en: 'Neck Twist',   cd: 9,  wind: 0,   range: 1.1, desc: 'seizes someone and twists their neck' },
+};
+const BOSS_SUMMON = { cd: 26, name: 'Asura Sena', en: 'Demon Host' };
 /* ---------------- Weapons (crafted, kept in the armoury) ---------------- */
 const WEAPONS = {
   gada:    { name: 'Gada',    en: 'Mace',  at: 'forge',   lvl: 1, cost: { iron: 3, stone: 4, gold: 2 }, job: 'brute' },
@@ -179,13 +208,13 @@ const BUILDINGS = {
   buildyard: { name: 'Mistri Adda',  en: "Builders' Yard", fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                     hp: 150, lvl: 1, time: 10, slots: { build: 3 }, desc: 'Workshop for 3 more Mistri (builders).' },
   field:    { name: 'Khet',          en: 'Field',         fw: 3, fd: 3, ht: 0.8, cost: { wood: 15 },                      hp: 80,  lvl: 1, time: 8,  slots: { farm: 2 }, merge: 'bigfield', drop: ['food'], desc: 'Farmland for 2 Kisan (farmers). Two fields side by side join into a Bada Khet.' },
   palisade: { name: 'Baans ki Baad', en: 'Bamboo Wall',   fw: 1, fd: 1, ht: 1.5, cost: { wood: 6 },                       hp: 220, lvl: 1, time: 3,  wall: true, desc: 'Blocks demons. Click and drag to build a whole line of wall.' },
-  akhara:   { name: 'Akhara',        en: 'Training Pit',  fw: 3, fd: 3, ht: 2.4, cost: { wood: 25, stone: 10 },           hp: 150, lvl: 1, time: 14, slots: { army: 3 }, desc: 'Wrestling pit with a mallakhamb. Room for 3 soldiers. Train Sainik here, then arm them at the Lohar or Aara Mill.' },
+  akhara:   { name: 'Akhara',        en: 'Training Pit',  fw: 4, fd: 4, ht: 2.4, cost: { wood: 30, stone: 12 },           hp: 170, lvl: 1, time: 16, slots: { army: 3 }, desc: 'Wrestling pit with a mallakhamb. Room for 3 soldiers. Train Sainik here, then arm them at the Lohar or Aara Mill.' },
   store:    { name: 'Bhandar',       en: 'Storehouse',    fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                      hp: 140, lvl: 1, time: 10, drop: RES_ORDER.slice(), desc: 'Storehouse with 4 bays. Pick the good each bay holds; goods with no bay need another Bhandar. Upgrades add bays (6, then 8).' },
   // the materials chain: clay pit and brick kiln from the start, the iron smelter from Agnikund level 2
   claypit:  { name: 'Mitti Khaan',   en: 'Clay Pit',      fw: 2, fd: 2, ht: 1.1, cost: { wood: 20 },                      hp: 120, lvl: 1, time: 8,  slots: { clay: 2 }, drop: ['clay'], desc: 'A pit of wet clay. 2 Beldar dig here and stack the clay beside it.' },
   kiln:     { name: 'Eent Bhatta',   en: 'Brick Kiln',    fw: 2, fd: 2, ht: 3.0, cost: { wood: 30, stone: 15 },           hp: 170, lvl: 1, time: 12, slots: { kiln: 2 }, drop: ['brick', 'charcoal'], recipes: ['auto', 'brick', 'charcoal'], desc: '2 Kumhar fire clay and wood into bricks, or slow-burn wood into charcoal for the smelter.' },
   smelter:  { name: 'Loha Bhatti',   en: 'Iron Smelter',  fw: 2, fd: 2, ht: 2.5, cost: { brick: 20, stone: 15, wood: 10 }, hp: 200, lvl: 2, time: 16, slots: { smelt: 2 }, drop: ['iron'], recipes: ['iron'], desc: 'A clay shaft furnace with leather bellows. 2 Agariya smelt iron ore with charcoal into iron.' },
-  range:    { name: 'Dhanush Shala', en: 'Archery Range', fw: 3, fd: 2, ht: 1.6, cost: { wood: 25, brick: 10 },           hp: 150, lvl: 2, time: 14, slots: { army: 3 }, desc: 'Archery range with room for 3 more soldiers. Dhanurdhar practise here.' },
+  range:    { name: 'Dhanush Shala', en: 'Archery Range', fw: 4, fd: 3, ht: 1.6, cost: { wood: 25, brick: 10 },           hp: 150, lvl: 2, time: 14, slots: { army: 3 }, desc: 'Archery range with room for 3 more soldiers. Dhanurdhar practise here.' },
   well:     { name: 'Kuan',          en: 'Well',          fw: 2, fd: 2, ht: 1.8, cost: { stone: 10, brick: 12 },          hp: 160, lvl: 2, time: 10, desc: 'Fields within 9 steps grow 50% faster.' },
   bazaar:   { name: 'Bazaar',        en: 'Market',        fw: 3, fd: 2, ht: 1.9, cost: { wood: 30, brick: 15 },           hp: 150, lvl: 2, time: 16, slots: { trader: 2 }, desc: 'Spice stall. 2 Vyapari trade grain for gold.' },
   lamp:     { name: 'Deep Stambh',   en: 'Lamp Pillar',   fw: 1, fd: 1, ht: 2.7, cost: { stone: 10, brick: 6, gold: 5 },  hp: 140, lvl: 2, time: 8,  desc: 'Holy lamps light the night. Demons nearby are slowed and burn.' },
@@ -311,7 +340,8 @@ const ENEMIES = {
   aleya:       { name: 'Aleya',       en: 'Marsh Light',     hp: 9,   dmg: 1.5, speed: 2.6,  atkCd: 0.9, gold: 1, r: 0.25, h: 0.5, scale: 1,    reach: 0.6,  cost: 2, fly: true, swarm: 3, glow: 0xd4ff7a, bengali: true, from: 2 },
   shakchunni:  { name: 'Shakchunni',  en: 'Bride Ghost',     hp: 30,  dmg: 4,   speed: 1.9,  atkCd: 1.0, gold: 2, r: 0.35, h: 1.4, scale: 1,    reach: 0.8,  cost: 2, ghost: true, float: true, drain: 0.6, glow: 0xffd6d6, bengali: true, from: 3 },
   mechho:      { name: 'Mechho Bhoot', en: 'Fish-thief Ghost', hp: 26, dmg: 2,  speed: 1.75, atkCd: 1.2, gold: 2, r: 0.35, h: 1.2, scale: 1,    reach: 0.75, cost: 2, ghost: true, thief: 'food', steal: 10, bengali: true, from: 3 },
-  nishi:       { name: 'Nishi',       en: 'Night Caller',    hp: 34,  dmg: 3,   speed: 1.15, atkCd: 1.2, gold: 3, r: 0.35, h: 1.7, scale: 1,    reach: 0.8,  cost: 3, ghost: true, float: true, caller: true, glow: 0x9fb4ff, bengali: true, from: 5 },
+  nishi:       { name: 'Nishi Dak',   en: 'Deadly Night Caller', hp: 40, dmg: 3, speed: 1.05, atkCd: 1.2, gold: 4, r: 0.35, h: 1.7, scale: 1,    reach: 0.8,  cost: 3, ghost: true, float: true, caller: true, glow: 0x9fb4ff, bengali: true, from: 5 },
+  mamdo:       { name: 'Mamdo Bhoot', en: 'Neck-twister',    hp: 72,  dmg: 6,   speed: 1.4,  atkCd: 1.4, gold: 4, r: 0.38, h: 1.95, scale: 1.05, reach: 0.9, cost: 4, bengali: true, from: 6 },
   skondhokata: { name: 'Skondhokata', en: 'Headless Ghost',  hp: 110, dmg: 11,  speed: 0.95, atkCd: 1.5, gold: 4, r: 0.5,  h: 1.9, scale: 1.25, reach: 1.0,  cost: 4, wrecker: 2.2, bengali: true, from: 7 },
 };
 /** One line of lore per demon, shown in the info panel and when it first appears. */
@@ -324,7 +354,8 @@ const ENEMY_LORE = {
   aleya: 'Ghost lights from the marshes that lead travellers astray. They drift in as a swarm over your walls, quick but frail.',
   shakchunni: 'The ghost of a married woman in a white saree with a red border and shell bangles. She drifts through walls, and every blow she lands heals her.',
   mechho: 'A fish-loving ghost from the ponds. He sneaks to your grain stores, steals what he can carry and runs for the forest. Kill him to get the grain back.',
-  nishi: 'The Nishi calls sleepers by name in a loved one’s voice. Villagers hiding in their huts walk out toward her, so hunt her down quickly.',
+  nishi: 'Nishi Dak, the deadly night caller, calls people by name in the voice of someone they love. Whoever answers her first or second call walks out to her, and if they reach her she takes their soul. Folk wisdom says answer only a third call. Click a called villager to hold them back; a Pujari, a Mandir or a soldier at their side also breaks her spell.',
+  mamdo: 'In Bengali folk tales, the Mamdo Bhoot is the ghost of a man who died an unnatural death, said to be the restless spirit of a Muslim. Tall and bearded, it is feared for seizing people and twisting their necks. Strike or stun it hard to break its grip before it finishes.',
   skondhokata: 'A headless ghost that wanders the night. Huge and slow, he smashes walls and buildings twice as hard as a demon.',
 };
 

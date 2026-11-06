@@ -237,6 +237,9 @@ body.mobile.mat-open #matBtn { background: var(--raise-2); }
 .meter.ehp .mt i { background: var(--bad); }
 .meter.stock .mt i { background: #d9b26a; }
 .meter.full .mt i { background: var(--bad); }
+.meter.pow .mt i, .meter.pow.full .mt i { background: linear-gradient(90deg, #ffb347, #ffe27a); }
+.meter.pow.full .mt { box-shadow: 0 0 8px rgba(255, 200, 90, 0.7); }
+.meter.pow.full em { color: #ffd27a; }
 .meter.full .ml em { color: var(--bad); }
 .stockrow { display: grid; grid-template-columns: 20px 1fr; align-items: center; gap: 8px; }
 .stockrow .meter { margin: 5px 0; }
@@ -363,6 +366,11 @@ p.miss { margin: 8px 0; padding: 7px 10px; background: var(--bad-soft); border-r
 .float3d.tag { font: 700 10px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; }
 .float3d.callout { font: 400 18px/1 var(--display); letter-spacing: 0.02em; text-shadow: 0 0 12px rgba(255, 140, 30, 0.7), 0 2px 3px rgba(0, 0, 0, 0.95); }
 .bar3d.up { height: 6px; box-shadow: 0 0 0 1px rgba(255, 210, 120, 0.5); }
+.bar3d.pow { height: 4px; margin-top: 1px; }
+.bar3d.pow i { background: linear-gradient(90deg, #ffb347, #ffe27a); }
+.bar3d.pow.full { box-shadow: 0 0 6px 1px rgba(255, 210, 100, 0.8); animation: powPulse 0.8s ease-in-out infinite alternate; }
+@keyframes powPulse { from { filter: brightness(1); } to { filter: brightness(1.5); } }
+.float3d.callout.ult { font-size: 22px; color: #ffcf5a; text-shadow: 0 0 14px rgba(255, 170, 40, 0.95), 0 2px 3px rgba(0, 0, 0, 0.95); }
 .bar3d { position: absolute; left: 0; top: 0; height: 5px; background: rgba(12, 8, 6, 0.7); border-radius: 99px; overflow: hidden; will-change: transform; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
 .bar3d i { display: block; height: 100%; border-radius: 99px; background: var(--good); }
 .bar3d.ehp i { background: var(--bad); }
@@ -425,6 +433,9 @@ p.miss { margin: 8px 0; padding: 7px 10px; background: var(--bad-soft); border-r
 .how-grid section { background: var(--raise); border-radius: 14px; padding: 14px 16px 16px; }
 /* seven topics and the controls: the materials card spans two columns so the last row is materials + controls */
 .how-grid section.wide { grid-column: span 2; }
+/* version label: top-right of the title screen, under the buttons in the pause menu */
+.title-screen .ver { position: absolute; top: max(16px, env(safe-area-inset-top, 0px)); right: max(18px, env(safe-area-inset-right, 0px)); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-3); letter-spacing: 0.02em; }
+.menu-card .ver { margin: 12px 0 0; text-align: center; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) { .how-grid section:last-child { grid-column: 1 / -1; } }
 @media (max-width: 620px) { .how-grid section.wide { grid-column: auto; } }
 .how-grid .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }

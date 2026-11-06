@@ -113,7 +113,8 @@
         <button id="btnHow" class="big ghost"><span>How to play</span></button>
       </div>
     </div>
-    <p class="credits">Music via <a href="https://opengameart.org" target="_blank" rel="noopener">OpenGameArt.org</a>: “Mystical Enigmatic Background Music” by Cleyton Kauffman (CC0) · “Electronic Indian tabla tune” by obscure music (CC0) · “Ritual” by brainiac256 (<a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC-BY 3.0</a>) · “india rythm” by SouljahdeShiva (CC-BY 3.0). Sound effects: CC0 packs by rubberduck, qubodup, artisticdude, AntumDeluge, Aj_ and Wolfgang_.</p>
+    <span class="ver" id="verTitle"></span>
+    <p class="credits">Music via <a href="https://opengameart.org" target="_blank" rel="noopener">OpenGameArt.org</a>: “Mystical Enigmatic Background Music” by Cleyton Kauffman (CC0) · “Electronic Indian tabla tune” by obscure music (CC0) · “Ritual” by brainiac256 (<a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC-BY 3.0</a>) · “india rythm” by SouljahdeShiva (CC-BY 3.0). Sound effects: CC0 packs by rubberduck, qubodup, artisticdude, AntumDeluge, Aj_ and Wolfgang_. Village birds and animals: CC0 and public-domain recordings from freesound.org, BigSoundBank and Wikimedia Commons, and “Rice Patty Frogs” by john9 (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>). Full list in audio/CREDITS.txt.</p>
   </div>
 
   <div id="howto" class="screen hidden">
@@ -122,7 +123,7 @@
       <div class="how-grid">
         <section><span class="num">1</span><h3>The Agnikund</h3><p>Your village lives around a sacred fire that burns wood on its own. If demons put it out, the village is lost. Click the fire to upgrade it for more land, homes and buildings.</p></section>
         <section><span class="num">2</span><h3>Day: build and work</h3><p>Every job works from a building: a <b>Lakdi Taal</b> for woodcutters, a <b>Khadaan</b> for miners, a <b>Khet</b> for farmers. Build it, click it, then press <b>Assign</b>. Idle villagers pitch in as builders. Huts or fields built side by side join into bigger ones.</p></section>
-        <section><span class="num">3</span><h3>Night: defend</h3><p>At dusk everyone returns to the fire and demons come out of the forest. The warning says from which side. <b>Sainik</b> fight at the walls, <b>Dhanurdhar</b> shoot from behind them. Each fighter has a special move: the Sainik's shield bash stuns, the Gadadhari's slam shakes the ground, the Bhaladhari lunges through a line, the Dhanurdhar rains fire arrows. Big demons rear back before they strike. Later nights bring ghosts from Bengali folklore: click one to read about it. Dawn burns them all away.</p></section>
+        <section><span class="num">3</span><h3>Night: defend</h3><p>At dusk everyone returns to the fire and demons come out of the forest. The warning says from which side. <b>Sainik</b> fight at the walls, <b>Dhanurdhar</b> shoot from behind them. Each fighter has a special move: the Sainik's shield bash stuns, the Gadadhari's slam shakes the ground, the Bhaladhari lunges through a line, the Dhanurdhar rains fire arrows. A fighter's gold <b>Shakti</b> bar fills as they fight; when it is full they unleash an ultimate. Big demons rear back before they strike and have power moves of their own. Later nights bring ghosts from Bengali folklore: when <b>Nishi Dak</b> calls someone, click them and hold them back; break a <b>Mamdo Bhoot</b>'s grip before it twists a neck. Dawn burns them all away.</p></section>
         <section><span class="num">4</span><h3>Grain and homes</h3><p>Each villager eats 4 grain at dusk. Travellers settle at dawn if there is room, so build <b>Jhopdis</b>. When demons come near, villagers hide in their hut, or in the sacred grove if they have none.</p></section>
         <section><span class="num">5</span><h3>Stockpiles</h3><p>Workers carry goods in a tokri to the nearest stockpile with room. A <b>Bhandar</b> has 4 bays: click it, then tap a bay to pick the good it holds. Anything extra goes to the heap by the fire.</p></section>
         <section><span class="num">6</span><h3>Upgrades and healing</h3><p>Click a finished building and press <b>Upgrade</b>. Its own workers, your Mistri, idle villagers and any helpers you send rebuild it by day: more hands finish sooner. The wounded heal by the fire, at home, and slowly anywhere away from the fighting. A <b>Vaidyashala</b>'s Vaidya heal them too, and its medicine kits turn a Sainik into a <b>Chikitsak</b> who heals soldiers in battle.</p></section>
@@ -152,6 +153,7 @@
         <button id="mHow" data-icon="help" data-label="How to play"></button>
         <button id="mQuit" class="danger" data-icon="exit" data-label="Quit to title"></button>
       </div>
+      <p class="ver" id="verMenu"></p>
     </div>
   </div>
 

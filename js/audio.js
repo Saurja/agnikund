@@ -61,12 +61,23 @@ const SFX = {
   splash: { f: ['splash1.ogg', 'splash2.ogg', 'splash3.ogg'], vol: 0.5, gap: 0.2 },
   v_nishi: { f: ['nishi_whisper.ogg'], vol: 0.6, pitch: [0.8, 0.9], verb: true, gap: 2 },
   v_skondhokata: { f: ['headless_moan1.ogg', 'headless_moan2.ogg', 'headless_moan3.ogg'], vol: 0.5, pitch: [0.7, 0.85], verb: true, gap: 1.5 },
+  v_mamdo: { f: ['bhoot_moan1.mp3', 'bhoot_moan2.mp3'], vol: 0.45, pitch: [0.55, 0.65], verb: true, gap: 2.5 },
   // animals and the world
-  moo: { f: ['cow_moo.wav'], vol: 0.45, pitch: [0.9, 1.05], gap: 14 },
-  peacock: { f: ['peacock.ogg'], vol: 0.45, gap: 3 },
-  bird: { f: ['bird1.wav', 'bird2.wav'], vol: 0.18, pitch: [0.9, 1.15], gap: 1.5 },
-  owl: { f: ['owl.wav'], vol: 0.28, verb: true, gap: 6 },
-  frog: { f: ['frog.wav'], vol: 0.16, pitch: [0.85, 1.1], gap: 3 },
+  moo: { f: ['moo1.wav', 'moo2.wav'], vol: 0.4, pitch: [0.92, 1.05], gap: 14 },
+  peacock: { f: ['peacock1.wav', 'peacock2.wav', 'peacock.ogg'], vol: 0.32, verb: true, gap: 3 },
+  bird: { f: ['bird1.wav', 'bird2.wav', 'sparrow1.wav', 'sparrow2.wav'], vol: 0.16, pitch: [0.92, 1.12], gap: 1.5 },
+  owl: { f: ['owl.wav', 'owl_hoot1.wav'], vol: 0.24, verb: true, gap: 6 },
+  frog: { f: ['frog.wav', 'frogs1.wav', 'frogs2.wav'], vol: 0.15, pitch: [0.9, 1.08], gap: 3 },
+  // a Bengal village: recorded birds and animals (audio/CREDITS.txt)
+  koel: { f: ['koel1.wav', 'koel2.wav'], vol: 0.26, pitch: [0.97, 1.03], verb: true, gap: 8 },
+  myna: { f: ['myna1.wav'], vol: 0.18, pitch: [0.94, 1.08], gap: 4 },
+  crow: { f: ['crow1.wav', 'crow2.wav'], vol: 0.2, pitch: [0.95, 1.05], gap: 4 },
+  parakeet: { f: ['parakeet1.wav', 'parakeet2.wav'], vol: 0.15, pitch: [0.96, 1.06], gap: 5 },
+  dove: { f: ['dove1.wav', 'dove2.wav'], vol: 0.22, gap: 8 },
+  rooster: { f: ['rooster1.wav'], vol: 0.26, pitch: [0.95, 1.05], verb: true, gap: 4 },
+  goat: { f: ['goat1.wav', 'goat2.wav', 'goat3.wav'], vol: 0.24, pitch: [0.9, 1.15], gap: 10 },
+  dog: { f: ['dog1.wav', 'dog2.wav'], vol: 0.26, pitch: [0.95, 1.05], verb: true, gap: 6 },
+  jackal: { f: ['jackal1.wav', 'jackal2.wav'], vol: 0.32, verb: true, gap: 20 },
   cricket: { f: ['cricket.wav'], vol: 0.1, pitch: [0.95, 1.1], gap: 0.8 },
   thunder: { f: ['thunder.ogg'], vol: 0.75, pitch: [0.75, 1], verb: true, gap: 4 },
 };
@@ -84,6 +95,7 @@ const ENEMY_SFX = {
   shakchunni: { voice: 'v_shakchunni', attack: 'bangles', die: 'd_ghost', step: 'bangles' },
   mechho: { voice: 'v_mechho', die: 'splash' },
   nishi: { voice: 'v_nishi', die: 'd_ghost' },
+  mamdo: { voice: 'v_mamdo', attack: 'a_club', die: 'd_ghost' },
   skondhokata: { voice: 'v_skondhokata', attack: 'a_club', die: 'd_giant', stomp: true },
 };
 
@@ -192,6 +204,7 @@ const Sound = {
       one('parakeet', [15, 34], 0.55 * day);
       one('dove', [20, 42], 0.65 * day);
       one('goat', [28, 65], 0.5 * day);
+      one('peacock', [45, 95], 0.45 * day); // the peafowl's "may-awe" from the edge of the forest
     }
     if (this.amb.dawn > 0.5) one('rooster', [5, 12], 0.9);
     if (night > 0.4) {

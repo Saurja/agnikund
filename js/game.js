@@ -132,9 +132,10 @@ function spend(s, cost, x, z) { for (const k in cost) { s.res[k] -= cost[k]; tak
 function refund(s, cost, f) { for (const k in cost) s.res[k] += Math.floor(cost[k] * f); }
 /** Floating text. cls: 'dmg' / 'dmg crit' / 'dmg hurt' / 'dmg heal' numbers, 'tag' (Blocked, Stunned), 'callout' (moves, streaks). */
 function floater(s, x, y, z, text, color, cls) {
-  const life = !cls ? 1.5 : cls === 'callout' ? 1.4 : cls === 'tag' ? 0.9 : 0.8;
-  if (cls === 'callout' || cls === 'tag') { // stack instead of printing on top of one another
-    for (const f of s.floaters) if (f.cls === cls && Math.abs(f.x - x) < 1.6 && Math.abs(f.z - z) < 1.2 && Math.abs(f.y - y) < 0.45) y = f.y + 0.45;
+  const call = !!cls && cls.startsWith('callout');
+  const life = !cls ? 1.5 : call ? (cls.includes('ult') ? 1.8 : 1.4) : cls === 'tag' ? 0.9 : 0.8;
+  if (call || cls === 'tag') { // stack instead of printing on top of one another
+    for (const f of s.floaters) if ((f.cls === cls || (call && f.cls.startsWith('callout'))) && Math.abs(f.x - x) < 1.6 && Math.abs(f.z - z) < 1.2 && Math.abs(f.y - y) < 0.45) y = f.y + 0.45;
   }
   s.floaters.push({ x, y, z, text, color, cls: cls || '', life, max: life, vx: cls && cls.startsWith('dmg') ? rand(-0.35, 0.35) : 0 });
   if (s.floaters.length > 70) { const i = s.floaters.findIndex((f) => f.cls.startsWith('dmg')); s.floaters.splice(i >= 0 ? i : 0, 1); }
@@ -1404,10 +1405,46 @@ function soldierDmg(s, v) {
 }
 const canReach = (v, o, reach) => !o.dead && !(ENEMIES[o.type].fly && o.y > 1.2) && distXZ(o.x, o.z, v.x, v.z) <= reach + ENEMIES[o.type].r;
 function enemiesNear(s, x, z, r) { let n = 0; for (const e of s.enemies) if (!e.dead && !(ENEMIES[e.type].fly && e.y > 1.2) && distXZ(e.x, e.z, x, z) < r + ENEMIES[e.type].r) n++; return n; }
+/** Shakti: a fighter's power bar fills with every blow given and taken; a full bar unleashes their ultimate. */
+function addPower(s, v, n) {
+  if (!isDefender(v) || n <= 0) return;
+  const was = v.power || 0;
+  v.power = Math.min(100, was + n);
+  if (was < 100 && v.power >= 100) { floater(s, v.x, 2.05, v.z, 'Shakti full!', '#ffd27a', 'tag'); fx(s, 'ring', { x: v.x, z: v.z, r: 1.0, c: 0xffd27a, dur: 0.5 }); sfx('bellSoft', v.x, v.z); }
+}
+/** Start an ultimate: spends the whole bar, with a big callout. */
+function startUltimate(s, v, kind, e, extra) {
+  const U = ULTIMATES[v.job], S2 = SWINGS[kind];
+  v.power = 0;
+  v.atk = Object.assign({ kind, t: 0, dur: S2.dur, hit: S2.hit, hits: S2.hits || null, hi: 0, foe: e, mult: 1, side: 1, ab: true, ult: true, done: false }, extra || {});
+  v.atkCd = S2.dur + 0.3;
+  floater(s, v.x, 2.3, v.z, U.name + '!', '#ffcf5a', 'callout ult');
+  fx(s, 'ring', { x: v.x, z: v.z, r: 1.6, c: 0xffd27a, dur: 0.45 });
+  hitStop(s, 0.05);
+  sfx('warcry', v.x, v.z);
+}
+/** The densest knot of demons within reach: where Hanuman's leap and the Agni Astra land. */
+function densestEnemy(s, x, z, range, r) {
+  let best = null, bn = 0;
+  for (const e of s.enemies) {
+    if (e.dead || (ENEMIES[e.type].fly && e.y > 1.2) || distXZ(e.x, e.z, x, z) > range) continue;
+    const n = enemiesNear(s, e.x, e.z, r);
+    if (n > bn) { bn = n; best = e; }
+  }
+  return best;
+}
 /** Begin a melee swing: the next move of the combo, or the special move when it is ready and worth it. */
 function startMelee(s, v, e) {
   const M = SOLDIER_MOVES[v.job] || SOLDIER_MOVES.warrior, st = SOLDIERS[v.job] || SOLDIERS.warrior;
   const def = ENEMIES[e.type];
+  if ((v.power || 0) >= 100 && ULTIMATES[v.job]) { // the ultimate, when the bar is full
+    const k = ULTIMATES[v.job].key;
+    if (k === 'leap') {
+      const c = densestEnemy(s, v.x, v.z, 7, 2.6) || e;
+      return startUltimate(s, v, 'leap', c, { sx: v.x, sz: v.z, tx: c.x - (c.x - v.x) * (0.6 / (distXZ(c.x, c.z, v.x, v.z) || 1)), tz: c.z - (c.z - v.z) * (0.6 / (distXZ(c.x, c.z, v.x, v.z) || 1)) });
+    }
+    return startUltimate(s, v, k, e);
+  }
   let kind, mult = 1, ab = null;
   const big = def.boss || def.cost >= 6;
   if ((v.abilT || 0) <= 0 && M.ability) {
@@ -1432,12 +1469,21 @@ function tickAttack(s, v, dt) {
   a.t += dt;
   v.anim = 'atk';
   const hitT = a.dur * a.hit;
-  if (!a.done && a.foe && !a.foe.dead && a.kind !== 'lunge') faceTo(v, a.foe.x, a.foe.z);
+  if (a.kind === 'whirl') v.rot += dt * 15; // the hero's wheel spins
+  else if (!a.done && a.foe && !a.foe.dead && a.kind !== 'lunge' && a.kind !== 'leap') faceTo(v, a.foe.x, a.foe.z);
   if (a.kind === 'lunge' && a.t < hitT) { const step = (a.dist / hitT) * dt; v.x += a.dx * step; v.z += a.dz * step; v.rot = Math.atan2(a.dx, a.dz); }
-  if (!a.done && a.t >= hitT) { a.done = true; resolveAttack(s, v, a); }
+  if (a.kind === 'leap' && a.t < hitT) { // Hanuman's leap: an arc through the air to the thick of the demons
+    const f = easeInOut(a.t / hitT);
+    v.x = a.sx + (a.tx - a.sx) * f; v.z = a.sz + (a.tz - a.sz) * f; faceTo(v, a.tx + (a.tx - a.sx), a.tz + (a.tz - a.sz));
+  }
+  if (a.hits) { // several blows in one move
+    while (a.hi < a.hits.length && a.t >= a.dur * a.hits[a.hi]) { resolveAttack(s, v, a, a.hi); a.hi++; }
+    if (a.hi >= a.hits.length) a.done = true;
+  } else if (!a.done && a.t >= hitT) { a.done = true; resolveAttack(s, v, a); }
   if (a.t >= a.dur) v.atk = null;
   return true;
 }
+const easeInOut = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
 function resolveAttack(s, v, a) {
   const st = SOLDIERS[v.job] || SOLDIERS.warrior, M = SOLDIER_MOVES[v.job] || {};
   const base = soldierDmg(s, v) * a.mult;
@@ -1447,10 +1493,12 @@ function resolveAttack(s, v, a) {
   const col = WEAPON_FX[v.job] || 0xffffff;
   const e = a.foe;
   const reach = (st.reach || 0.75) + 0.45;
+  let gained = 0; // demons struck, for the Shakti bar
   switch (a.kind) {
     case 'slash': case 'thrust': case 'smash': case 'bash': {
       fx(s, a.kind === 'thrust' ? 'thrust' : a.kind === 'smash' ? 'smash' : 'slash', { x: v.x, z: v.z, rot: v.rot, side: a.side, c: a.kind === 'bash' ? 0xffd27a : col, len: reach + 0.3, heavy: a.mult > 1 || crit });
       if (e && canReach(v, e, reach)) {
+        gained = 1;
         const knock = a.kind === 'smash' ? 1.4 : a.kind === 'bash' ? 1.3 : a.mult > 1 ? 1.0 : 0.45;
         hitEnemy(s, e, base * C * bonus(e) * (a.kind === 'bash' ? 0.8 : 1), v, { crit, knock, stun: a.kind === 'bash' ? 1.5 : a.kind === 'smash' ? 0.35 : 0, big: a.kind === 'smash' || a.mult > 1 });
         if (a.kind === 'smash' && st.splash) {
@@ -1479,22 +1527,59 @@ function resolveAttack(s, v, a) {
       shake(s, 0.32); hitStop(s, 0.07);
       sfx('boom', v.x, v.z); sfx('thud', v.x, v.z);
       if (hit >= 3) floater(s, v.x, 2.5, v.z, `×${hit}`, '#ffd27a', 'callout');
+      gained = hit;
       break;
     }
-    case 'lunge': { // Bhaladhari dashes and skewers every demon along the line
+    case 'lunge': case 'barrage': { // Bhaladhari dashes and skewers every demon along the line (Trishul Varsha: three times)
+      if (a.kind === 'barrage') { const t2 = nearestEnemy(s, v.x, v.z, 4, true); if (t2) faceTo(v, t2.x, t2.z); v.x += Math.sin(v.rot) * 0.35; v.z += Math.cos(v.rot) * 0.35; }
       const fx0 = Math.sin(v.rot), fz0 = Math.cos(v.rot), L = (st.reach || 1.5) + 0.7;
+      let n = 0;
       for (const o of s.enemies) {
         if (o.dead || (ENEMIES[o.type].fly && o.y > 1.2)) continue;
         const rx = o.x - v.x, rz = o.z - v.z, along = rx * fx0 + rz * fz0, side = Math.abs(rx * fz0 - rz * fx0);
         if (along < -0.2 || along > L + ENEMIES[o.type].r || side > 0.5 + ENEMIES[o.type].r) continue;
-        hitEnemy(s, o, base * 1.8 * C * bonus(o), v, { crit, knock: 1.3, big: true });
+        hitEnemy(s, o, base * (a.kind === 'barrage' ? 2.0 : 1.8) * C * bonus(o), v, { crit, knock: 1.3, big: true });
+        n++;
       }
-      fx(s, 'thrust', { x: v.x - fx0 * 0.6, z: v.z - fz0 * 0.6, rot: v.rot, c: 0xbfe2ff, len: L + 0.9, heavy: true });
+      fx(s, 'thrust', { x: v.x - fx0 * 0.6, z: v.z - fz0 * 0.6, rot: v.rot, c: a.ult ? 0xffd27a : 0xbfe2ff, len: L + 0.9, heavy: true });
       sfx('sword', v.x, v.z); sfx('whoosh', v.x, v.z);
-      if (crit) hitStop(s, 0.05);
+      if (crit || a.ult) hitStop(s, 0.04);
+      gained = n;
+      break;
+    }
+    case 'whirl': { // Veer Chakra: the Sainik spins, cutting everything around him
+      const R = 1.8;
+      let n = 0;
+      for (const o of s.enemies) {
+        if (o.dead || (ENEMIES[o.type].fly && o.y > 1.2) || distXZ(o.x, o.z, v.x, v.z) > R + ENEMIES[o.type].r) continue;
+        hitEnemy(s, o, base * 1.35 * C, v, { crit, knock: 1.1, big: true });
+        n++;
+      }
+      for (let k = 0; k < 3; k++) fx(s, 'slash', { x: v.x, z: v.z, rot: v.rot + (k * Math.PI * 2) / 3, side: 1, c: 0xffd27a, len: R, heavy: true });
+      fx(s, 'ring', { x: v.x, z: v.z, r: R + 0.2, c: 0xffd27a, dur: 0.35 });
+      sfx('sword', v.x, v.z); sfx('whoosh', v.x, v.z); shake(s, 0.06);
+      break;
+    }
+    case 'leap': { // Hanuman Kudaan: the Gadadhari lands among them and the earth itself breaks
+      const R = 3.2;
+      let n = 0;
+      for (const o of s.enemies) {
+        if (o.dead || (ENEMIES[o.type].fly && o.y > 1.2) || distXZ(o.x, o.z, v.x, v.z) > R + ENEMIES[o.type].r) continue;
+        hitEnemy(s, o, base * 2.6 * C, v, { crit, knock: 2.6, stun: 2.0, big: true });
+        n++;
+      }
+      fx(s, 'ring', { x: v.x, z: v.z, r: R + 0.5, c: 0xffd27a, dur: 0.7 });
+      fx(s, 'ring', { x: v.x, z: v.z, r: R - 0.8, c: 0xffb347, dur: 0.5 });
+      fx(s, 'ring', { x: v.x, z: v.z, r: 1.2, c: 0xfff0c0, dur: 0.3 });
+      fx(s, 'impact', { x: v.x, y: 0.3, z: v.z, c: 0xffd27a, s: 2.8 });
+      emit(s, v.x, 0.1, v.z, 46, { spread: 1.6, vx: 4, vyMin: 0.8, vyMax: 3.5, life: 1.1, colors: ['#d8c4a0', '#c8b08a', '#a89070', '#8a7a66'], g: 5 });
+      shake(s, 0.6); hitStop(s, 0.1);
+      sfx('boom', v.x, v.z); sfx('thud', v.x, v.z); sfx('cannon', v.x, v.z);
+      if (n >= 3) floater(s, v.x, 2.6, v.z, `×${n}`, '#ffd27a', 'callout');
       break;
     }
   }
+  if (!a.ult) addPower(s, v, Math.min(14, SHAKTI.hit * gained));
   if (Math.random() < 0.12) sfx('warcry', v.x, v.z); // "Har Har Mahadev!"
 }
 function warriorAI(s, v, dt, phase, spd) {
@@ -1535,7 +1620,8 @@ function warriorAI(s, v, dt, phase, spd) {
     const d = distXZ(e.x, e.z, v.x, v.z);
     // a spearman can start his lunge from further out
     const lungeOK = v.job === 'spear' && (v.abilT || 0) <= 0 && d < reach + 1.4 && d > reach * 0.6;
-    if (d > reach && !lungeOK) {
+    const leapOK = v.job === 'brute' && (v.power || 0) >= 100 && d < 7; // Hanuman's leap starts from afar
+    if (d > reach && !lungeOK && !leapOK) {
       const k = (d - reach + 0.1) / d;
       moveTo(v, v.x + (e.x - v.x) * k, v.z + (e.z - v.z) * k, spd * 1.25 * st.speed, dt);
       v.task = 'Charging the ' + def.name;
@@ -1558,11 +1644,14 @@ function warriorAI(s, v, dt, phase, spd) {
   }
   const a = validWorkplace(s, v, 'akhara');
   if (!a) { v.task = 'Needs an Akhara'; return idleAI(s, v, dt, spd); }
-  const i = workplaceIndex(s, v);
-  const p = localToWorld(a, -0.6 + i * 0.6, 0.3 - (i % 2) * 0.6);
+  // sparring pairs on a 3×3 grid inside the pit (room for every place an upgraded Akhara gives)
+  const i = workplaceIndex(s, v), col = i % 3, row = Math.floor(i / 3) % 3;
+  const lx = -0.95 + col * 0.95, lz = -0.65 + row * 0.85;
+  const p = localToWorld(a, lx, lz);
   if (moveTo(v, p.x, p.z, spd, dt)) {
-    faceTo(v, a.x - 0.85, a.z - 0.85);
-    v.anim = (Math.floor(v.animT * 0.4 + i) % 3 === 0) ? 'stand' : 'work';
+    const q = localToWorld(a, col === 1 ? lx - 0.95 : lx + (col === 0 ? 0.95 : -0.95), lz); // face a sparring partner
+    faceTo(v, q.x, q.z);
+    v.anim = (Math.floor(v.animT * 0.5 + i) % 3 === 0) ? 'fight' : 'work';
     v.task = 'Training at the Akhara';
   } else v.task = 'Walking to the Akhara';
 }
@@ -1571,8 +1660,8 @@ function archerShot(s, v, target, o) {
   o = o || {};
   const crit = Math.random() < (SOLDIER_MOVES.archer.crit || 0);
   const dmg = 6 * (s.upgrades.bow ? 1.5 : 1) * (s.festival ? 1.5 : 1) * (o.mult || 1) * (crit ? 1.8 : 1);
-  const p = shootArrow(s, v.x, 1.0, v.z, target, dmg, false, 'arrow', 17);
-  p.crit = crit; p.fire = !!(o.fire || s.upgrades.agnibaan); p.byArcher = true;
+  const p = shootArrow(s, v.x, 1.0, v.z, target, dmg, false, o.kind || 'arrow', o.speed || 17);
+  p.crit = crit; p.fire = !!(o.fire || s.upgrades.agnibaan); p.byArcher = true; p.owner = v.id;
   return p;
 }
 function archerAI(s, v, dt, phase, spd) {
@@ -1591,6 +1680,10 @@ function archerAI(s, v, dt, phase, spd) {
           const pool = s.enemies.filter((o) => !o.dead && distXZ(o.x, o.z, c.x, c.z) < 3).sort(() => Math.random() - 0.5);
           for (let i = 0; i < 5; i++) archerShot(s, v, pool[i % pool.length] || c, { fire: true, mult: 0.9 });
         }
+        sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
+      } else if (a.kind === 'astra') { // Agni Astra: one great blazing arrow into the thick of them
+        const c = densestEnemy(s, v.x, v.z, range + 2, 2.6) || (a.foe && !a.foe.dead ? a.foe : null);
+        if (c) { const p = archerShot(s, v, c, { kind: 'astra', mult: 7, fire: true, speed: 15 }); p.splash = 2.6; p.burn = 7; }
         sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
       } else if (a.foe && !a.foe.dead) { archerShot(s, v, a.foe); sfx('bow', v.x, v.z); }
     }
@@ -1617,6 +1710,7 @@ function archerAI(s, v, dt, phase, spd) {
     v.anim = 'shoot';
     v.combatT = 1.5;
     v.task = 'Shooting at the ' + ENEMIES[target.type].name;
+    if (v.atkCd <= 0 && (v.power || 0) >= 100) { startUltimate(s, v, 'astra', target); return; }
     if (v.atkCd <= 0) {
       const ab = SOLDIER_MOVES.archer.ability;
       const volley = (v.abilT || 0) <= 0 && enemiesNear(s, target.x, target.z, 3) >= 3;
@@ -1629,10 +1723,11 @@ function archerAI(s, v, dt, phase, spd) {
   }
   const rg = validWorkplace(s, v, 'range');
   if (!rg) { v.task = 'Needs a Dhanush Shala'; return idleAI(s, v, dt, spd); }
+  // two ranks at the firing line under the shelter, each archer on one of the three targets
   const i = workplaceIndex(s, v);
-  const p = localToWorld(rg, -1.2, -0.5 + i * 0.5);
+  const p = localToWorld(rg, -1.35 + (i >= 5 ? 0.45 : 0), -1.0 + (i % 5) * 0.5);
   if (!moveTo(v, p.x, p.z, spd, dt)) { v.task = 'Walking to the Dhanush Shala'; return; }
-  const tg = localToWorld(rg, 1.1, 0.05);
+  const tg = localToWorld(rg, 1.55, [-0.9, 0, 0.9][i % 3]);
   faceTo(v, tg.x, tg.z);
   v.anim = 'shoot';
   v.task = 'Practising archery';
@@ -1647,20 +1742,32 @@ function updateVillager(s, v, dt, phase) {
   if (v.blockT > 0) v.blockT -= dt;
   if (v.abilT > 0) v.abilT -= dt;
   naturalHealing(s, v, dt);
+  if (v.power > 0 && phase === 'day' && !(v.combatT > 0) && !s.enemies.length) v.power = Math.max(0, v.power - 3 * dt); // Shakti fades in peacetime
   v.task = '';
+  if (v.stunT > 0) { v.stunT -= dt; v.atk = null; v.anim = 'stand'; v.task = 'Staggered by a demon’s roar'; return; }
+  if (v.heldBy) { // seized by a Mamdo Bhoot: helpless until someone breaks its grip
+    const m = s.enemies.find((e) => e.id === v.heldBy && !e.dead && e.grab && e.grab.v === v);
+    if (m) { v.inside = false; v.atk = null; v.anim = 'stand'; faceTo(v, m.x, m.z); v.task = 'Seized by a Mamdo Bhoot!'; return; }
+    v.heldBy = null;
+  }
   const spd = villagerSpeed(s, v);
   if (v.arriving) {
     v.task = 'Arriving at the village';
     if (moveTo(v, v.ax, v.az, spd, dt)) v.arriving = false;
     return;
   }
-  if (v.entranced > 0) { // a Nishi is calling their name — they walk toward the voice
+  if (v.entranced > 0) { // Nishi Dak is calling their name in a loved one's voice — they walk out toward it
     v.entranced -= dt;
     const n = s.enemies.find((e) => e.id === v.callBy && !e.dead);
     if (n && phase !== 'day') {
+      // a Pujari's chant, a Mandir's bells or a soldier at their side breaks the spell
+      const guard = s.villagers.find((o) => o !== v && ((o.job === 'priest' && distXZ(o.x, o.z, v.x, v.z) < 6) || (isDefender(o) && distXZ(o.x, o.z, v.x, v.z) < 1.4)))
+        || s.buildings.find((b) => b.type === 'temple' && b.done && distXZ(b.x, b.z, v.x, v.z) < 8);
+      if (guard) { breakNishiSpell(s, v, guard.job ? `${guard.name} pulls them back` : 'The Mandir bells drown out the voice'); return; }
       v.inside = false; v.shelter = null;
-      v.task = 'Walking toward a voice calling their name…';
+      v.task = `Answering a voice that calls their name… (${Math.ceil(distXZ(v.x, v.z, n.x, n.z))} steps from Nishi Dak)`;
       moveTo(v, n.x, n.z, spd * 0.55, dt);
+      if (distXZ(v.x, v.z, n.x, n.z) < 0.9) return consumeSoul(s, v, n);
       return;
     }
     v.entranced = 0;
@@ -1706,6 +1813,7 @@ function damageVillager(s, v, dmg, from) {
     sfx('hurt', v.x, v.z);
   }
   v.hp -= dmg;
+  addPower(s, v, SHAKTI.struck); // pain feeds a fighter's Shakti
   if (dmg >= 1) floater(s, v.x + rand(-0.12, 0.12), 1.6, v.z, String(Math.round(dmg)), '#ff7a6b', 'dmg hurt');
   if (!isDefender(v)) v.scared = true;
   if (v.hp <= 0) killVillager(s, v);
@@ -1744,18 +1852,20 @@ function medicAI(s, v, dt, phase, spd) {
     v.anim = 'atk';
     if (!a.done && a.t >= a.dur * a.hit) {
       a.done = true;
-      let n = 0;
+      const big = a.kind === 'sanjeevani', R = big ? 6 : 3.6; // Sanjeevani: everyone near is made whole
       for (const o of s.villagers) {
-        if (o.inside || distXZ(o.x, o.z, v.x, v.z) > 3.6 || o.hp >= o.maxHp) continue;
-        o.hp = Math.min(o.maxHp, o.hp + 25);
-        floater(s, o.x, 1.7, o.z, '+25', '#8ef09a', 'dmg heal');
-        for (let i = 0; i < 2; i++) healGlow(s, o);
-        n++;
+        if (o.inside || distXZ(o.x, o.z, v.x, v.z) > R || o.hp >= o.maxHp) continue;
+        const add = big ? o.maxHp - o.hp : 25;
+        o.hp = Math.min(o.maxHp, o.hp + add);
+        floater(s, o.x, 1.7, o.z, '+' + Math.round(add), '#8ef09a', 'dmg heal');
+        for (let i = 0; i < (big ? 4 : 2); i++) healGlow(s, o);
       }
-      fx(s, 'ring', { x: v.x, z: v.z, r: 3.6, c: 0x8ef09a, dur: 0.7 });
-      fx(s, 'impact', { x: v.x, y: 1.6, z: v.z, c: 0xb8ffc0, s: 1.6 });
-      emit(s, v.x, 2.2, v.z, 24, { spread: 2.2, vx: 0.2, vyMin: -1.6, vyMax: -0.6, life: 1.1, colors: ['#8ef09a', '#d8ffd0', '#fff3b0'], g: 0.5, add: true });
+      fx(s, 'ring', { x: v.x, z: v.z, r: R, c: 0x8ef09a, dur: big ? 1.0 : 0.7 });
+      if (big) fx(s, 'ring', { x: v.x, z: v.z, r: R * 0.6, c: 0xd8ffd0, dur: 0.7 });
+      fx(s, 'impact', { x: v.x, y: 1.6, z: v.z, c: 0xb8ffc0, s: big ? 2.8 : 1.6 });
+      emit(s, v.x, 2.2, v.z, big ? 50 : 24, { spread: R * 0.6, vx: 0.2, vyMin: -1.6, vyMax: -0.6, life: 1.1, colors: ['#8ef09a', '#d8ffd0', '#fff3b0'], g: 0.5, add: true });
       sfx('heal', v.x, v.z); sfx('bellSoft', v.x, v.z);
+      if (!big) addPower(s, v, SHAKTI.pulse);
     }
     if (a.t >= a.dur) v.atk = null;
     return;
@@ -1785,6 +1895,7 @@ function medicAI(s, v, dt, phase, spd) {
   }
   const p = v.patient;
   if (p) {
+    if ((v.power || 0) >= 100 && s.villagers.some((o) => !o.inside && o.hp < o.maxHp * 0.6 && distXZ(o.x, o.z, v.x, v.z) < 6)) { startUltimate(s, v, 'sanjeevani', null); return; }
     // Amrit Varsha when several around are hurt
     if ((v.abilT || 0) <= 0) {
       let hurt = 0;
@@ -1802,6 +1913,7 @@ function medicAI(s, v, dt, phase, spd) {
     faceTo(v, p.x, p.z);
     v.anim = 'heal';
     v.healTo = p.id;
+    if (p.hp < p.maxHp) addPower(s, v, SHAKTI.healPerSec * dt);
     p.hp = Math.min(p.maxHp, p.hp + heal * dt);
     p.healBy = v.name; p.healT = s.time + 0.6; p.healNear = true;
     if (night) v.combatT = 1.5;
@@ -1846,6 +1958,15 @@ function shootArrow(s, x, y, z, target, dmg, practice, kind, speed) {
   s.projectiles.push(p);
   return p;
 }
+function rockImpact(s, p) {
+  p.dead = true;
+  for (const v of s.villagers) if (!v.inside && distXZ(v.x, v.z, p.x, p.z) < p.splash) damageVillager(s, v, p.dmg * (distXZ(v.x, v.z, p.x, p.z) < 0.6 ? 1 : 0.6), p);
+  const b = buildingAtPoint(s, p.x, p.z);
+  if (b && b.hp > 0) { b.hp -= p.dmg * 1.5; if (b.hp <= 0) destroyBuilding(s, b); }
+  fx(s, 'ring', { x: p.x, z: p.z, r: p.splash + 0.3, c: 0xc8b08a, dur: 0.5 });
+  emit(s, p.x, 0.2, p.z, 22, { spread: 0.5, vx: 2.6, vyMin: 1, vyMax: 3.5, life: 0.9, colors: ['#8a8a8a', '#6b6b6b', '#a89a86'], g: 8 });
+  shake(s, 0.22); sfx('crash', p.x, p.z);
+}
 /** Fire pots and cannon balls burst where they land. */
 function explode(s, p) {
   p.dead = true;
@@ -1853,13 +1974,16 @@ function explode(s, p) {
     if (e.dead) continue;
     const d = distXZ(p.x, p.z, e.x, e.z);
     if (d > p.splash + ENEMIES[e.type].r || e.y > 2.5) continue;
-    hitEnemy(s, e, p.dmg * (d < 0.6 ? 1 : 0.6), p, { knock: 1.5, big: true, fire: p.kind === 'pot' });
-    if (p.kind === 'pot') { e.fireT = 3; e.fireDps = p.burn || 4; }
+    const fire = p.kind === 'pot' || p.kind === 'astra';
+    hitEnemy(s, e, p.dmg * (d < 0.6 ? 1 : 0.6), p, { knock: p.kind === 'astra' ? 2 : 1.5, big: true, fire });
+    if (fire) { e.fireT = p.kind === 'astra' ? 6 : 3; e.fireDps = p.burn || 4; }
   }
-  fx(s, 'ring', { x: p.x, z: p.z, r: p.splash + 0.4, c: p.kind === 'pot' ? 0xff8a1f : 0xd8c4a0, dur: 0.45 });
-  fx(s, 'impact', { x: p.x, y: 0.5, z: p.z, c: p.kind === 'pot' ? 0xffb347 : 0xfff0c0, s: 1.7 });
-  shake(s, p.kind === 'ball' ? 0.22 : 0.1);
-  if (p.kind === 'pot') {
+  const fireK = p.kind === 'pot' || p.kind === 'astra';
+  fx(s, 'ring', { x: p.x, z: p.z, r: p.splash + 0.4, c: fireK ? 0xff8a1f : 0xd8c4a0, dur: p.kind === 'astra' ? 0.7 : 0.45 });
+  fx(s, 'impact', { x: p.x, y: 0.5, z: p.z, c: fireK ? 0xffb347 : 0xfff0c0, s: p.kind === 'astra' ? 3 : 1.7 });
+  shake(s, p.kind === 'ball' ? 0.22 : p.kind === 'astra' ? 0.3 : 0.1);
+  if (p.kind === 'astra') emit(s, p.x, 0.3, p.z, 40, { spread: p.splash * 0.7, vx: 2.6, vyMin: 1.2, vyMax: 5, life: 1.2, colors: ['#ff8a1f', '#ffcc33', '#d8361c', '#fff3b0'], g: 1.5, add: true });
+  if (fireK) {
     emit(s, p.x, 0.3, p.z, 26, { spread: p.splash * 0.6, vx: 2.2, vyMin: 1, vyMax: 4, life: 0.9, colors: ['#ff8a1f', '#ffcc33', '#d8361c', '#fff3b0'], g: 2, add: true });
     emit(s, p.x, 0.5, p.z, 8, { spread: 0.5, vx: 0.6, vyMin: 0.8, vyMax: 1.6, life: 1.8, colors: ['#5a5a66', '#6b6b78'], g: -0.3 });
   } else {
@@ -1876,7 +2000,9 @@ function updateProjectiles(s, dt) {
     p.life -= dt;
     if (p.kind === 'pot' && Math.random() < 0.6) emitFire(s, p.x, p.y, p.z);
     if (p.fire && Math.random() < 0.45) emitFire(s, p.x, p.y, p.z); // Agni Baan and volley arrows burn as they fly
-    if (p.practice) {
+    if (p.hostile) { // a demon's boulder: it crashes down on whoever stands where it lands
+      if (p.y <= 0.05) { rockImpact(s, p); continue; }
+    } else if (p.practice) {
       if (p.y < 1.1 && p.vy < 0 && p.life < 3.6) { p.stuck = true; p.life = 1.5; sfx('thunk', p.x, p.z); }
     } else {
       for (const e of s.enemies) {
@@ -1887,6 +2013,7 @@ function updateProjectiles(s, dt) {
           hitEnemy(s, e, p.dmg, p, { crit: p.crit, knock: p.crit ? 0.6 : 0.25, fire: p.fire });
           if (p.fire || s.upgrades.agnibaan) { e.fireT = 2.5; e.fireDps = 3; }
           if (p.crit) hitStop(s, 0.03);
+          if (p.owner) { const o = s.villagers.find((u) => u.id === p.owner); if (o) addPower(s, o, SHAKTI.arrow); }
           p.dead = true;
           break;
         }
@@ -1912,9 +2039,9 @@ function makeWave(s) {
     if (d >= 4 && budget >= 2) opts.push(['vetala', 1.5 + d * 0.15]);
     if (d >= 6 && budget >= 6) opts.push(['danav', 0.6 + d * 0.1]);
     // Bengali ghosts join the nights one by one
-    for (const k of ['aleya', 'shakchunni', 'mechho', 'nishi', 'skondhokata']) {
+    for (const k of ['aleya', 'shakchunni', 'mechho', 'nishi', 'mamdo', 'skondhokata']) {
       const E = ENEMIES[k];
-      if (d >= E.from && budget >= E.cost) opts.push([k, k === 'skondhokata' ? 0.7 + d * 0.08 : k === 'nishi' ? 0.9 : 1.6 + d * 0.12]);
+      if (d >= E.from && budget >= E.cost) opts.push([k, k === 'skondhokata' ? 0.7 + d * 0.08 : k === 'nishi' ? 0.9 : k === 'mamdo' ? 0.8 + d * 0.06 : 1.6 + d * 0.12]);
     }
     const tot = opts.reduce((a, o) => a + o[1], 0);
     let r = Math.random() * tot, ch = opts[0][0];
@@ -2040,6 +2167,124 @@ function enemyAttack(s, e, target, kind) {
   e.wind = { t: 0, dur: w, target, kind };
   if ((def.cost || 0) >= 2 || def.boss) fx(s, 'telegraph', { x: e.x, y: e.y + def.h * 0.95, z: e.z, c: 0xff4a3a, s: 0.55 * def.scale, dur: w });
 }
+/* ---------- demon power moves ---------- */
+const nearestFoe = (s, x, z, r, pred) => { let best = null, bd = r; for (const v of s.villagers) { if (v.inside || v.arriving || (pred && !pred(v))) continue; const d = distXZ(v.x, v.z, x, z); if (d < bd) { bd = d; best = v; } } return best; };
+/** Should this demon use its power move now? Starts the telegraph and returns true if so. */
+function demonPowers(s, e, def, dt) {
+  const P = DEMON_POWERS[e.type];
+  if (def.boss) { // Mahasura also calls up a host of demons
+    e.sumT = (e.sumT == null ? rand(8, 12) : e.sumT) - dt;
+    if (e.sumT <= 0 && s.enemies.length < 45) {
+      e.sumT = BOSS_SUMMON.cd;
+      floater(s, e.x, def.h + 0.8, e.z, BOSS_SUMMON.name + '!', '#ff7a6b', 'callout');
+      for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2, m = spawnEnemy(s, i === 0 ? 'rakshasa' : 'bhoot', 0); m.x = e.x + Math.cos(a) * 1.8; m.z = e.z + Math.sin(a) * 1.8; m.aggro = true; }
+      fx(s, 'ring', { x: e.x, z: e.z, r: 3, c: 0x9a3aff, dur: 0.8 });
+      sfx('roar', e.x, e.z);
+    }
+  }
+  if (!P) return false;
+  e.powT = (e.powT == null ? rand(4, 9) : e.powT) - dt;
+  if (e.powT > 0 || e.atkCd > 0.6) return false;
+  let target = null;
+  if (P.key === 'roar') { if (enemiesNear(s, e.x, e.z, P.range) >= 2) target = nearestFoe(s, e.x, e.z, P.range); }
+  else if (P.key === 'boulder') target = nearestFoe(s, e.x, e.z, P.range, (v) => distXZ(v.x, v.z, e.x, e.z) > 2.5) || null;
+  else if (P.key === 'nova') { if (s.villagers.filter((v) => !v.inside && distXZ(v.x, v.z, e.x, e.z) < P.range).length >= 1) target = e; }
+  else if (P.key === 'charge') target = nearestFoe(s, e.x, e.z, P.range, (v) => distXZ(v.x, v.z, e.x, e.z) > 2.5);
+  else if (P.key === 'grab') target = nearestFoe(s, e.x, e.z, P.range + def.r, (v) => !v.heldBy);
+  if (!target) { e.powT = 1.2; return false; }
+  e.powT = P.cd * rand(0.85, 1.15);
+  if (P.key === 'grab') return startGrab(s, e, target);
+  e.wind = { t: 0, dur: P.wind, target, kind: 'power', key: P.key, tx: target.x, tz: target.z };
+  floater(s, e.x, def.h * def.scale + 0.7, e.z, P.name + '!', '#ff7a6b', 'callout');
+  fx(s, 'telegraph', { x: e.x, y: def.h * 0.9, z: e.z, c: 0xff3a2a, s: 1.1 * def.scale, dur: P.wind });
+  return true;
+}
+function usePower(s, e, w) {
+  const def = ENEMIES[e.type];
+  e.atkAnim = 0.4; e.atkCd = Math.max(e.atkCd, 0.6);
+  switch (w.key) {
+    case 'roar': { // Garjan: demons nearby rage, fighters nearby stagger, villagers flee
+      for (const o of s.enemies) if (!o.dead && distXZ(o.x, o.z, e.x, e.z) < 5) o.frenzyT = 6;
+      for (const v of s.villagers) {
+        if (v.inside || distXZ(v.x, v.z, e.x, e.z) > 3.5) continue;
+        if (isDefender(v)) { v.stunT = 0.8; floater(s, v.x, 1.8, v.z, 'Staggered', '#ff9a8a', 'tag'); } else v.scared = true;
+      }
+      fx(s, 'ring', { x: e.x, z: e.z, r: 5, c: 0xff3a2a, dur: 0.7 }); fx(s, 'ring', { x: e.x, z: e.z, r: 3, c: 0xff8a6a, dur: 0.5 });
+      shake(s, 0.15); sfx('roar', e.x, e.z); sfx('v_rakshasa', e.x, e.z);
+      break;
+    }
+    case 'boulder': { // Shila Prahaar: a boulder arcs onto where the target was
+      const p = shootArrow(s, e.x, 2.0, e.z, { x: w.tx, y: 0.2, z: w.tz, practice: true }, 22, true, 'rock', 9);
+      p.practice = false; p.hostile = true; p.splash = 1.5;
+      sfx('whoosh', e.x, e.z);
+      break;
+    }
+    case 'nova': { // Bhoot-agun: blue ghost-fire bursts from the headless neck
+      for (const v of s.villagers) if (!v.inside && distXZ(v.x, v.z, e.x, e.z) < 2.6) damageVillager(s, v, 16, e);
+      fx(s, 'ring', { x: e.x, z: e.z, r: 2.8, c: 0x6fa8ff, dur: 0.6 }); fx(s, 'impact', { x: e.x, y: 1.6, z: e.z, c: 0x9fd0ff, s: 2.4 });
+      emit(s, e.x, 1.4, e.z, 30, { spread: 1.0, vx: 3, vyMin: 0.5, vyMax: 3, life: 0.9, colors: ['#6fa8ff', '#dcecff', '#3a6ad0'], g: -0.5, add: true });
+      shake(s, 0.12); sfx('boom', e.x, e.z);
+      break;
+    }
+    case 'charge': { // Mahish Dhakka: he lowers his horns and charges
+      const d = distXZ(w.tx, w.tz, e.x, e.z) || 1;
+      e.charge = { t: 0, dur: 0.75, dx: (w.tx - e.x) / d, dz: (w.tz - e.z) / d, hit: new Set() };
+      sfx('roar', e.x, e.z); sfx('stomp', e.x, e.z);
+      break;
+    }
+  }
+}
+function tickCharge(s, e, dt) {
+  const c = e.charge, def = ENEMIES[e.type];
+  c.t += dt;
+  const sp = 9;
+  e.x += c.dx * sp * dt; e.z += c.dz * sp * dt; e.vx = c.dx * sp; e.vz = c.dz * sp; e.rot = Math.atan2(c.dx, c.dz);
+  if (Math.random() < 0.6) emit(s, e.x, 0.1, e.z, 2, { spread: 0.6, vx: 1.2, vyMin: 0.3, vyMax: 1.2, life: 0.6, colors: ['#8a7a66', '#6b5a48'], g: 4 });
+  for (const v of s.villagers) {
+    if (v.inside || c.hit.has(v.id) || distXZ(v.x, v.z, e.x, e.z) > def.r + 0.6) continue;
+    c.hit.add(v.id);
+    damageVillager(s, v, 26, e);
+    v.x += c.dx * 0.9; v.z += c.dz * 0.9; v.stunT = 0.9;
+    shake(s, 0.2);
+  }
+  const b = buildingAtPoint(s, e.x + c.dx * 0.8, e.z + c.dz * 0.8);
+  if (b && b.hp > 0 && !isFieldType(b.type)) { b.hp -= 60; sfx('crash', b.x, b.z); shake(s, 0.35); if (b.hp <= 0) destroyBuilding(s, b); e.charge = null; e.stunT = 0.6; return; }
+  if (c.t >= c.dur) e.charge = null;
+}
+/* Mamdo Bhoot: seizes someone and twists their neck, unless they are freed in time. */
+function startGrab(s, e, v) {
+  e.grab = { v, t: 0, dur: 1.7, hp0: e.hp };
+  v.heldBy = e.id; v.entranced = 0;
+  floater(s, e.x, ENEMIES[e.type].h + 0.6, e.z, DEMON_POWERS.mamdo.name + '!', '#ff7a6b', 'callout');
+  fx(s, 'telegraph', { x: v.x, y: 1.5, z: v.z, c: 0xff3a2a, s: 0.9, dur: 1.7 });
+  toast(`A Mamdo Bhoot has seized ${v.name}! Strike it hard to break its grip.`, 'danger', 4);
+  sfx('v_mamdo', e.x, e.z);
+  return true;
+}
+function tickGrab(s, e, dt) {
+  const g = e.grab, v = g.v;
+  if (!s.villagers.includes(v)) { e.grab = null; return; }
+  g.t += dt; e.vx = e.vz = 0;
+  faceTo(e, v.x, v.z);
+  // pull the victim close
+  const d = distXZ(v.x, v.z, e.x, e.z) || 1;
+  if (d > 0.7) { v.x += ((e.x - v.x) / d) * Math.min(d - 0.7, 2 * dt); v.z += ((e.z - v.z) / d) * Math.min(d - 0.7, 2 * dt); }
+  if (g.hp0 - e.hp >= 20) return releaseGrab(s, e, true); // struck hard enough: it lets go
+  if (g.t >= g.dur) {
+    e.grab = null; v.heldBy = null; e.atkAnim = 0.4; e.atkCd = 2;
+    sfx('crash', v.x, v.z);
+    fx(s, 'impact', { x: v.x, y: 1.3, z: v.z, c: 0xff3a2a, s: 1.2 });
+    if (isDefender(v)) { damageVillager(s, v, v.maxHp * 0.55, e); floater(s, v.x, 2, v.z, 'Neck wrenched!', '#ff7a6b', 'tag'); }
+    else { toast(`A Mamdo Bhoot twisted ${v.name}'s neck.`, 'danger', 6); damageVillager(s, v, v.hp + 1, e); }
+  }
+}
+function releaseGrab(s, e, forced) {
+  const v = e.grab && e.grab.v;
+  e.grab = null;
+  if (!v) return;
+  v.heldBy = null;
+  if (forced && s.villagers.includes(v)) { floater(s, v.x, 1.9, v.z, 'Broke free!', '#9fd0ff', 'tag'); fx(s, 'impact', { x: v.x, y: 1.2, z: v.z, c: 0xbfe2ff, s: 1 }); }
+}
 /** The blow lands (if the target is still in reach). */
 function enemyStrike(s, e, target, kind) {
   const def = ENEMIES[e.type];
@@ -2048,7 +2293,8 @@ function enemyStrike(s, e, target, kind) {
   if (kind === 'villager' && (!target || !s.villagers.includes(target) || target.inside || distXZ(target.x, target.z, e.x, e.z) > def.reach + def.r * 0.5 + 0.7)) { sfx('whoosh', e.x, e.z); return; } // it dodged
   const ES = ENEMY_SFX[e.type];
   if (ES && ES.attack) sfx(ES.attack, e.x, e.z);
-  const dmg = def.dmg * (s.festival ? 0.75 : 1);
+  const dmg = def.dmg * (s.festival ? 0.75 : 1) * (e.frenzyT > 0 ? 1.3 : 1); // a roar's rage hits harder
+  if (e.frenzyT > 0) e.atkCd *= 0.75;
   if (def.boss || e.type === 'danav') { // giants pound the ground: everyone close by is caught in it
     e.pounds = (e.pounds || 0) + 1;
     if (def.boss ? e.pounds % 3 === 0 : true) {
@@ -2118,22 +2364,43 @@ function thiefAI(s, e, def, spd, dt, df) {
   e.x += e.vx * dt; e.z += e.vz * dt; e.rot = Math.atan2(e.vx, e.vz);
   return true;
 }
-/** Nishi: every few seconds she calls a hiding villager by name, drawing them out into the night. */
+/*
+ * Nishi Dak: she calls a villager by name in the voice of someone they love. Whoever answers her first or
+ * second call walks out to her, and if they reach her she takes their soul. Folk wisdom says to answer only
+ * a third call, so nobody answers her a third time. The player can hold a called villager back.
+ */
 function nishiCall(s, e, dt, df) {
   e.callT = (e.callT == null ? rand(3, 5) : e.callT) - dt;
   if (e.callT > 0 || df > territory(s) + 8) return;
   e.callT = rand(8, 11);
   let best = null, bd = 18;
   for (const v of s.villagers) {
-    if (isDefender(v) || v.entranced > 0 || v.arriving) continue;
+    if (isDefender(v) || v.entranced > 0 || v.arriving || (v.nishiCalls || 0) >= 2) continue;
     const d = distXZ(v.x, v.z, e.x, e.z) - (v.inside ? 4 : 0); // she prefers those hiding indoors
     if (d < bd) { bd = d; best = v; }
   }
   if (!best) return;
-  best.entranced = 5; best.callBy = e.id;
+  best.nishiCalls = (best.nishiCalls || 0) + 1;
+  best.entranced = 9; best.callBy = e.id;
   e.atkAnim = 0.4;
+  floater(s, best.x, 1.95, best.z, `“${best.name}…”`, '#cfe0ff', 'callout');
+  fx(s, 'ring', { x: best.x, z: best.z, r: 1.0, c: 0x9fb4ff, dur: 0.8 });
   sfx('nishi', e.x, e.z); sfx('v_nishi', e.x, e.z);
-  toast(`${best.name} hears the Nishi call their name and walks out into the night!`, 'danger', 5);
+  toast(`Nishi Dak calls ${best.name} in a loved one's voice (call ${best.nishiCalls} of 2) — click ${best.name} and hold them back before they reach her!`, 'danger', 6);
+}
+function breakNishiSpell(s, v, why) {
+  v.entranced = 0; v.callBy = null;
+  floater(s, v.x, 1.9, v.z, 'Did not answer', '#cfe0ff', 'tag');
+  if (why) toast(`${v.name} snaps out of it: ${why}.`, 'good', 4);
+}
+/** The one who answered reaches her: Nishi Dak takes their soul and grows stronger. */
+function consumeSoul(s, v, n) {
+  emit(s, v.x, 1.0, v.z, 24, { spread: 0.25, vx: 0.4, vyMin: 0.8, vyMax: 2.2, life: 1.6, colors: ['#cfe0ff', '#9fb4ff', '#ffffff'], g: -0.8, add: true });
+  fx(s, 'death', { x: v.x, y: 1.0, z: v.z, c: 0x9fb4ff, s: 1.2 });
+  n.hp = Math.min(n.maxHp * 1.5, n.hp + 40); n.maxHp = Math.max(n.maxHp, n.hp);
+  toast(`Nishi Dak has taken ${v.name}'s soul.`, 'danger', 7);
+  v.hp = 0;
+  killVillager(s, v);
 }
 /** Growls, moans and footsteps while a demon roams (each sound is rate-limited in Sound.play). */
 function enemySounds(s, e, dt) {
@@ -2184,16 +2451,20 @@ function updateEnemy(s, e, dt) {
     if (Math.random() < dt * 3) emitFire(s, e.x, e.y + rand(0.2, def.h), e.z);
   }
   if (e.hp <= 0) return killEnemy(s, e, false);
-  if (e.stunT > 0) { e.stunT -= dt; e.wind = null; e.vx = e.vz = 0; return; } // seeing stars
-  if (e.burning) e.wind = null;
-  if (e.wind) { // winding up a blow
+  if (e.frenzyT > 0) e.frenzyT -= dt;
+  if (e.stunT > 0) { e.stunT -= dt; e.wind = null; e.charge = null; if (e.grab) releaseGrab(s, e, true); e.vx = e.vz = 0; return; } // seeing stars
+  if (e.burning) { e.wind = null; e.charge = null; if (e.grab) releaseGrab(s, e, false); }
+  if (e.grab) return tickGrab(s, e, dt);
+  if (e.charge) return tickCharge(s, e, dt);
+  if (e.wind) { // winding up a blow (or a power move)
     const w = e.wind;
     w.t += dt; e.vx = e.vz = 0;
-    if (w.target && w.kind === 'villager') faceTo(e, w.target.x, w.target.z);
-    if (w.t >= w.dur) { e.wind = null; enemyStrike(s, e, w.target, w.kind); }
+    if (w.target && (w.kind === 'villager' || w.kind === 'power') && w.target.x != null) faceTo(e, w.target.x, w.target.z);
+    if (w.t >= w.dur) { e.wind = null; if (w.kind === 'power') usePower(s, e, w); else enemyStrike(s, e, w.target, w.kind); }
     return;
   }
-  const spd = def.speed * slow;
+  if (!e.burning && demonPowers(s, e, def, dt)) return;
+  const spd = def.speed * slow * (e.frenzyT > 0 ? 1.35 : 1);
   if (e.burning && !def.boss) { // flee at dawn
     const k = (spd * 0.8 * dt) / (df || 1);
     e.x += e.x * k; e.z += e.z * k; e.rot = Math.atan2(e.x, e.z); e.vx = e.vz = 0;
@@ -2290,6 +2561,7 @@ function updateAmbient(s, dt) {
 /* ---------- day cycle events ---------- */
 function onDusk(s) {
   if (s.demo) { s.spawnQueue = []; return; }
+  for (const v of s.villagers) v.nishiCalls = 0; // a new night, and Nishi Dak may call anyone again
   const need = s.villagers.length * 4;
   if (s.res.food >= need) {
     s.res.food -= need;
@@ -2423,7 +2695,7 @@ function updateParticles(s, dt) {
     if (p.y < 0.02 && p.g > 0) { p.y = 0.02; p.vx *= 0.5; p.vz *= 0.5; p.vy = 0; }
   }
   s.particles = s.particles.filter((p) => p.life > 0);
-  for (const f of s.floaters) { f.life -= dt; f.y += (f.cls && f.cls !== 'callout' ? 0.5 + 2.2 * (f.life / f.max) : 0.8) * dt; f.x += f.vx * dt; }
+  for (const f of s.floaters) { f.life -= dt; f.y += (f.cls && !f.cls.startsWith('callout') ? 0.5 + 2.2 * (f.life / f.max) : 0.8) * dt; f.x += f.vx * dt; }
   s.floaters = s.floaters.filter((f) => f.life > 0);
   for (const t of s.trees) if (t.shake > 0) t.shake -= dt;
 }
@@ -2475,6 +2747,17 @@ const Game = {
     s.fire.level = data.fire.level; s.fire.hp = data.fire.hp; s.fire.fuel = data.fire.fuel;
     s.villagers = data.villagers.map((d) => Object.assign(makeVillagerRaw(), d, { wx: d.x, wz: d.z }));
     s.buildings = data.buildings.map((b) => Object.assign({ cd: 0, offerT: 0 }, b, bCenterOf(b.type, b.cx, b.cz)));
+    // the Akhara and Dhanush Shala grew a tile: in older saves, slide one aside if it now overlaps a neighbour
+    const rect = (b, cx, cz) => { const d = BUILDINGS[b.type]; return [cx, cz, cx + d.fw, cz + d.fd]; };
+    const hits = (A, B) => A[0] < B[2] && B[0] < A[2] && A[1] < B[3] && B[1] < A[3];
+    for (const b of s.buildings) {
+      if (b.type !== 'akhara' && b.type !== 'range') continue;
+      const clear = (cx, cz) => s.buildings.every((o) => o === b || !hits(rect(b, cx, cz), rect(o, o.cx, o.cz)));
+      if (clear(b.cx, b.cz)) continue;
+      for (const [dx, dz] of [[-1, 0], [0, -1], [-1, -1], [1, 0], [0, 1], [1, 1], [-1, 1], [1, -1]]) {
+        if (clear(b.cx + dx, b.cz + dz)) { b.cx += dx; b.cz += dz; Object.assign(b, bCenterOf(b.type, b.cx, b.cz)); break; }
+      }
+    }
     s.trees = data.trees.map((a) => ({ id: a[0], x: a[1], z: a[2], type: a[3], variant: a[4], wood: a[5], maxWood: a[6], stump: !!a[7], regrow: a[8], rot: a[9], scale: a[10], sacred: !!a[11], shake: 0 }));
     s.rocks = data.rocks.map((a) => ({ id: a[0], x: a[1], z: a[2], variant: a[3], stone: a[4], maxStone: a[5], rot: a[6], scale: a[7], ore: !!a[8] }));
     if (data.rocks.length && data.rocks[0].length < 9) { // a save from before iron: turn some outer boulders into ore

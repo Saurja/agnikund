@@ -90,10 +90,22 @@ const SWING_POSES = {
   shoot:  { armR: [-1.5, -1.5, -1.5], armL: [-1.35, -1.45, -1.35], armRz: [0, -0.4, 0.12], twist: [0, 0.25, -0.05], lean: [-0.04, -0.08, 0.02] },
   volley: { armR: [-1.5, -2.3, -2.2], armL: [-1.35, -2.2, -2.1], armRz: [0, -0.4, 0.1], lean: [-0.04, -0.2, -0.1] },
   pulse:  { armR: [-0.9, -2.9, -1.3], armL: [-0.9, -2.9, -1.3], armRz: [0, 0.35, 1.0], armLz: [0, -0.35, -1.0], lean: [0.05, -0.15, 0.1], hipY: [0.35, 0.37, 0.34] },
+  // ultimates
+  whirl:  { armR: [-1.0, -1.57, -1.57], armRz: [0.2, 1.25, 1.25], armL: [-0.7, -1.57, -1.57], armLz: [-0.2, -1.25, -1.25], lean: [0.12, 0.05, 0.12], legL: [0.3, 0.35, 0.35], legR: [-0.3, -0.35, -0.35] },
+  leap:   { armR: [-1.9, -3.1, -0.2], armL: [-1.7, -3.0, -0.3], lean: [0.1, -0.3, 0.7], hipY: [0.34, 0.36, 0.22], legL: [0.3, -0.7, 0.8], legR: [-0.3, 0.7, -0.7] },
+  barrage: null, // uses the thrust, once per blow
+  astra:  { armR: [-1.5, -2.5, -2.3], armL: [-1.35, -2.4, -2.2], armRz: [0, -0.55, 0.1], lean: [-0.04, -0.3, -0.12], legL: [0.2, 0.45, 0.45], legR: [-0.2, -0.4, -0.4] },
+  sanjeevani: { armR: [-0.9, -3.0, -1.0], armL: [-0.9, -3.0, -1.0], armRz: [0, 0.2, 1.3], armLz: [0, -0.2, -1.3], lean: [0.05, -0.25, 0.05], hipY: [0.35, 0.4, 0.35] },
 };
+SWING_POSES.barrage = SWING_POSES.thrust;
 function attackPose(v, a) {
   const S2 = SWING_POSES[a.kind] || SWING_POSES.slash;
-  const p = clamp(a.t / a.dur, 0, 1), h = a.hit;
+  let p = clamp(a.t / a.dur, 0, 1), h = a.hit;
+  if (a.hits && a.kind !== 'whirl') { // several blows: wind up and strike again for each
+    const k = Math.min(a.hi || 0, a.hits.length - 1), t0 = k === 0 ? 0 : a.hits[k - 1], t1 = a.hits[k];
+    p = clamp((p - t0) / Math.max(0.01, (k === a.hits.length - 1 ? 1 : a.hits[k + 1]) - t0), 0, 1);
+    h = clamp((t1 - t0) / Math.max(0.01, (k === a.hits.length - 1 ? 1 : a.hits[k + 1]) - t0), 0.2, 0.9);
+  }
   const wind = p < h ? Math.sin((p / h) * Math.PI * 0.5) : 1;
   const strike = p < h ? 0 : easeOutCubic((p - h) / Math.min(0.32, 1 - h));
   const side = S2.sided ? a.side || 1 : 1;
@@ -105,6 +117,7 @@ function attackPose(v, a) {
     J[key] = (strike > 0 ? w + (s - w) * strike : r + (w - r) * wind) * sg;
   }
   if (a.kind === 'slam' && p < h) J.hipY += Math.sin((p / h) * Math.PI) * 0.34; // the leap
+  if (a.kind === 'leap' && p < h) J.hipY += Math.sin((p / h) * Math.PI) * 1.1; // Hanuman's leap: high through the air
   return J;
 }
 
@@ -1169,6 +1182,7 @@ const R3 = {
         }
       }
       if (ud.toolFlame) ud.toolFlame.scale.setScalar(0.8 + 0.3 * Math.sin(time * 12 + v.id));
+      if ((v.power || 0) >= 100) this.lightSrc.push({ x: v.x, y: 0.9, z: v.z, r: 2.2, c: 0xffd27a, k: 0.55 + 0.25 * Math.sin(time * 6 + v.id) }); // Shakti ready: a golden glow
       o.born = Math.min(1, (o.born == null ? 0 : o.born) + dt * 3);
       const hs = (v.hurtT > 0 ? 1 + Math.sin(v.hurtT * 40) * 0.08 : 1) * (0.6 + 0.4 * easeOutBack(o.born));
       obj.scale.set(hs, hs, hs);
@@ -1205,6 +1219,7 @@ const R3 = {
       if (flash > 0) o.fm.emissive.setRGB(flash, flash * 0.9, flash * 0.8);
       else if (wind > 0) o.fm.emissive.setRGB(0.42 * wind, 0.04 * wind, 0.02 * wind);
       else if (stun) o.fm.emissive.setRGB(0.14, 0.12, 0.02);
+      else if (e.frenzyT > 0) o.fm.emissive.setRGB(0.22 + 0.08 * Math.sin(time * 10), 0.02, 0.0); // raging after a roar
       else if (o.fm.emissive.r || o.fm.emissive.g) o.fm.emissive.setRGB(0, 0, 0);
       if (o.fg) { if (flash > 0) o.fg.emissive.setRGB(flash, flash, flash); else o.fg.emissive.setHex(0x2a3848); } // ghosts flash too
       if (stun && !o.stars) { // three little stars circling the head
@@ -1238,6 +1253,8 @@ const R3 = {
       let tArmL = moving ? Math.sin(t * 8) * 0.4 : 0.1 + Math.sin(t * 2.3) * 0.05;
       let tLean = atk > 0 ? 0.3 * atk : 0;
       if (wind > 0) { tArmR = -3.0 * easeOutCubic(wind); tArmL = -1.1 * wind; tLean = -0.28 * wind; } // the telegraph: rear back, arm high
+      if (e.grab) { tArmR = -1.55; tArmL = -1.55; tLean = 0.25 + Math.sin(time * 18) * 0.04; } // both hands on the victim
+      if (e.charge) { tLean = 0.45; tArmR = 0.4; tArmL = 0.4; } // head down, charging
       if (stun) { tArmR = 0.35; tArmL = 0.35; tLean = 0.12; }
       P.legs += (tLegs - P.legs) * k; P.armR += (tArmR - P.armR) * (atk > 0 ? 0.6 : k); P.armL += (tArmL - P.armL) * k; P.lean += (tLean - P.lean) * k;
       if (ud.legs.length) { ud.legs[0].rotation.x = P.legs; ud.legs[1].rotation.x = -P.legs; }
@@ -1285,11 +1302,12 @@ const R3 = {
       this.arrowGeo = Models.arrow();
       this.potGeo = merge([sph(0.15, 0xb5532f, 0, 0, 0), cyl(0.07, 0.09, 0.08, 10, 0x8f3f22, 0, 0.13, 0)]);
       this.ballGeo = merge([sph(0.17, 0x2a2a30, 0, 0, 0)]);
-      for (const g of [this.arrowGeo.geometry, this.potGeo, this.ballGeo]) g.userData.shared = true;
-      this.shellPool = { pot: [], ball: [] };
+      this.rockGeo = merge([sph(0.26, 0x8a8681, 0, 0, 0, 1.1, 0.85, 1), sph(0.14, 0x76726d, 0.15, 0.1, 0.05)]);
+      for (const g of [this.arrowGeo.geometry, this.potGeo, this.ballGeo, this.rockGeo]) g.userData.shared = true;
+      this.shellPool = { pot: [], ball: [], rock: [] };
     }
-    const arrows = [], shells = { pot: [], ball: [] };
-    for (const p of s.projectiles) (p.kind === 'pot' || p.kind === 'ball' ? shells[p.kind] : arrows).push(p);
+    const arrows = [], shells = { pot: [], ball: [], rock: [] };
+    for (const p of s.projectiles) (shells[p.kind] || arrows).push(p);
     if (!this.trailGeo) { // two crossed glowing ribbons behind each arrow, so a shot reads as a streak
       const a = new THREE.PlaneGeometry(0.07, 1).translate(0, -0.5, 0).rotateX(Math.PI / 2);
       const b = a.clone().rotateZ(Math.PI / 2);
@@ -1311,6 +1329,9 @@ const R3 = {
       if (!p) return;
       m.position.set(p.x, p.y, p.z);
       if (!p.stuck) m.lookAt(p.x + p.vx, p.y + p.vy, p.z + p.vz);
+      const big = p.kind === 'astra' ? 2.4 : 1;
+      if (m.scale.x !== big) m.scale.setScalar(big);
+      if (big > 1) this.lightSrc.push({ x: p.x, y: p.y, z: p.z, r: 4, c: 0xff8a30, k: 1.2 });
       const tr = m.userData.trail;
       tr.visible = !p.stuck && !p.practice;
       if (tr.visible) {
@@ -1320,10 +1341,10 @@ const R3 = {
         tr.scale.set(p.fire || p.crit ? 1.6 : 1, 1, Math.min(1.5, Math.hypot(p.vx, p.vy, p.vz) * 0.075));
       }
     });
-    for (const k of ['pot', 'ball']) {
+    for (const k of ['pot', 'ball', 'rock']) {
       const pool = this.shellPool[k], list = shells[k];
       while (pool.length < list.length) {
-        const m = new THREE.Mesh(k === 'pot' ? this.potGeo : this.ballGeo, MAT.std);
+        const m = new THREE.Mesh(k === 'pot' ? this.potGeo : k === 'rock' ? this.rockGeo : this.ballGeo, MAT.std);
         m.castShadow = true;
         if (k === 'pot') { const fl = flameCluster(0.14); fl.position.y = 0.12; m.add(fl); m.userData.fl = fl; }
         this.scene.add(m);
@@ -1675,7 +1696,11 @@ const R3 = {
       el.style.display = 'block';
     };
     const sel = UI.selected;
-    for (const v of s.villagers) if (!v.inside && (v.hp < v.maxHp - 0.5 || (sel && sel.ref === v))) bar(v.x, 1.55, v.z, v.hp / v.maxHp, 'hp', 26);
+    for (const v of s.villagers) {
+      if (v.inside) continue;
+      if (v.hp < v.maxHp - 0.5 || (sel && sel.ref === v)) bar(v.x, 1.55, v.z, v.hp / v.maxHp, 'hp', 26);
+      if ((v.power || 0) > 1 && isDefender(v)) bar(v.x, 1.47, v.z, v.power / 100, v.power >= 100 ? 'pow full' : 'pow', 26); // Shakti
+    }
     for (const e of s.enemies) if (e.hp < e.maxHp) { const d = ENEMIES[e.type]; bar(e.x, e.y + d.h + 0.35, e.z, e.hp / e.maxHp, 'ehp', d.boss ? 70 : 28); }
     for (const b of s.buildings) {
       const d = BUILDINGS[b.type];

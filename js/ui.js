@@ -71,6 +71,7 @@ const UI = {
   icons: {}, jobIcons: {}, lastInfo: '', prevRes: {}, refreshT: 0, lastToast: {},
 
   init() {
+    for (const id of ['verTitle', 'verMenu']) { const el = document.getElementById(id); if (el) el.textContent = `Version ${GAME_VERSION}`; }
     for (const k of Object.keys(ICONS)) this.icons[k] = iconDataURL(k, 3);
     document.querySelectorAll('[data-ico]').forEach((el) => { el.style.backgroundImage = `url(${this.icons[el.dataset.ico]})`; });
     this.paintIcons(document);
@@ -496,6 +497,13 @@ const UI = {
       html += '<div class="info-body">';
       html += `<p class="task">${v.task || 'Thinking…'}</p>`;
       html += this.meter('', v.hp / v.maxHp, 'Health', `${Math.ceil(v.hp)} / ${v.maxHp}`);
+      if (ULTIMATES[v.job]) { // the Shakti bar and the ultimate it unleashes
+        const U = ULTIMATES[v.job], full = (v.power || 0) >= 100;
+        html += this.meter('pow' + (full ? ' full' : ''), (v.power || 0) / 100, `Shakti · ${U.name}`, full ? 'Ready!' : `${Math.floor(v.power || 0)}%`);
+        html += `<p><small><b>${U.name}</b> (${U.en}): ${U.desc}. Fills as they fight and take blows.</small></p>`;
+      }
+      if (v.entranced > 0 && v.callBy) html += `<div class="actions"><button data-action="holdback" class="primary" data-tip="Folk wisdom: never answer the first or second call">${svgIcon('alert')}Hold ${v.name} back from Nishi Dak</button></div>`;
+      if (v.heldBy) html += `<p class="miss">Seized by a Mamdo Bhoot! Strike it hard or stun it to break its grip.</p>`;
       if (v.hp < v.maxHp - 0.5) { // hurt: natural recovery, a healer on the way, and herbs to heal them at once
         const RG = { fire: ['flame', 'Recovering by the Agnikund'], home: ['home', 'Resting at home'], calm: ['heart', 'Recovering slowly'] }[v.regen];
         if (RG) html += status(RG[0], `${RG[1]} · <b>+${REGEN[v.regen]}</b> health a second`);
@@ -691,6 +699,7 @@ const UI = {
       case 'upgrade': buyUpgrade(S, btn.dataset.key); break;
       case 'fortify': fortifyWall(S, sel.ref); break;
       case 'herbs': if (sel && sel.kind === 'villager') healWithHerbs(S, sel.ref); break;
+      case 'holdback': if (sel && sel.kind === 'villager') { sel.ref.nishiCalls = 2; breakNishiSpell(S, sel.ref, 'you held them back'); sfx('bell'); } break;
       case 'recipe': if (sel && sel.kind === 'building') { sel.ref.recipe = btn.dataset.k; sfx('click'); } break;
       case 'mine': if (sel && sel.kind === 'building') {
         sel.ref.mine = btn.dataset.k;

@@ -583,28 +583,44 @@ Models.building = function (type, level) {
       p.push(box(0.08, 0.3, 0.64, C.dark, 0.18, 0.7, 0));
       break;
     }
-    case 'akhara': {
-      p.push(box(2.8, 0.12, 2.8, 0xb8643c, 0, 0, 0));
-      for (const s of [-1, 1]) { p.push(box(2.9, 0.18, 0.1, C.wood, 0, 0, s * 1.4)); p.push(box(0.1, 0.18, 2.9, C.wood, s * 1.4, 0, 0)); }
-      p.push(cyl(0.07, 0.1, 1.7, 8, C.woodL, -0.85, 0.12, -0.85));
-      p.push(sph(0.1, C.woodL, -0.85, 1.88, -0.85));
-      p.push(cyl(0.05, 0.07, 0.12, 8, C.woodL, -0.85, 1.75, -0.85));
-      p.push(cyl(0.03, 0.03, 0.8, 5, C.wood, 0.7, 0.12, -1.2)); p.push(cyl(0.03, 0.03, 0.8, 5, C.wood, 1.2, 0.12, -1.2));
-      p.push(boxC(0.6, 0.04, 0.04, C.wood, 0.95, 0.9, -1.2));
-      for (const x of [0.82, 1.08]) { p.push(cyl(0.02, 0.02, 0.5, 5, C.wood, x, 0.3, -1.12)); p.push(sph(0.1, C.gold, x, 0.25, -1.12)); }
-      p.push(cyl(0.03, 0.03, 2.4, 5, C.wood, 1.25, 0.12, 1.25));
-      const f = flag(C.saffron, 0.6, 0.4); f.position.set(1.25, 2.5, 1.25); g.add(f); ud.flags.push(f);
+    case 'akhara': { // a 4×4 wrestling ground: a sunken pit of soft red earth, a mallakhamb, a Hanuman shrine, weights and a weapon rack
+      p.push(box(3.9, 0.08, 3.9, C.mudD, 0, 0, 0));
+      p.push(box(3.3, 0.1, 3.3, 0xb8643c, 0, 0.02, 0.1)); // the pit
+      for (let i = 0; i < 14; i++) p.push(sph(0.08, 0xa8583a, -1.5 + (i * 0.23), 0.1, 0.1 + Math.sin(i * 1.7) * 1.4, 1.6, 0.25, 1.2)); // raked furrows
+      for (const s of [-1, 1]) { p.push(box(3.4, 0.2, 0.12, C.wood, 0, 0, 0.1 + s * 1.68)); p.push(box(0.12, 0.2, 3.4, C.wood, s * 1.68, 0, 0.1)); } // log rim
+      // mallakhamb: the polished wrestling pole, in the back corner
+      p.push(cyl(0.07, 0.11, 1.8, 10, C.woodL, -1.65, 0.08, -1.65)); p.push(sph(0.1, C.woodL, -1.65, 1.96, -1.65)); p.push(cyl(0.05, 0.07, 0.12, 8, C.woodL, -1.65, 1.82, -1.65));
+      // a small Hanuman shrine: saffron niche with a flag
+      p.push(box(0.5, 0.5, 0.36, 0xd9582c, 1.55, 0.08, -1.7)); p.push(box(0.3, 0.3, 0.05, 0x7a2a10, 1.55, 0.18, -1.51)); p.push(cone(0.36, 0.3, 4, 0xe86f2a, 1.55, 0.58, -1.7, 0, Math.PI / 4));
+      p.push(sph(0.08, 0xff7a1f, 1.55, 0.3, -1.55)); p.push(cyl(0.02, 0.025, 1.6, 5, C.bamboo, 1.85, 0.08, -1.85));
+      const f = flag(C.saffron, 0.55, 0.38); f.position.set(1.85, 1.68, -1.85); g.add(f); ud.flags.push(f);
+      // jodi clubs and gada weights by the side, a rack of wooden training swords and shields
+      for (const x of [-0.8, -0.55]) { p.push(cyl(0.025, 0.03, 0.55, 6, C.wood, x, 0.08, -1.82)); p.push(sph(0.12, 0x8a5a2e, x, 0.2, -1.82, 1, 1.3, 1)); }
+      for (const x of [0.2, 0.5]) { p.push(cyl(0.02, 0.02, 0.45, 5, C.wood, x, 0.08, -1.84)); p.push(sph(0.11, C.gold, x, 0.55, -1.84)); }
+      for (const sz of [-0.9, 0.3]) p.push(cyl(0.03, 0.03, 0.9, 5, C.wood, -1.86, 0.08, sz));
+      p.push(boxC(0.05, 0.05, 1.25, C.wood, -1.86, 0.82, -0.3));
+      for (let k = 0; k < 4; k++) p.push(boxC(0.03, 0.55, 0.06, 0xc89a5e, -1.82, 0.5, -0.75 + k * 0.3, 0, 0, 0.05));
+      p.push(cylC(0.16, 0.16, 0.03, 14, 0xd4a234, -1.8, 0.35, 0.55, 0, 0, Math.PI / 2));
+      p.push(box(1.0, 0.18, 0.28, C.woodL, 0.6, 0.08, 1.8)); // a bench for those waiting their turn
+      const f2 = flag(C.red, 0.4, 0.28); p.push(cyl(0.02, 0.025, 2.3, 5, C.bamboo, 1.85, 0.08, 1.85)); f2.position.set(1.85, 2.38, 1.85); g.add(f2); ud.flags.push(f2);
       break;
     }
-    case 'range': {
-      for (const sx of [-1.35, -0.35]) for (const sz of [-0.7, 0.2]) p.push(cyl(0.04, 0.05, 1.2, 5, C.wood, sx, 0, sz));
-      p.push(boxC(1.3, 0.07, 1.25, C.thatch, -0.85, 1.28, -0.25, 0.3));
-      p.push(box(0.8, 0.3, 0.45, C.thatch, -0.85, 0, -0.25));
-      p.push(cyl(0.12, 0.1, 0.35, 6, C.brick, -0.4, 0, 0.6));
-      for (let i = 0; i < 4; i++) p.push(cylC(0.015, 0.015, 0.55, 3, 0xc89a5e, -0.43 + i * 0.03, 0.5, 0.6, 0.1 * (i - 1.5), 0, 0.12 * (i - 1.5)));
-      p.push(cyl(0.04, 0.04, 0.8, 5, C.wood, 0.85, 0, 0.0)); p.push(cyl(0.04, 0.04, 0.8, 5, C.wood, 1.35, 0, 0.0));
-      const tg = [[0.45, 0xe9dcb8], [0.36, C.red], [0.24, 0xf4ecd8], [0.13, C.gold]];
-      tg.forEach(([r, c], i) => p.push(cylC(r, r, 0.08 + i * 0.02, 12, c, 1.1, 0.95, 0.05 + i * 0.01, Math.PI / 2)));
+    case 'range': { // a 4×3 archery ground: a thatched firing shelter, a lane of three straw targets, quivers and a bow rack
+      p.push(box(3.9, 0.06, 2.9, 0x9a7a4a, 0, 0, 0));
+      p.push(box(3.0, 0.02, 2.6, 0xa88a58, 0.25, 0.06, 0)); // the lane, swept clean
+      for (let i = 0; i < 3; i++) p.push(box(0.04, 0.025, 2.4, 0xf4ecd8, -1.25 + i * 1.2, 0.07, 0)); // chalk distance marks
+      for (const sx of [-1.85, -1.1]) for (const sz of [-1.3, 1.3]) p.push(cyl(0.04, 0.05, 1.3, 5, C.wood, sx, 0, sz));
+      p.push(boxC(1.0, 0.07, 2.9, C.thatch, -1.48, 1.38, 0, 0, 0, 0.32));
+      p.push(box(0.5, 0.32, 0.4, C.thatch, -1.7, 0, -0.9)); // straw bales
+      for (const z of [-0.2, 0.8]) { // quivers full of arrows
+        p.push(cyl(0.1, 0.08, 0.35, 8, C.brick, -1.75, 0.06, z));
+        for (let i = 0; i < 4; i++) p.push(cylC(0.012, 0.012, 0.5, 3, 0xc89a5e, -1.78 + i * 0.02, 0.55, z, 0.1 * (i - 1.5), 0, 0.12 * (i - 1.5)));
+      }
+      const tg = [[0.4, 0xe9dcb8], [0.32, C.red], [0.21, 0xf4ecd8], [0.11, C.gold]];
+      for (const z of [-0.9, 0, 0.9]) { // three targets on stands
+        for (const dz of [-0.28, 0.28]) p.push(cyl(0.03, 0.035, 0.85, 5, C.wood, 1.68, 0.06, z + dz));
+        tg.forEach(([r, c], i) => p.push(cylC(r, r, 0.08 + i * 0.02, 14, c, 1.62, 0.95, z, 0, 0, Math.PI / 2)));
+      }
       break;
     }
     case 'well': {
@@ -1705,6 +1721,50 @@ Models.enemy = function (type, variant) {
     ud.armBase = -1.15; // arms held out, beckoning
     const trail = glowMesh(new THREE.ConeGeometry(0.34, 0.5, 14, 1, true), 0x8f9cff, 0.18); trail.rotation.x = Math.PI; trail.position.y = 0.1;
     m.add(trail);
+  } else if (type === 'mamdo') { // Mamdo Bhoot: tall and gaunt, a long white beard, a torn kurta over a checked lungi, long grasping hands
+    const skin = 0x8a9aa0, skinD = 0x6c7a80;
+    const hips = new THREE.Group(); hips.position.y = 0.6; g.add(hips);
+    for (const sx of [-1, 1]) {
+      const L = new THREE.Group(); L.position.set(sx * 0.1, 0, 0); hips.add(L);
+      FAB = 4; const lp = [...limb(0.05, 0.45, skinD, 0, 0, 0)];
+      FAB = 0; lp.push(sph(0.07, 0x4a4a50, 0, -0.56, 0.05, 1, 0.45, 1.5));
+      L.add(meshOf(lp, M)); ud.legs.push(L);
+    }
+    const p = [];
+    FAB = 3; // the lungi, wrapped to the shins
+    p.push(cyl(0.2, 0.24, 0.5, 16, 0x2f4a6a, 0, -0.48, 0));
+    FAB = 0;
+    p.push(P(new THREE.TorusGeometry(0.2, 0.025, 6, 18), 0x24364e, 0, 0.0, 0, Math.PI / 2)); // the knot at the waist
+    FAB = 1; // a long kurta, gone grey and torn at the hem
+    p.push(P(new THREE.LatheGeometry(V2([[0.2, -0.12], [0.19, 0.05], [0.17, 0.3], [0.16, 0.48], [0.12, 0.58], [0.001, 0.6]]), 18), 0xd8d4c8, 0, 0, 0.03));
+    for (let i = 0; i < 9; i++) { const a = (i / 9) * Math.PI * 2; p.push(coneC(0.04, 0.12, 4, 0xcfcab9, Math.cos(a) * 0.2, -0.16, 0.03 + Math.sin(a) * 0.2, Math.PI)); }
+    FAB = 4; // a hunched neck and a gaunt head, pushed forward
+    p.push(cylC(0.05, 0.06, 0.16, 10, skin, 0, 0.64, 0.08, 0.5));
+    const hy = 0.8;
+    p.push(sph(0.15, skin, 0, hy, 0.13, 0.9, 1.15, 0.95));
+    FAB = 0;
+    for (const sx of [-1, 1]) {
+      p.push(sph(0.045, 0x14161c, sx * 0.055, hy + 0.03, 0.25, 1.1, 1.2, 0.6)); // sunken sockets
+      p.push(sph(0.03, skinD, sx * 0.08, hy - 0.04, 0.24, 1, 0.6, 0.6)); // hollow cheeks
+    }
+    p.push(boxC(0.12, 0.02, 0.03, 0x14161c, 0, hy + 0.08, 0.26, 0, 0, 0)); // a heavy brow
+    p.push(coneC(0.022, 0.06, 6, skinD, 0, hy - 0.01, 0.285, Math.PI / 2)); // a long nose
+    FAB = 6; // the long white beard and wisps of hair
+    p.push(coneC(0.1, 0.38, 10, 0xe8e6e0, 0, hy - 0.22, 0.22, Math.PI - 0.25));
+    p.push(sph(0.08, 0xe8e6e0, 0, hy - 0.08, 0.25, 1.4, 0.7, 0.7));
+    for (const sx of [-1, 1]) p.push(coneC(0.03, 0.14, 6, 0xdcdad2, sx * 0.13, hy + 0.04, 0.08, 0.6, 0, sx * 1.2));
+    FAB = 0;
+    hips.add(meshOf(p, M, false, false));
+    hips.add(eyePair(0xc8ff9a, 0.022, 0.055, hy + 0.03, 0.27));
+    for (const sx of [-1, 1]) { // long thin arms ending in bony fingers
+      const A = new THREE.Group(); A.position.set(sx * 0.23, 0.52, 0.05); hips.add(A);
+      FAB = 1; const ap = [sph(0.06, 0xd8d4c8, 0, 0, 0), cyl(0.055, 0.05, 0.18, 10, 0xd8d4c8, 0, -0.18, 0)];
+      FAB = 4; ap.push(cyl(0.035, 0.03, 0.34, 8, skin, 0, -0.52, 0), sph(0.04, skinD, 0, -0.55, 0.02, 1, 1.2, 0.8));
+      FAB = 0; for (let k = -1; k <= 1; k++) ap.push(cylC(0.008, 0.006, 0.16, 4, skinD, k * 0.02, -0.64, 0.04, 0.2));
+      A.add(meshOf(ap, M)); ud.arms.push(A);
+    }
+    ud.armBase = -0.5; // arms half raised, reaching
+    ud.hips = hips; ud.hipY = hips.position.y;
   } else {
     const big = type === 'boss';
     const skins = [0x4fa07e, 0x4e74c4, 0xb04a5a, 0x7a55b0];
@@ -1811,18 +1871,63 @@ Models.enemy = function (type, variant) {
 };
 
 /* ---------- animals ---------- */
+/**
+ * Gau Mata: a white humped zebu cow of the Bengal plains, decked out by the village. A long gentle face
+ * with drooping ears, painted horns with tassels, a tilak, a marigold garland, a bell on a red cord and a
+ * block-printed jhool over her back. Faces +z; the four leg pivots sit at y 0.45 for the walk cycle.
+ */
 Models.cow = function () {
   const g = new THREE.Group();
-  const p = [box(0.85, 0.42, 0.4, 0xefe9df, 0, 0.42, 0, Math.PI / 2), box(0.22, 0.18, 0.3, 0xefe9df, 0, 0.84, 0.18, Math.PI / 2),
-    box(0.26, 0.24, 0.32, 0xefe9df, 0, 0.62, 0.55), box(0.14, 0.1, 0.08, 0xd9a08a, 0, 0.62, 0.72),
-    cone(0.03, 0.18, 4, 0xe03c31, -0.12, 0.84, 0.55, 0, 0, 0.5), cone(0.03, 0.18, 4, 0xe03c31, 0.12, 0.84, 0.55, 0, 0, -0.5),
-    box(0.04, 0.04, 0.02, 0x111111, -0.08, 0.76, 0.715), box(0.04, 0.04, 0.02, 0x111111, 0.08, 0.76, 0.715),
-    sph(0.05, 0xe8b830, 0, 0.55, 0.62), box(0.03, 0.35, 0.03, 0xa89f8f, 0, 0.45, -0.43)];
-  g.add(meshOf(p));
+  const W = 0xf2eee6, Wd = 0xe2dccf, muzzle = 0xcfa496, hoof = 0x3a2a1a;
+  const p = [];
+  FAB = 0;
+  // body: barrel, rump, chest, the zebu hump
+  p.push(sph(0.24, W, 0, 0.64, 0, 1.0, 0.95, 1.85));
+  p.push(sph(0.21, W, 0, 0.66, -0.3, 1.0, 0.95, 0.9));
+  p.push(sph(0.19, W, 0, 0.62, 0.3));
+  p.push(sph(0.11, Wd, 0, 0.84, 0.25, 1.1, 0.9, 1.25));
+  // neck, dewlap and head
+  p.push(cylC(0.1, 0.13, 0.3, 14, W, 0, 0.75, 0.47, -0.95));
+  p.push(sph(0.09, Wd, 0, 0.52, 0.46, 0.35, 1.25, 1.35));
+  p.push(sph(0.11, W, 0, 0.84, 0.66, 0.9, 1.0, 1.25));
+  p.push(sph(0.075, muzzle, 0, 0.76, 0.8, 1.05, 0.85, 1));
+  for (const sx of [-1, 1]) {
+    p.push(sph(0.013, 0x2a1e1a, sx * 0.025, 0.765, 0.872)); // nostrils
+    p.push(sph(0.02, 0x1a1210, sx * 0.075, 0.875, 0.69, 0.8, 1, 0.6)); // eyes
+    p.push(sph(0.006, 0xffffff, sx * 0.078, 0.882, 0.703));
+    p.push(boxC(0.03, 0.006, 0.01, 0x2a1e1a, sx * 0.075, 0.893, 0.69, 0, 0, sx * 0.3)); // lashes
+    p.push(sphR(0.06, W, sx * 0.135, 0.86, 0.61, 0, 0, sx * 1.05, 1.6, 0.5, 0.85)); // drooping ears
+    p.push(sphR(0.04, 0xe8b8a8, sx * 0.137, 0.855, 0.615, 0, 0, sx * 1.05, 1.5, 0.32, 0.6));
+    p.push(coneC(0.024, 0.17, 8, 0xd9582c, sx * 0.07, 0.98, 0.62, -0.15, 0, -sx * 0.5)); // horns painted saffron
+    p.push(sph(0.018, 0xe8b830, sx * 0.112, 1.055, 0.605)); // brass tips
+    p.push(sph(0.026, 0xc8202a, sx * 0.05, 0.93, 0.63, 1, 1.4, 1)); // wool tassels at the base
+  }
+  p.push(boxC(0.018, 0.06, 0.008, 0xd33b2c, 0, 0.9, 0.765, -0.5)); // tilak
+  p.push(sph(0.011, 0xf2c230, 0, 0.87, 0.775));
+  // a marigold garland round the neck, and a bell on a red cord
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    p.push(sph(0.028, i % 2 ? C.saffron : C.marigold, Math.cos(a) * 0.15, 0.6 + Math.sin(a) * 0.05, 0.42 + Math.sin(a) * 0.13));
+  }
+  p.push(P(new THREE.TorusGeometry(0.12, 0.008, 4, 16, Math.PI), 0xc8202a, 0, 0.55, 0.46, -0.4, 0, Math.PI));
+  p.push(sph(0.036, 0xe8b830, 0, 0.43, 0.53)); p.push(cone(0.02, 0.03, 8, 0xc9962e, 0, 0.455, 0.53));
+  // the jhool: a block-printed blanket across her back, with a gold border and tassels
+  FAB = 2;
+  p.push(P(new THREE.CylinderGeometry(0.255, 0.255, 0.4, 18, 1, true, Math.PI - 0.95, 1.9), 0xb8262a, 0, 0.64, -0.02, Math.PI / 2));
+  FAB = 0;
+  for (const z of [-0.22, 0.18]) p.push(P(new THREE.TorusGeometry(0.256, 0.01, 4, 18, 1.9), 0xe8b830, 0, 0.64, z, 0, 0, Math.PI / 2 - 0.95));
+  for (const sx of [-1, 1]) for (const z of [-0.2, 0.16]) p.push(sph(0.02, 0xe8b830, sx * 0.2, 0.5, z, 1, 1.5, 1));
+  // tail with a dark tuft, and her udder
+  p.push(cylC(0.016, 0.012, 0.42, 6, W, 0, 0.52, -0.52, 0.22));
+  p.push(sph(0.042, 0x2a2420, 0, 0.3, -0.565, 1, 1.6, 1));
+  p.push(sph(0.07, 0xe0a8a0, 0, 0.44, -0.12, 1.2, 0.7, 1));
+  g.add(meshOf(p, MAT.char || MAT.std));
   const legs = [];
   for (const [x, z] of [[-0.12, 0.3], [0.12, 0.3], [-0.12, -0.3], [0.12, -0.3]]) {
     const L = new THREE.Group(); L.position.set(x, 0.45, z); g.add(L);
-    L.add(meshOf([box(0.08, 0.42, 0.08, 0xd6cdbd, 0, -0.45, 0), box(0.09, 0.05, 0.09, 0x3a2a1a, 0, -0.47, 0)]));
+    const lp = [sph(0.06, W, 0, -0.02, 0), cyl(0.056, 0.045, 0.24, 10, W, 0, -0.24, 0), sph(0.04, Wd, 0, -0.245, 0.005), cyl(0.034, 0.032, 0.165, 8, W, 0, -0.405, 0), cyl(0.037, 0.042, 0.045, 8, hoof, 0, -0.45, 0)];
+    if (z > 0) lp.push(P(new THREE.TorusGeometry(0.036, 0.008, 4, 12), 0xe8b830, 0, -0.37, 0, Math.PI / 2)); // ghungroo on the forelegs
+    L.add(meshOf(lp, MAT.char || MAT.std));
     legs.push(L);
   }
   g.userData.legs = legs;

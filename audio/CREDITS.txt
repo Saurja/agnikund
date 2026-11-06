@@ -50,3 +50,21 @@ Wolfgang_
   "Crickets Ambient Noise - loopable"        https://opengameart.org/content/crickets-ambient-noise-loopable
 
 Clips were renamed to say what they are used for (e.g. rakshasa_grunt1.ogg, drop_wood1.ogg).
+VILLAGE BIRDS AND ANIMALS (audio/sfx), added in version 1.8.0
+Short clips cut, mixed to mono and level-matched from these recordings:
+  koel1-2.wav       "Koel-01-44k.wav" by ramblinglibrarian (CC0)        https://freesound.org/s/460466/
+  myna1.wav         "Crowd of Myna birds" by edranil (CC0)              https://freesound.org/s/338173/
+  crow1-2.wav       "kaak.wav" (house crow, Kolkata) by Calcuttan (CC0) https://freesound.org/s/136259/
+  parakeet1-2.wav   "Parrots - Rose-ringed Parakeet" by TheKingOfGeeks360 (CC0)  https://freesound.org/s/845740/
+  dove1-2.wav       "Pigeon cooing" by Fsu2001 (CC0)                    https://freesound.org/s/795558/
+  sparrow1-2.wav    "House Sparrow.ogg" by Gypsypkd (public domain)     https://commons.wikimedia.org/wiki/File:House_Sparrow.ogg
+  rooster1.wav      "INDIAN ROOSTER" by Nandagopan.P (CC0)              https://freesound.org/s/828453/
+  goat1.wav         "Bleating Goat #1" by DenisChardonnet, BigSoundBank (CC0)  https://bigsoundbank.com/bleating-goat-1-s0279.html
+  goat2-3.wav       "Goat and Young Goat" by Joseph Sardin, BigSoundBank (CC0) https://bigsoundbank.com/goat-and-young-goat-s1377.html
+  moo1-2.wav        "Cow Moos #1" by Joseph Sardin, BigSoundBank (CC0)  https://bigsoundbank.com/cow-moos-s0546.html
+  dog1-2.wav        "Dogs barking far with echo in a small village at night" by Felix Blume (CC0)  https://freesound.org/s/705299/
+  jackal1-2.wav     "Jackals.wav" by denkmal (CC0)                      https://freesound.org/s/539810/
+  owl_hoot1.wav     "Tawny Owl #2" by Joseph Sardin, BigSoundBank (CC0) https://bigsoundbank.com/tawny-owl-2-s1764.html
+  frogs1-2.wav      "Rice Patty Frogs" by john9, CC BY 4.0              https://freesound.org/s/215174/
+                    https://creativecommons.org/licenses/by/4.0/ (cut and level-matched)
+  peacock1-2.wav    "Peacock call" by richwise (CC0)                    https://freesound.org/s/810711/
