@@ -320,6 +320,11 @@ function applyVillagerPose(obj, ud, P) {
     ud.skirt.scale.set(1 + Math.max(P.legLz, P.legRz) * 0.3, avg < -0.8 ? 0.62 : 1 - Math.max(0, -avg) * 0.25, 1 + spread * 0.4 + Math.max(0, -avg) * 0.35);
   }
 }
+/** A world piece that never moves (the forest and rocks only change their instances): skip its per-frame transform update. */
+function still(o) {
+  if (!o || !o.matrixAutoUpdate) return;
+  o.matrixAutoUpdate = false; o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
+}
 
 const R3 = {
   ok: false,
@@ -412,6 +417,8 @@ const R3 = {
     this.dying = [];
     this.treeWas = new Map();
     const g = (this.worldGroup = new THREE.Group());
+    // the world never moves: three.js need not rebuild its transform (and every child's) each frame
+    sc.matrixAutoUpdate = false; g.matrixAutoUpdate = false;
     sc.add(g);
     this.buildTerrain(s);
     this.buildTrees(s);
@@ -494,85 +501,106 @@ const R3 = {
     im.userData.outline = o;
     return o;
   },
+  /*
+   * The forest: one batch per tree kind. Every tree's place lives in a source list that is never drawn;
+   * each frame the trees in view are packed into the batch, near ones at full detail and far ones as
+   * their light twins (a third of the triangles, no shadow). So the whole forest is a couple of dozen
+   * draw calls, and trees off the screen cost nothing.
+   */
   buildTrees(s) {
-    // The forest is split into square chunks so only the chunks the camera can see get drawn.
     this.treeMeshes = {};
     this.stumpMeshes = {};
-    this.chunks = [];
+    this.forest = [];
     this.treeSlot = new Map();
-    const CH = 18;
-    const chunkOf = (t) => Math.floor((t.x + 64) / CH) + '_' + Math.floor((t.z + 64) / CH);
     const groups = {}, stumps = {};
     for (const t of s.trees) {
-      const c = chunkOf(t);
-      (groups[t.type + t.variant + '|' + c] = groups[t.type + t.variant + '|' + c] || []).push(t);
-      (stumps[t.type + '|' + c] = stumps[t.type + '|' + c] || []).push(t);
+      (groups[t.type + t.variant] = groups[t.type + t.variant] || []).push(t);
+      (stumps[t.type] = stumps[t.type] || []).push(t);
     }
     const geos = {};
-    const box = (c) => {
-      const [i, j] = c.split('_').map(Number);
-      return new THREE.Box3(new THREE.Vector3(i * CH - 64 - 3, -2, j * CH - 64 - 3), new THREE.Vector3((i + 1) * CH - 64 + 3, 7, (j + 1) * CH - 64 + 3));
+    const batch = (src, geo, geoLo, mat, olMat) => {
+      const n = src.count;
+      const near = new THREE.InstancedMesh(geo, mat, n);
+      near.castShadow = true; near.receiveShadow = true; near.frustumCulled = false; near.count = 0;
+      near.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const ol = this.outlineFor(near, olMat);
+      this.worldGroup.add(near, ol); still(near); still(ol);
+      const F = { src, near, ol, n };
+      if (geoLo) {
+        const far = new THREE.InstancedMesh(geoLo, mat, n);
+        far.castShadow = false; far.receiveShadow = true; far.frustumCulled = false; far.count = 0;
+        far.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        far.raycast = () => {}; far.userData.noAO = true;
+        // the near trees drawn light, only for the occlusion pass (see setupPost)
+        const nearLo = new THREE.InstancedMesh(geoLo, mat, n);
+        nearLo.instanceMatrix = near.instanceMatrix;
+        nearLo.castShadow = false; nearLo.frustumCulled = false; nearLo.visible = false; nearLo.count = 0;
+        nearLo.raycast = () => {}; nearLo.userData.noAO = true;
+        this.worldGroup.add(far, nearLo); still(far); still(nearLo);
+        F.far = far; F.nearLo = nearLo;
+      }
+      this.forest.push(F);
     };
     for (const k in groups) {
       const list = groups[k];
-      const gk = list[0].type + list[0].variant;
-      const geo = geos[gk] || (geos[gk] = Models.treeGeo(list[0].type, list[0].variant));
-      const geoLo = geos[gk + 'lo'] || (geos[gk + 'lo'] = Models.treeGeo(list[0].type, list[0].variant, true));
+      const geo = geos[k] || (geos[k] = Models.treeGeo(list[0].type, list[0].variant));
+      const geoLo = geos[k + 'lo'] || (geos[k + 'lo'] = Models.treeGeo(list[0].type, list[0].variant, true));
       geo.userData.shared = true; geoLo.userData.shared = true;
-      const im = new THREE.InstancedMesh(geo, MAT.tree, list.length);
-      im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false;
-      const ol = this.outlineFor(im, MAT.treeOutline);
-      // the far-away twin: same instances, a third of the triangles, and it casts no shadow
-      const lo = new THREE.InstancedMesh(geoLo, MAT.tree, list.length);
-      lo.instanceMatrix = im.instanceMatrix;
-      lo.frustumCulled = false; lo.castShadow = false; lo.receiveShadow = true; lo.visible = false;
-      lo.raycast = () => {}; lo.userData.noAO = true;
-      this.worldGroup.add(im, ol, lo);
-      list.forEach((t, i) => this.treeSlot.set(t.id, { m: im, i }));
-      this.treeMeshes[k] = im;
-      this.chunks.push({ meshes: [im, ol, lo], box: box(k.split('|')[1]) });
+      const src = new THREE.InstancedMesh(geo, MAT.tree, list.length); // (never added to the scene)
+      list.forEach((t, i) => this.treeSlot.set(t.id, { m: src, i }));
+      this.treeMeshes[k] = src;
+      batch(src, geo, geoLo, MAT.tree, MAT.treeOutline);
     }
     for (const k in stumps) {
       const list = stumps[k];
-      const type = list[0].type;
-      const geo = geos['stump' + type] || (geos['stump' + type] = Models.stumpGeo(type));
+      const geo = geos['stump' + k] || (geos['stump' + k] = Models.stumpGeo(k));
       geo.userData.shared = true;
-      const im = new THREE.InstancedMesh(geo, MAT.std, list.length);
-      im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false;
-      const ol = this.outlineFor(im, MAT.outline);
-      this.worldGroup.add(im, ol);
-      list.forEach((t, i) => { const sl = this.treeSlot.get(t.id); sl.sm = im; sl.si = i; });
-      this.stumpMeshes[k] = im;
-      this.chunks.push({ meshes: [im, ol], box: box(k.split('|')[1]) });
+      const src = new THREE.InstancedMesh(geo, MAT.std, list.length);
+      list.forEach((t, i) => { const sl = this.treeSlot.get(t.id); sl.sm = src; sl.si = i; });
+      this.stumpMeshes[k] = src;
+      batch(src, geo, null, MAT.std, MAT.outline);
     }
     this._treeGeos = Object.values(geos);
     this.syncTrees(s, true);
   },
-  _frustum: new THREE.Frustum(), _pm: new THREE.Matrix4(),
+  _frustum: new THREE.Frustum(), _pm: new THREE.Matrix4(), _vs: new THREE.Sphere(new THREE.Vector3(), 3), _ts: new THREE.Sphere(new THREE.Vector3(), 1),
   cullChunks() {
     this.camera.updateMatrixWorld();
     this._pm.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     this._frustum.setFromProjectionMatrix(this._pm);
-    const Q = this.Q, c = this.cam, cp = this.camera.position;
-    const far = c.dist * 1.25 + 14; // on Low, distant forest is left to the fog
-    for (const ch of this.chunks) {
-      let vis = this._frustum.intersectsBox(ch.box);
-      let d3 = 0;
-      if (vis) {
-        const b = ch.box;
-        if (Q.farCull) { // distance from the view centre to the nearest edge of the chunk
-          const dx = Math.max(b.min.x - c.x, 0, c.x - b.max.x), dz = Math.max(b.min.z - c.z, 0, c.z - b.max.z);
-          vis = Math.hypot(dx, dz) < far;
-        }
+    this._frOk = true; // (villagers test against this view on the next frame)
+    // repack the forest only when the view or a tree changed
+    const pe = this._pm.elements, last = this._pmLast || (this._pmLast = new Float32Array(16));
+    let same = !this.forestDirty && this._forestQ === this.Q;
+    for (let i = 0; i < 16 && same; i++) if (Math.abs(pe[i] - last[i]) > 1e-6) same = false;
+    if (same) return;
+    last.set(pe); this.forestDirty = false; this._forestQ = this.Q;
+    const Q = this.Q, c = this.cam, cp = this.camera.position, fr = this._frustum, sph = this._ts;
+    const far = c.dist * 1.25 + 14, far2 = far * far; // on Low, distant forest is left to the fog
+    const ey = Math.max(0, cp.y - 2), lod = Q.lodDist + 4;
+    for (const F of this.forest || []) {
+      const a = F.src.instanceMatrix.array, NA = F.near.instanceMatrix.array, FA = F.far ? F.far.instanceMatrix.array : null;
+      let nn = 0, nf = 0;
+      for (let i = 0, o = 0; i < F.n; i++, o += 16) {
+        const s2 = a[o] * a[o] + a[o + 1] * a[o + 1] + a[o + 2] * a[o + 2];
+        if (s2 < 1e-6) continue; // felled (or not a stump yet)
+        const x = a[o + 12], y = a[o + 13], z = a[o + 14], sc = Math.sqrt(s2);
+        if (Q.farCull) { const dx = x - c.x, dz = z - c.z; if (dx * dx + dz * dz > far2) continue; }
+        sph.center.set(x, y + 2 * sc, z); sph.radius = 4.5 * sc + 2; // (room for its shadow reaching into view)
+        if (!fr.intersectsSphere(sph)) continue;
         // detail follows the real distance from the camera, so zooming out switches to the light trees
-        const ex = Math.max(b.min.x - cp.x, 0, cp.x - b.max.x), ez = Math.max(b.min.z - cp.z, 0, cp.z - b.max.z), ey = Math.max(0, cp.y - 2);
-        d3 = Math.hypot(ex, ey, ez);
+        let near = !FA;
+        if (FA) { const ex = x - cp.x, ez = z - cp.z; near = ex * ex + ey * ey + ez * ez <= lod * lod; }
+        if (near) { for (let j = 0; j < 16; j++) NA[nn * 16 + j] = a[o + j]; nn++; }
+        else { for (let j = 0; j < 16; j++) FA[nf * 16 + j] = a[o + j]; nf++; }
       }
-      const lo = ch.meshes[2];
-      const detailed = vis && (!lo || d3 <= Q.lodDist);
-      ch.meshes[0].visible = detailed;
-      ch.meshes[1].visible = detailed && !Q.farCull && !ch.meshes[1].userData.off;
-      if (lo) lo.visible = vis && !detailed;
+      const put = (m, n) => {
+        m.count = n; m.visible = n > 0;
+        if (n > 0) { const im = m.instanceMatrix; im.updateRange.offset = 0; im.updateRange.count = n * 16; im.needsUpdate = true; }
+      };
+      put(F.near, nn);
+      F.ol.count = nn; F.ol.visible = nn > 0 && !Q.farCull && !F.ol.userData.off;
+      if (F.far) { put(F.far, nf); F.nearLo.count = nn; }
     }
   },
 
@@ -588,6 +616,7 @@ const R3 = {
     this.quality = q;
     const Q = (this.Q = QUALITY[q]);
     if (!this.renderer) return;
+    this.resK = 1; this._ft = null; this._adT = 0; this.gpuMs = null; // the frame-rate governor starts fresh on each tier
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, Q.pixelRatio));
     const shadows = Q.shadows, type = Q.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap, size = Q.shadowSize;
     for (let i = 0; i < this.pool.length; i++) this.pool[i].visible = i < Q.lights; // fewer lights = cheaper pixels everywhere
@@ -623,13 +652,22 @@ const R3 = {
         const hid = [];
         // the occlusion pass redraws the scene, so it skips what cannot cast visible occlusion:
         // glows, particles, see-through things, grass and flowers, and the far-away forest
+        // (the list of things to hide is gathered by walking the scene only every 20 frames, not every frame)
+        // and the forest goes in as its light far-away twins: occlusion is blurred anyway, a third of the triangles
+        let skip = [], age = 99;
+        const swapped = [];
+        ao.overrideVisibility = ao.restoreVisibility = () => {}; // (its own scene walk; the list below already leaves out points and lines)
+        ao.normalMaterial.skinning = true; // villagers occlude where they stand, not in their rest pose
         ao.renderOverride = (renderer, mat, target, cc, ca) => {
-          hid.length = 0;
-          this.scene.traverse((o) => {
-            if (!o.visible) return;
-            if (o.isPoints || o.isLine || o.isSprite || o.userData.noAO || (o.material && (o.material.transparent || o.material.isMeshBasicMaterial))) { o.visible = false; hid.push(o); }
-          });
+          if (++age > 20) {
+            age = 0; skip = [];
+            this.scene.traverse((o) => { if (o.isPoints || o.isLine || o.isSprite || o.userData.noAO || (o.material && (o.material.transparent || o.material.isMeshBasicMaterial))) skip.push(o); });
+          }
+          hid.length = 0; swapped.length = 0;
+          for (const o of skip) if (o.visible) { o.visible = false; hid.push(o); }
+          if (mat === ao.normalMaterial) for (const F of this.forest || []) if (F.nearLo && F.near.visible) { F.near.visible = false; F.nearLo.visible = true; swapped.push(F); }
           base(renderer, mat, target, cc, ca);
+          for (const F of swapped) { F.near.visible = true; F.nearLo.visible = false; }
           for (const o of hid) o.visible = true;
         };
         comp.addPass(ao); this.aoPass = ao;
@@ -666,8 +704,7 @@ const R3 = {
       this.setInst(sl.sm, sl.si, t.x, y, t.z, t.rot, t.stump ? t.scale : 0, 0);
     }
     if (all) for (const [id, sl] of this.treeSlot) if (!live.has(id)) { this.setInst(sl.m, sl.i, 0, -50, 0, 0, 0, 0); this.setInst(sl.sm, sl.si, 0, -50, 0, 0, 0, 0); }
-    for (const k in this.treeMeshes) this.treeMeshes[k].instanceMatrix.needsUpdate = true;
-    for (const k in this.stumpMeshes) this.stumpMeshes[k].instanceMatrix.needsUpdate = true;
+    this.forestDirty = true; // (the trees in view get packed again, see cullChunks)
   },
   /* ---------- fluid little animations: falling trees, sinking ruins, fading demons ---------- */
   dying: [],
@@ -813,7 +850,7 @@ const R3 = {
       const f = r.stone / r.maxStone;
       this.setInst(im, im.count++, r.x, heightAt(r.x, r.z) - 0.05, r.z, r.rot, r.scale * (0.5 + 0.5 * f), 0);
     }
-    for (const im of this.rockMeshes) { im.instanceMatrix.needsUpdate = true; im.userData.outline.count = im.count; }
+    for (const im of this.rockMeshes) { im.instanceMatrix.needsUpdate = true; im.userData.outline.count = im.count; im.visible = im.count > 0; still(im); still(im.userData.outline); }
   },
   buildDecor(s) {
     const g = this.worldGroup;
@@ -1146,8 +1183,70 @@ const R3 = {
     this.sea.position.y = -0.38 + Math.sin(time * 0.8) * 0.04;
     this.foam.material.opacity = 0.35 + 0.2 * Math.sin(time * 1.3);
     this.cullChunks();
+    // shadows: three.js would redraw the shadow map on every pass (the occlusion effect renders the scene
+    // twice more); draw it once a frame instead, and when the frame is heavy, every other frame
+    const sm = this.renderer.shadowMap;
+    if (sm.enabled) { sm.autoUpdate = false; this._shF = (this._shF || 0) + 1; sm.needsUpdate = this.sunShadowLive !== false && (!this.heavyLoad || this._shF % 2 === 0); }
+    this.gpuBegin();
     if (this.composer) this.composer.render(); else this.renderer.render(this.scene, this.camera);
+    this.gpuEnd();
     this.syncOverlay(s);
+  },
+  /*
+   * GPU timing (where the browser offers a GPU timer): how long the graphics card really spends on a
+   * frame, so the resolution governor reacts to the GPU itself rather than guessing from frame times.
+   */
+  gpuBegin() {
+    try {
+      const gl = this._gl || (this._gl = this.renderer.getContext());
+      if (this._tq === undefined) this._tq = (typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext && gl.getExtension('EXT_disjoint_timer_query_webgl2')) || null;
+      const ext = this._tq;
+      if (!ext) return;
+      if (this._gq) { // the last frame's answer, once it is ready
+        if (!gl.getQueryParameter(this._gq, gl.QUERY_RESULT_AVAILABLE)) return;
+        if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) {
+          const ms = gl.getQueryParameter(this._gq, gl.QUERY_RESULT) / 1e6;
+          this.gpuMs = this.gpuMs == null ? ms : this.gpuMs * 0.92 + ms * 0.08;
+        }
+        gl.deleteQuery(this._gq); this._gq = null;
+      }
+      this._gq = gl.createQuery();
+      gl.beginQuery(ext.TIME_ELAPSED_EXT, this._gq); this._gqOpen = true;
+    } catch (e) { this._tq = null; this._gq = null; this._gqOpen = false; this.gpuMs = null; } // no timer: frame times will do
+  },
+  gpuEnd() {
+    if (!this._gqOpen) return;
+    this._gqOpen = false;
+    try { this._gl.endQuery(this._tq.TIME_ELAPSED_EXT); } catch (e) { this._tq = null; }
+  },
+  /*
+   * Steady frame rate: when frames run slow for a while the drawing resolution steps down (to as little as
+   * 60% of the tier's), and climbs back when there is headroom. Called from the main loop with each frame's time.
+   */
+  adaptRes(frameMs) {
+    if (!this.ok || !this.Q || !(frameMs > 0) || frameMs > 120) return; // pauses and one-off hitches say nothing
+    this._ft = this._ft == null ? frameMs : this._ft * 0.95 + frameMs * 0.05; // smoothed frame time
+    this._adT = (this._adT || 0) + frameMs / 1000;
+    const g = this.gpuMs;
+    this.heavyLoad = this._ft > 20 && (g == null || g > 9); // slow frames and a busy GPU: sun shadows every other frame
+    const base = Math.min(window.devicePixelRatio || 1, this.Q.pixelRatio), cur = this.resK || 1;
+    const floor = base > 1.2 ? 0.6 : 0.75; // never blurrier than this
+    // With a GPU timer, act on the graphics card's own time: a phone capped at 30 fps to save battery is not
+    // slow, and a busy CPU is not helped by fewer pixels. Without one, act on the frame time.
+    // Sharpening again: the GPU time grows with the pixels, so step up only when the bigger picture still fits.
+    const up = Math.min(1, cur + 0.05);
+    const slow = g != null ? g > 12.5 : this._ft > 21, roomy = g != null ? g * (up / cur) * (up / cur) < 11 : this._ft < 17.6;
+    let next = cur;
+    if (this._adT > 2 && slow) next = Math.max(floor, cur - 0.1); // below ~48 fps: draw fewer pixels
+    else if (cur < 1 && this._adT > (this._upWait || 4) && roomy) next = up; // room again: sharpen
+    if (Math.abs(next - cur) < 0.001) return;
+    const t = performance.now();
+    // a step back up that could not hold: wait longer before the next try, so it does not see-saw
+    if (next < cur && this._upAt && t - this._upAt < 6000) this._upWait = Math.min(40, (this._upWait || 4) * 2);
+    this._upAt = next > cur ? t : 0;
+    this.resK = next; this._adT = 0;
+    this.renderer.setPixelRatio(base * next);
+    this.resize(); // the effect passes follow the new size
   },
   /*
    * Roads are drawn as one mesh for the whole network, rebuilt when it changes: each cell joins up with its
@@ -1671,16 +1770,24 @@ const R3 = {
       o.spd = (o.spd || 0) + ((dt > 0 ? moved / dt : 0) - (o.spd || 0)) * Math.min(1, dt * 8);
       o.ph = (o.ph || 0) + moved * (o.spd > 3.1 ? 5.4 : 6.8);
       const t = v.animT, anim = v.anim;
-      const J = villagerPose(v, o, t);
-      const fast = anim === 'atk' || v.blockT > 0;
-      // ease every joint toward its target so poses blend instead of snapping (swings snap fast)
-      const P = o.pose || (o.pose = Object.assign({}, J));
-      const k = 1 - Math.exp(-dt * (fast ? 34 : anim === 'walk' ? 22 : anim === 'sleep' ? 5 : 12));
-      for (const key of VJ_EASE) P[key] += (J[key] - (P[key] || 0)) * k;
-      applyVillagerPose(obj, ud, P);
-      obj.rotation.set(0, o.rot, P.lie * Math.PI / 2);
-      if (ud.bowDrawn) { ud.bowDrawn.visible = !!J.drawn; ud.bowRest.visible = !J.drawn; }
-      ud.torso.scale.y = 1 + Math.sin(time * (anim === 'sleep' ? 1.2 : 2.2) + v.id) * (anim === 'sleep' ? 0.02 : 0.012); // breathing
+      // off the screen (with room for shadows reaching in): nobody sees the pose, so it is not worked out
+      this._vs.center.set(v.x, 0.8, v.z);
+      const unseen = o.pose && this._frOk && !this._frustum.intersectsSphere(this._vs) && !(UI.selected && UI.selected.ref === v);
+      let J = null;
+      if (!o.pose) { J = villagerPose(v, o, t); o.pose = Object.assign({}, J); }
+      const P = o.pose;
+      if (unseen) obj.rotation.y = o.rot;
+      else {
+        if (!J) J = villagerPose(v, o, t);
+        const fast = anim === 'atk' || v.blockT > 0;
+        // ease every joint toward its target so poses blend instead of snapping (swings snap fast)
+        const k = 1 - Math.exp(-dt * (fast ? 34 : anim === 'walk' ? 22 : anim === 'sleep' ? 5 : 12));
+        for (const key of VJ_EASE) P[key] += (J[key] - (P[key] || 0)) * k;
+        applyVillagerPose(obj, ud, P);
+        obj.rotation.set(0, o.rot, P.lie * Math.PI / 2);
+        if (ud.bowDrawn) { ud.bowDrawn.visible = !!J.drawn; ud.bowRest.visible = !J.drawn; }
+        ud.torso.scale.y = 1 + Math.sin(time * (anim === 'sleep' ? 1.2 : 2.2) + v.id) * (anim === 'sleep' ? 0.02 : 0.012); // breathing
+      }
       // the tokri: gatherers always wear one; its contents show the good and how full it is (3 steps)
       let pk = null;
       if (v.carryAmt > 0 && v.carry) pk = v.carry + clamp(Math.ceil((v.carryAmt / carryCap(s, v.carry)) * 3), 1, 3);
@@ -1967,8 +2074,10 @@ const R3 = {
       this.bloomPass.strength = lerp(0.12, 0.75, dark);
       this.bloomPass.threshold = lerp(0.97, 0.7, dark);
     }
-    const wantShadow = sun.intensity > 0.04 && this.Q.shadows;
-    if (sun.castShadow !== wantShadow) sun.castShadow = wantShadow; // no sun shadows at night
+    // The sun's shadow stays switched on all night: switching it off and on again made three.js rebuild
+    // every material's shader at dusk and at dawn (a quarter-second freeze). At night it just stops being redrawn.
+    if (sun.castShadow !== this.Q.shadows) sun.castShadow = this.Q.shadows;
+    this.sunShadowLive = sun.intensity > 0.04;
     sun.color.setHex(lerpHex(SUN_DAY, 0xff9a50, du));
     const half = clamp(c.dist * 1.05, 18, 48);
     const sh = sun.shadow.camera;
@@ -2211,17 +2320,19 @@ const R3 = {
       const pop = !f.cls ? 1 : age < 0.08 ? 0.5 + (age / 0.08) * 0.9 : age < 0.18 ? 1.4 - ((age - 0.08) / 0.1) * 0.4 : 1;
       el.style.opacity = clamp(f.life / (f.cls ? 0.3 : 0.5), 0, 1).toFixed(2);
       el.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -50%) scale(${pop.toFixed(2)})`;
-      el.style.display = 'block';
+      if (el._d !== 1) { el.style.display = 'block'; el._d = 1; }
     }
     const bar = (x, y, z, f, cls, w) => {
       const p = this.project(x, y, z);
       if (!p || p.x < -50 || p.x > window.innerWidth + 50 || p.y < -50 || p.y > window.innerHeight + 50) return;
       const el = getB();
-      el.className = 'bar3d ' + cls;
-      el.style.width = w + 'px';
-      el.firstChild.style.width = (clamp(f, 0, 1) * 100).toFixed(0) + '%';
+      // only what changed is written: every style write makes the browser restyle the bar
+      const c = 'bar3d ' + cls, fw = (clamp(f, 0, 1) * 100).toFixed(0) + '%';
+      if (el._c !== c) { el.className = c; el._c = c; }
+      if (el._w !== w) { el.style.width = w + 'px'; el._w = w; }
+      if (el._f !== fw) { el.firstChild.style.width = fw; el._f = fw; }
       el.style.transform = `translate(${(p.x - w / 2).toFixed(1)}px, ${p.y.toFixed(1)}px)`;
-      el.style.display = 'block';
+      if (el._d !== 1) { el.style.display = 'block'; el._d = 1; }
     };
     const sel = UI.selected;
     for (const v of s.villagers) {
@@ -2247,9 +2358,10 @@ const R3 = {
       if (!el) { el = document.createElement('div'); this.overlay.appendChild(el); this.stockEls.push(el); }
       si++;
       if (el._k !== key) { el._k = key; el.className = 'stock3d ' + cls; el.innerHTML = html; }
-      el.style.opacity = alpha.toFixed(2);
+      const op = alpha.toFixed(2);
+      if (el._o !== op) { el.style.opacity = op; el._o = op; }
       el.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -100%)`;
-      el.style.display = 'flex';
+      if (el._d !== 1) { el.style.display = 'flex'; el._d = 1; }
     };
     const chip = (r, n, cap) => {
       const full = cap !== Infinity && n >= cap - 0.5;
@@ -2284,9 +2396,8 @@ const R3 = {
       if (v.gold > 0) { html += chip('gold', v.gold, Infinity); key += 'g' + v.gold; }
       label(v.x, 1.72, v.z, key, html, 'carry', picked ? 1 : carryA);
     }
-    for (let i = si; i < this.stockEls.length; i++) this.stockEls[i].style.display = 'none';
-    for (let i = fi; i < this.floatEls.length; i++) this.floatEls[i].style.display = 'none';
-    for (let i = bi; i < this.barEls.length; i++) this.barEls[i].style.display = 'none';
+    const hide = (els, from) => { for (let i = from; i < els.length; i++) if (els[i]._d !== 0) { els[i].style.display = 'none'; els[i]._d = 0; } };
+    hide(this.stockEls, si); hide(this.floatEls, fi); hide(this.barEls, bi);
   },
 
   /* ---------- thumbnails for the UI ---------- */

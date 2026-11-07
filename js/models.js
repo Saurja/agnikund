@@ -321,10 +321,13 @@ function skinnedBody(g, root, bones, entries, mat) {
   geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
   geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
   geo.computeBoundingSphere();
+  // poses (lying asleep, a lunge) reach past the bind-pose bounds: a roomier sphere covers them all,
+  // so villagers off the screen are skipped instead of drawn
+  geo.boundingSphere.radius = geo.boundingSphere.radius * 1.6 + 0.25;
   if (!mat.skinning) { mat.skinning = true; mat.needsUpdate = true; } // (ignored by meshes that are not skinned)
   const mesh = new THREE.SkinnedMesh(geo, mat);
   mesh.add(root);
-  mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false; // poses (lying asleep) reach past the bind-pose bounds
+  mesh.castShadow = true; mesh.receiveShadow = true;
   mesh.updateMatrixWorld(true);
   mesh.bind(new THREE.Skeleton(bones));
   mesh.userData.skinned = true;
@@ -395,7 +398,7 @@ function addSilhouette(obj, color, offset) {
   if (!best) return null;
   let s = null;
   for (const part of obj.userData.silParts || [best]) { // a skinned villager gets a skinned twin on the same skeleton
-    if (part.isSkinnedMesh) { s = new THREE.SkinnedMesh(part.geometry, silMat(color, offset, true)); s.bind(part.skeleton, part.bindMatrix); s.frustumCulled = false; }
+    if (part.isSkinnedMesh) { s = new THREE.SkinnedMesh(part.geometry, silMat(color, offset, true)); s.bind(part.skeleton, part.bindMatrix); s.frustumCulled = part.frustumCulled; }
     else s = new THREE.Mesh(part.geometry, silMat(color, offset));
     s.renderOrder = 1; s.castShadow = false; s.receiveShadow = false;
     s.raycast = () => {};

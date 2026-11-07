@@ -314,6 +314,7 @@ const App = {
   /* ---------- loop ---------- */
   loop(now) {
     const dt = Math.min(0.1, Math.max(0, (now - this.last) / 1000));
+    if (document.visibilityState === 'visible') R3.adaptRes(now - this.last); // steady frame rate: resolution follows the load
     this.last = now;
     try {
       if (this.mode === 'title' && S) {

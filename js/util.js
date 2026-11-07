@@ -5,7 +5,7 @@
    ========================================================= */
 
 /** Shown on the title screen and in the pause menu. Bump with each release. */
-const GAME_VERSION = '1.10.2';
+const GAME_VERSION = '1.10.3';
 const VIEW_H = 270;           // internal (pixel-art) resolution height
 const GROUND_Y = 208;       // screen-space y of the ground surface
 const WORLD_MIN = -2600, WORLD_MAX = 2600;
