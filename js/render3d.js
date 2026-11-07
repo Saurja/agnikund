@@ -522,6 +522,7 @@ const R3 = {
     this.buildTrees(s);
     this.rockVer = -1;
     this.rockMeshes = null; // old ones belonged to the previous world group — rebuild them
+    for (const [, o] of this.lootObjs || []) this.removeObj(o); // loot from the last village must not linger in the new one
     this.lootObjs = new Map();
     this.buildDecor(s);
     this.buildFireHeap(g);
