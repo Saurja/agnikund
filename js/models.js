@@ -678,6 +678,17 @@ Models.building = function (type, level) {
       }
       break;
     }
+    case 'path': { // one cell of beaten earth with pebbles (the renderer draws laid paths as one joined network)
+      p.push(box(0.98, 0.025, 0.98, 0xb08a5a, 0, 0, 0)); p.push(box(0.58, 0.006, 0.58, 0xa07a4c, 0, 0.025, 0));
+      for (let i = 0; i < 4; i++) p.push(sph(0.05, i % 2 ? 0x9a958c : 0xb0aa9e, -0.45 + i * 0.3, 0.02, 0.46, 1.2, 0.6, 1));
+      break;
+    }
+    case 'road': { // one cell of brick road between stone kerbs
+      p.push(box(0.98, 0.035, 0.98, 0x8a4228, 0, 0, 0));
+      for (let r = 0; r < 4; r++) (r % 2 ? [[-0.37, 0.2], [0, 0.46], [0.37, 0.2]] : [[-0.245, 0.46], [0.245, 0.46]]).forEach(([w, len], i) => p.push(box(0.2, 0.014, len, [0xb5532f, 0xa84a2c, 0xc2603a][(r + i) % 3], -0.37 + r * 0.245, 0.035, w)));
+      for (const sx of [-1, 1]) p.push(box(0.08, 0.07, 0.98, 0x9a958c, sx * 0.45, 0, 0));
+      break;
+    }
     case 'well': {
       p.push(cyl(0.6, 0.64, 0.55, 10, C.stone, 0, 0, 0));
       for (let y = 0.15; y < 0.55; y += 0.18) p.push(cyl(0.645, 0.645, 0.03, 10, C.stoneD, 0, y, 0));
@@ -1583,7 +1594,7 @@ Models.villager = function (look, job) {
   // neck
   FAB = 0;
   body.push(cyl(0.037, 0.043, 0.075, 10, skin, 0, 0.27, 0.004));
-  if (job === 'archer') { // quiver on the back with red-fletched arrows
+  if (job === 'archer' || job === 'longbow') { // quiver on the back with red-fletched arrows
     body.push(cylC(0.045, 0.04, 0.34, 10, 0x7a4b26, -0.05, 0.16, -0.13, -0.15, 0, -0.35));
     for (let i = 0; i < 4; i++) body.push(coneC(0.022, 0.07, 3, i % 2 ? 0xd33b2c : 0xf4ecd8, -0.11 + i * 0.016, 0.36 + i * 0.004, -0.16, -0.15, 0, -0.35));
   }
@@ -1665,6 +1676,7 @@ Models.villager = function (look, job) {
       fo.push(P(new THREE.TorusGeometry(0.031, 0.007, 4, 12), 0xc81e1e, 0, -0.121, 0, Math.PI / 2)); // pola
       fo.push(P(new THREE.TorusGeometry(0.03, 0.004, 4, 12), 0xe8b830, 0, -0.131, 0, Math.PI / 2));
     } else if (army) fo.push(cyl(fr + 0.004, fr + 0.002, 0.06, 10, 0x8a5a22, 0, -0.13, 0)); // leather bracer
+    if (job === 'chakri' && sx === 1) for (const y of [-0.05, -0.08]) fo.push(P(new THREE.TorusGeometry(0.062, 0.009, 4, 14), 0xd8dde6, 0, y, 0, Math.PI / 2)); // spare chakrams on the wrist
     rig(up, A);
     rig(fo, E);
     const G = bone(E, 0, -0.168, 0.006);
@@ -1693,7 +1705,26 @@ Models.villager = function (look, job) {
     }
     T.push(coneC(0.016, 0.05, 4, 0xf2f4f8, 0, Rc * (1 - Math.cos(0.57 / Rc)) + 0.004, Rc * Math.sin(0.57 / Rc), Math.PI / 2 - 0.57 / Rc, 0, 0, 0.5, 1, 1)); // the point
   }
-  else if (tool === 'bow') { /* in the left hand, below */ }
+  else if (tool === 'bow' || tool === 'longbow') { /* in the left hand, below */ }
+  else if (tool === 'khanda') { // a broad, straight, double-edged sword that widens to a blunt tip, with a basket hilt
+    T.push(cylC(0.024, 0.024, 0.012, 10, 0xe8b830, 0, 0, -0.09, Math.PI / 2)); T.push(handle(0.015, -0.09, 0.05, 0x3a1a10));
+    T.push(boxC(0.11, 0.022, 0.03, 0xe8b830, 0, 0, 0.055)); T.push(P(new THREE.TorusGeometry(0.055, 0.007, 4, 10, Math.PI), 0xe8b830, 0, 0, -0.02, 0, Math.PI / 2, Math.PI));
+    T.push(boxC(0.012, 0.05, 0.26, 0xeef0f5, 0, 0, 0.2)); T.push(boxC(0.012, 0.064, 0.24, 0xeef0f5, 0, 0, 0.44)); T.push(boxC(0.013, 0.074, 0.05, 0xdfe4ec, 0, 0, 0.58));
+    T.push(boxC(0.014, 0.008, 0.46, 0xc8ccd4, 0, 0, 0.33)); // the stiffening rib
+  }
+  else if (tool === 'urumi') { // the whip-sword: a ribbon of springy steel that ripples from the hilt
+    T.push(handle(0.015, -0.07, 0.04, 0x5a3018)); T.push(cylC(0.03, 0.03, 0.02, 10, 0xc9962e, 0, 0, 0.045, Math.PI / 2));
+    let px = 0, py = 0, pz = 0.05;
+    for (let i = 0; i < 12; i++) { // an S-curve of short flat segments
+      const a = Math.sin(i * 0.7) * 0.5, b = -0.08 - i * 0.03, len = 0.075;
+      const nx = px + Math.sin(a) * len * 0.5, nz = pz + Math.cos(a) * Math.cos(b) * len, ny = py + Math.sin(b) * len;
+      T.push(boxC(0.028, 0.004, len + 0.006, 0xe8ecf2, (px + nx) / 2, (py + ny) / 2, (pz + nz) / 2, -b, a, 0));
+      px = nx; py = ny; pz = nz;
+    }
+  }
+  else if (tool === 'chakram') { // a steel throwing ring held flat, a brass rim inside
+    T.push(P(new THREE.TorusGeometry(0.1, 0.014, 4, 18), 0xd8dde6, 0, 0, 0.09, Math.PI / 2)); T.push(P(new THREE.TorusGeometry(0.078, 0.006, 3, 16), 0xe8b830, 0, 0.006, 0.09, Math.PI / 2));
+  }
   else if (tool === 'thali') { // the aarti plate: a brass thali with a diya, flowers and kumkum
     T.push(cylC(0.012, 0.012, 0.06, 6, 0xe8b830, 0, 0.03, 0.03)); T.push(cylC(0.11, 0.095, 0.018, 16, 0xe8b830, 0, 0.065, 0.05));
     T.push(cyl(0.025, 0.02, 0.018, 8, C.brick, 0, 0.074, 0.05)); for (let i = 0; i < 5; i++) { const a = i * 1.26; T.push(sph(0.016, i % 2 ? 0xff9933 : 0xffcc33, Math.cos(a) * 0.065, 0.082, 0.05 + Math.sin(a) * 0.065)); }
@@ -1717,19 +1748,20 @@ Models.villager = function (look, job) {
     for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2 + Math.PI / 4; sp.push(sph(0.018, 0xfff0a0, Math.cos(a) * r * 0.55, Math.sin(a) * r * 0.55, 0.068, 1, 1, 0.6)); }
     grips[0].add(meshOf(sp));
   }
-  if (job === 'archer') { // a recurve bow: limbs along the grip's z axis, belly bulging away from the archer (-y)
+  if (job === 'archer' || job === 'longbow') { // a recurve bow (the longbow is a third taller): limbs along the grip's z axis, belly bulging away from the archer (-y)
+    const BL = job === 'longbow' ? 0.6 : 0.42, BB = job === 'longbow' ? 0.15 : 0.2;
     const bow = new THREE.Group(); grips[0].add(bow);
     const limb = [];
     for (const sz of [-1, 1]) for (let k = 0; k < 4; k++) {
       const a0 = (k / 4) * 0.95, a1 = ((k + 1) / 4) * 0.95;
-      const p0 = [0, (1 - Math.cos(a0)) * 0.2, Math.sin(a0) * 0.42 * sz];
-      const p1 = [0, (1 - Math.cos(a1)) * 0.2, Math.sin(a1) * 0.42 * sz];
+      const p0 = [0, (1 - Math.cos(a0)) * BB, Math.sin(a0) * BL * sz];
+      const p1 = [0, (1 - Math.cos(a1)) * BB, Math.sin(a1) * BL * sz];
       const dz = p1[2] - p0[2], dy = p1[1] - p0[1], len = Math.hypot(dy, dz) + 0.01;
       limb.push(cylC(0.012 - k * 0.0015, 0.012 - k * 0.0015, len, 6, 0x8a5a2e, 0, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2, Math.atan2(dz, dy), 0, 0));
     }
     limb.push(cylC(0.017, 0.017, 0.07, 8, 0xd33b2c, 0, 0, 0, Math.PI / 2)); // the grip wrap
     bow.add(meshOf(limb));
-    const tipY = (1 - Math.cos(0.95)) * 0.2, tipZ = Math.sin(0.95) * 0.42;
+    const tipY = (1 - Math.cos(0.95)) * BB, tipZ = Math.sin(0.95) * BL;
     ud.bowTip = { y: tipY, z: tipZ };
     // the string, rest and drawn, and the nocked arrow (the renderer shows one or the other)
     const sRest = meshOf([cylC(0.003, 0.003, tipZ * 2, 4, 0xf0e8d0, 0, tipY, 0, Math.PI / 2)], null, true, true);

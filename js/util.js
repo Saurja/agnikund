@@ -5,7 +5,7 @@
    ========================================================= */
 
 /** Shown on the title screen and in the pause menu. Bump with each release. */
-const GAME_VERSION = '1.9.0';
+const GAME_VERSION = '1.10.2';
 const VIEW_H = 270;           // internal (pixel-art) resolution height
 const GROUND_Y = 208;       // screen-space y of the ground surface
 const WORLD_MIN = -2600, WORLD_MAX = 2600;
@@ -131,21 +131,31 @@ const JOBS = {
   warrior: { name: 'Sainik',     en: 'Foot Soldier', tool: 'sword', desc: 'Foot soldier with a sword. Give a Sainik a crafted weapon to turn them into a special soldier.', building: 'akhara', slot: 'army' },
   brute:   { name: 'Gadadhari',  en: 'Mace Brute', tool: 'gada',   desc: 'A Sainik given a Gada: huge health, smashes groups of demons and knocks them back.', building: 'akhara', slot: 'army', weapon: 'gada' },
   spear:   { name: 'Bhaladhari', en: 'Spearman',   tool: 'spear',  desc: 'A Sainik given a Bhala: long reach and double damage against giant Danav and Mahasura.', building: 'akhara', slot: 'army', weapon: 'bhala' },
-  archer:  { name: 'Dhanurdhar', en: 'Archer',     tool: 'bow',    desc: 'A Sainik given a Dhanush (bow): shoots demons from behind the walls.', building: 'range', slot: 'army', weapon: 'dhanush' },
+  archer:  { name: 'Dhanurdhar', en: 'Archer',     tool: 'bow',    desc: 'Trained at a Dhanush Shala with a plain bow: shoots demons from behind the walls. Hand a Dhanurdhar a Lamba Dhanush or Chakrams for a longbowman or a chakram thrower.', building: 'range', slot: 'army' },
   medic:   { name: 'Chikitsak',  en: 'Field Medic', tool: 'potli', desc: 'A Sainik given an Aushadhi Potli (medicine kit): follows the soldiers into battle and heals the wounded, and now and then pours healing over everyone nearby.', building: 'akhara', slot: 'army', weapon: 'potli' },
+  khadgi:  { name: 'Khadgadhari', en: 'Broadsword Fighter', tool: 'khanda', desc: 'A Sainik given a Khanda, the broad double-edged sword: every swing cleaves through all the demons in front of them.', building: 'akhara', slot: 'army', weapon: 'khanda' },
+  urumi:   { name: 'Urumidhari',  en: 'Whip-sword Fighter', tool: 'urumi',  desc: 'A Sainik given an Urumi, the flexible whip-sword of Kalaripayattu: lashes demons from two steps away, several at once.', building: 'akhara', slot: 'army', weapon: 'urumi' },
+  longbow: { name: 'Dirghadhanvi', en: 'Longbowman',       tool: 'longbow', desc: 'A Dhanurdhar given a Lamba Dhanush, the great longbow: shoots further than any archer, and the heavy arrows pass through a line of demons.', building: 'range', slot: 'army', weapon: 'longbow' },
+  chakri:  { name: 'Chakri',       en: 'Chakram Thrower',  tool: 'chakram', desc: 'A Dhanurdhar given steel Chakrams: throws razor rings that bounce from demon to demon and fly back to the hand.', building: 'range', slot: 'army', weapon: 'chakram' },
   priest:  { name: 'Pujari',     en: 'Priest',     tool: 'thali',  desc: 'Heals nearby villagers, earns temple offerings.', building: 'temple' },
   trader:  { name: 'Vyapari',    en: 'Trader',     tool: 'sack',   desc: 'Sells grain for gold at the Bazaar.', building: 'bazaar' },
 };
 const AGNI_SLOTS = { build: 2 }; // work places the Agnikund itself provides
-const JOB_ORDER = ['wood', 'stone', 'farm', 'clay', 'kiln', 'smelt', 'build', 'vaidya', 'warrior', 'brute', 'spear', 'archer', 'medic', 'priest', 'trader'];
+const JOB_ORDER = ['wood', 'stone', 'farm', 'clay', 'kiln', 'smelt', 'build', 'vaidya', 'warrior', 'brute', 'spear', 'khadgi', 'urumi', 'archer', 'longbow', 'chakri', 'medic', 'priest', 'trader'];
+/** Soldiers who fight from a distance (they hold the second line, behind the melee fighters). */
+const RANGED_JOBS = new Set(['archer', 'longbow', 'chakri', 'medic']);
 const slotKey = (job) => (JOBS[job] && JOBS[job].slot) || job;
 // fighting stats per soldier type
 const SOLDIERS = {
   warrior: { hp: 80,  dmg: 10, cd: 0.85, reach: 0.75, speed: 1 },
   brute:   { hp: 140, dmg: 17, cd: 1.35, reach: 0.9,  speed: 0.85, splash: 1.0, knock: 0.55 },
   spear:   { hp: 90,  dmg: 9,  cd: 0.9,  reach: 1.55, speed: 1, bigBonus: 2 },
-  archer:  { hp: 48 },
   medic:   { hp: 60, heal: 9 },
+  khadgi:  { hp: 110, dmg: 13, cd: 1.05, reach: 0.95, speed: 0.95, arc: 1.25 },
+  urumi:   { hp: 75,  dmg: 7,  cd: 0.8,  reach: 1.9,  speed: 1.05, arc: 1.6, maxHit: 3 },
+  longbow: { hp: 52,  dmg: 11, cd: 2.0,  range: 14, pierce: 3 },
+  chakri:  { hp: 58,  dmg: 8,  cd: 1.15, range: 7.5, bounce: 3 },
+  archer:  { hp: 48, dmg: 6, cd: 1.35, range: 10 },
 };
 /*
  * How each soldier fights. atk: the swings of their combo, in order. dur / hit: how long one swing takes and
@@ -157,6 +167,10 @@ const SOLDIER_MOVES = {
   spear:   { atk: ['thrust', 'thrust'],         crit: 0.12,             ability: { key: 'lunge',  name: 'Bhala Vaar',    en: 'Spear Lunge',  cd: 7,  desc: 'dashes through a line of demons' } },
   archer:  {                                    crit: 0.1,              ability: { key: 'volley', name: 'Baan Varsha',   en: 'Arrow Rain',   cd: 9,  desc: 'a volley of fire arrows' } },
   medic:   {                                                            ability: { key: 'pulse',  name: 'Amrit Varsha',  en: 'Healing Rain', cd: 12, desc: 'heals everyone nearby' } },
+  khadgi:  { atk: ['cleave', 'cleave'],      crit: 0.15,             ability: { key: 'sunder', name: 'Dvidha Vaar',   en: 'Splitting Blow', cd: 9,  desc: 'an overhead blow that splits one demon and throws back the rest' } },
+  urumi:   { atk: ['lash', 'lash', 'lash'],  crit: 0.12,             ability: { key: 'coil',   name: 'Kalari Chakra', en: 'Coiling Spin',  cd: 8,  desc: 'spins the whip-sword round, cutting and slowing every demon near' } },
+  longbow: {                                 crit: 0.2,              ability: { key: 'pierce', name: 'Bhedi Baan',    en: 'Piercing Shot', cd: 8,  desc: 'a heavy arrow through a whole line of demons' } },
+  chakri:  {                                 crit: 0.12,             ability: { key: 'ricochet', name: 'Chakra Bhram', en: 'Ricochet',     cd: 7,  desc: 'a chakram that bounces through six demons' } },
 };
 const SWINGS = { // dur: seconds per swing, hit: fraction of it when the blow lands
   slash: { dur: 0.4, hit: 0.5 }, thrust: { dur: 0.45, hit: 0.5 }, smash: { dur: 0.75, hit: 0.6 },
@@ -165,6 +179,9 @@ const SWINGS = { // dur: seconds per swing, hit: fraction of it when the blow la
   // ultimates (hits: several blows in one move)
   whirl: { dur: 1.05, hit: 0.25, hits: [0.25, 0.55, 0.85] }, leap: { dur: 1.0, hit: 0.72 }, barrage: { dur: 1.2, hit: 0.22, hits: [0.22, 0.5, 0.8] },
   astra: { dur: 0.9, hit: 0.72 }, sanjeevani: { dur: 1.0, hit: 0.55 },
+  cleave: { dur: 0.55, hit: 0.55 }, sunder: { dur: 0.85, hit: 0.62 }, lash: { dur: 0.5, hit: 0.5 }, coil: { dur: 0.8, hit: 0.3, hits: [0.3, 0.65] },
+  throw: { dur: 0.5, hit: 0.55 }, ricochet: { dur: 0.6, hit: 0.55 }, pierce: { dur: 0.9, hit: 0.75 },
+  storm: { dur: 1.3, hit: 0.25, hits: [0.25, 0.55, 0.85] }, serpent: { dur: 1.4, hit: 0.2, hits: [0.2, 0.42, 0.64, 0.86] }, rain: { dur: 1.0, hit: 0.7 }, fan: { dur: 0.8, hit: 0.55 },
 };
 /*
  * Shakti: every fighter's power bar fills as they land blows, take hits and heal. When it is full they
@@ -177,6 +194,10 @@ const ULTIMATES = {
   spear:   { key: 'barrage',    name: 'Trishul Varsha', en: 'Trident Storm',  desc: 'three lunges in a row, each through a line of demons' },
   archer:  { key: 'astra',      name: 'Agni Astra',     en: 'Fire Weapon',    desc: 'a blazing arrow that bursts into a sea of flame' },
   medic:   { key: 'sanjeevani', name: 'Sanjeevani',     en: 'Herb of Life',   desc: 'heals everyone nearby to full' },
+  khadgi:  { key: 'storm',   name: 'Shamsher Toofan', en: 'Sword Storm',     desc: 'three great cleaves, stepping forward through the demons' },
+  urumi:   { key: 'serpent', name: 'Sarpa Nritya',    en: 'Serpent Dance',   desc: 'four whirling lashes that reach far round them' },
+  longbow: { key: 'rain',    name: 'Shara Varsha',    en: 'Shower of Arrows', desc: 'a dozen arrows fall over the thickest knot of demons' },
+  chakri:  { key: 'fan',     name: 'Chakra Toofan',   en: 'Ring Storm',      desc: 'five chakrams at once, each bouncing through three demons' },
 };
 /*
  * Power moves for the stronger demons, used between ordinary blows. cd: seconds between uses, wind:
@@ -195,25 +216,31 @@ DEMON_POWERS.kalanemi = { key: 'maya', name: 'Maya Jaal', en: 'Web of Illusion',
 const BOSS_SUMMON = { cd: 26, name: 'Asura Sena', en: 'Demon Host' };
 /*
  * Boss nights. Each great asura comes on his own night (and, after the fifteenth, they return in turn
- * every fourth night). Two days before, the land itself warns of him: an omen anyone watching can read.
+ * every fourth night). On his day the land itself warns of him, more clearly as the day goes on (see tickOmen).
  */
 const BOSS_NIGHTS = { 4: 'bakasura', 8: 'raktabija', 12: 'kalanemi', 15: 'boss' };
 const BOSS_CYCLE = ['bakasura', 'raktabija', 'kalanemi', 'boss'];
 function bossForDay(d) { if (BOSS_NIGHTS[d]) return BOSS_NIGHTS[d]; return d > 15 && d % 4 === 3 ? BOSS_CYCLE[Math.floor((d - 15) / 4) % BOSS_CYCLE.length] : null; }
 const OMENS = {
-  bakasura:  { sign: 'The crows have gone quiet. A great flock circles over the forest and will not settle.', kind: 'crows' },
-  raktabija: { sign: 'The evening sky burns a deep red, and the moon rises the colour of blood.', kind: 'blood' },
-  kalanemi:  { sign: 'A strange violet mist creeps out of the forest at dusk, thicker each evening.', kind: 'mist' },
-  boss:      { sign: 'The ground trembles now and then, and the Agnikund’s flame shrinks back, as if afraid.', kind: 'quake' },
+  bakasura:  { sign: 'The crows have gone quiet. A great flock circles over the forest and will not settle, and the cattle will not graze.', counter: 'He hunts grain: guard the grain heap by the fire and the stores, and keep fighters near the food.', kind: 'crows', smoke: 0xb89c70 },
+  raktabija: { sign: 'The sky has a red tinge this morning, and the water in the wells looks dark, like old blood.', counter: 'Fire scorches his blood before it falls: Agni Burj towers, Agni Baan arrows and fire pots stop new demons rising.', kind: 'blood', smoke: 0xc0303a },
+  kalanemi:  { sign: 'A strange violet mist hangs among the trees, and people swear they saw someone standing at the forest edge who was not there.', counter: 'His copies burst at the first blow: archers, chakrams and towers clear them fast, and the real one soon shows himself again.', kind: 'mist', smoke: 0xa486e0 },
+  boss:      { sign: 'The ground trembled at dawn, and the Agnikund’s flame shrank back as if afraid.', counter: 'His charge breaks through walls: gather every fighter where he comes, and Bhaladhari deal double damage to him.', kind: 'quake', smoke: 0x8a7a76 },
 };
 /* ---------------- Weapons (crafted, kept in the armoury) ---------------- */
 const WEAPONS = {
   gada:    { name: 'Gada',    en: 'Mace',  at: 'forge',   lvl: 1, cost: { iron: 3, stone: 4, gold: 2 }, job: 'brute' },
-  dhanush: { name: 'Dhanush', en: 'Bow',   at: 'sawmill', lvl: 1, cost: { wood: 14 },          job: 'archer' },
+  // (archers no longer need a crafted Dhanush: the Dhanush Shala trains them with a plain bow)
   bhala:   { name: 'Bhala',   en: 'Spear', at: 'sawmill', lvl: 2, cost: { wood: 10, iron: 2 }, job: 'spear' },
   potli:   { name: 'Aushadhi Potli', en: 'Medicine Kit', at: 'vaidyashala', lvl: 1, cost: { food: 10, wood: 4 }, job: 'medic' },
+  khanda:  { name: 'Khanda',  en: 'Broadsword',  at: 'forge',   lvl: 2, cost: { iron: 6, charcoal: 4, gold: 4 }, job: 'khadgi' },
+  urumi:   { name: 'Urumi',   en: 'Whip-sword',  at: 'forge',   lvl: 3, cost: { iron: 8, gold: 8 }, job: 'urumi' },
+  longbow: { name: 'Lamba Dhanush', en: 'Longbow', at: 'sawmill', lvl: 2, cost: { wood: 22, iron: 2 }, job: 'longbow', base: 'archer' },
+  chakram: { name: 'Chakram', en: 'Throwing Rings', at: 'forge', lvl: 2, cost: { iron: 4, gold: 3 }, job: 'chakri', base: 'archer' },
 };
-const WEAPON_ORDER = ['gada', 'dhanush', 'bhala', 'potli'];
+const WEAPON_ORDER = ['gada', 'khanda', 'urumi', 'bhala', 'potli', 'longbow', 'chakram'];
+/** Who a weapon is handed to: melee weapons and kits to a Sainik, ranged ones to a Dhanurdhar. */
+const weaponBase = (w) => (WEAPONS[w] && WEAPONS[w].base) || 'warrior';
 
 /* ---------------- Buildings ---------------- */
 // fw × fd = footprint in grid cells, ht = model height (for bars and selection)
@@ -230,7 +257,7 @@ const BUILDINGS = {
   claypit:  { name: 'Mitti Khaan',   en: 'Clay Pit',      fw: 2, fd: 2, ht: 1.1, cost: { wood: 20 },                      hp: 120, lvl: 1, time: 8,  slots: { clay: 2 }, drop: ['clay'], desc: 'A pit of wet clay. 2 Beldar dig here and stack the clay beside it.' },
   kiln:     { name: 'Eent Bhatta',   en: 'Brick Kiln',    fw: 2, fd: 2, ht: 3.0, cost: { wood: 30, stone: 15 },           hp: 170, lvl: 1, time: 12, slots: { kiln: 2 }, drop: ['brick', 'charcoal'], recipes: ['auto', 'brick', 'charcoal'], desc: '2 Kumhar fire clay and wood into bricks, or slow-burn wood into charcoal for the smelter.' },
   smelter:  { name: 'Loha Bhatti',   en: 'Iron Smelter',  fw: 2, fd: 2, ht: 2.5, cost: { brick: 20, stone: 15, wood: 10 }, hp: 200, lvl: 2, time: 16, slots: { smelt: 2 }, drop: ['iron'], recipes: ['iron'], desc: 'A clay shaft furnace with leather bellows. 2 Agariya smelt iron ore with charcoal into iron.' },
-  range:    { name: 'Dhanush Shala', en: 'Archery Range', fw: 4, fd: 3, ht: 1.6, cost: { wood: 25, brick: 10 },           hp: 150, lvl: 2, time: 14, slots: { army: 3 }, desc: 'Archery range with room for 3 more soldiers. Dhanurdhar practise here.' },
+  range:    { name: 'Dhanush Shala', en: 'Archery Range', fw: 4, fd: 3, ht: 1.6, cost: { wood: 25, brick: 10 },           hp: 150, lvl: 2, time: 14, slots: { army: 3 }, desc: 'Archery range that trains Dhanurdhar (archers) straight away, room for 3. Longbowmen and chakram throwers practise here too.' },
   well:     { name: 'Kuan',          en: 'Well',          fw: 2, fd: 2, ht: 1.8, cost: { stone: 10, brick: 12 },          hp: 160, lvl: 2, time: 10, desc: 'Fields within 9 steps grow 50% faster.' },
   bazaar:   { name: 'Bazaar',        en: 'Market',        fw: 3, fd: 2, ht: 1.9, cost: { wood: 30, brick: 15 },           hp: 150, lvl: 2, time: 16, slots: { trader: 2 }, desc: 'Spice stall. 2 Vyapari trade grain for gold.' },
   lamp:     { name: 'Deep Stambh',   en: 'Lamp Pillar',   fw: 1, fd: 1, ht: 2.7, cost: { stone: 10, brick: 6, gold: 5 },  hp: 140, lvl: 2, time: 8,  desc: 'Holy lamps light the night. Demons nearby are slowed and burn.' },
@@ -250,8 +277,12 @@ const BUILDINGS = {
   bigfield:  { name: 'Bada Khet', en: 'Big Field', fw: 6, fd: 3, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster.' },
   bigfieldV: { name: 'Bada Khet', en: 'Big Field', fw: 3, fd: 6, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, model: 'bigfield', desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster.' },
 };
+// roads: laid at once along a dragged line, no builder needed; people walk faster on them (road = speed factor)
+BUILDINGS.path = { name: 'Kachcha Rasta', en: 'Dirt Path', fw: 1, fd: 1, ht: 0.05, cost: { stone: 1 }, hp: 400, lvl: 1, time: 1, line: true, road: 1.25, instant: true, desc: 'A beaten earth path edged with stones. Villagers walk a quarter faster on it and take it when it saves them time. Buildings can go over it. Click and drag to lay a line.' };
+BUILDINGS.road = { name: 'Pakki Sadak', en: 'Brick Road', fw: 1, fd: 1, ht: 0.06, cost: { brick: 1, stone: 1 }, hp: 600, lvl: 2, time: 1, line: true, road: 1.5, instant: true, desc: 'A paved road of fired brick between stone kerbs. Villagers move half again as fast on it. Buildings can go over it. Click and drag to lay a line.' };
+BUILDINGS.palisade.line = true; BUILDINGS.wall.line = true;
 BUILDINGS.vaidyashala = { name: 'Vaidyashala', en: "Healer's Hut", fw: 2, fd: 2, ht: 2.0, cost: { wood: 25, food: 10 }, hp: 140, lvl: 1, time: 10, slots: { vaidya: 2 }, desc: 'Ayurvedic healer’s hut with a herb garden. Room for 2 Vaidya, who walk to the wounded and heal them. Also makes Aushadhi Potli kits: hand one to a Sainik for a Chikitsak field medic.' };
-const BUILD_ORDER = ['hut', 'woodcamp', 'minecamp', 'buildyard', 'field', 'store', 'claypit', 'kiln', 'vaidyashala', 'palisade', 'akhara', 'smelter', 'range', 'well', 'bazaar', 'lamp', 'forge', 'sawmill', 'wall', 'tower', 'belltower', 'temple', 'firetower', 'cannontower'];
+const BUILD_ORDER = ['hut', 'woodcamp', 'minecamp', 'buildyard', 'field', 'store', 'path', 'claypit', 'kiln', 'vaidyashala', 'palisade', 'akhara', 'smelter', 'range', 'road', 'well', 'bazaar', 'lamp', 'forge', 'sawmill', 'wall', 'tower', 'belltower', 'temple', 'firetower', 'cannontower'];
 
 /*
  * Building levels. Every building except walls can be upgraded twice (the Lohar and Aara Mill keep their
@@ -280,7 +311,7 @@ function levelPerk(type, lv) {
 /** Give every building without its own levels the standard two upgrades (run once, at the end of this file). */
 function initBuildingLevels() { for (const type in BUILDINGS) {
   const d = BUILDINGS[type];
-  if (d.levels || d.wall) continue;
+  if (d.levels || d.wall || d.line) continue;
   // level 2 is built with bricks, level 3 with bricks and iron (only the basic goods of the cost are scaled up)
   const size = d.fw * d.fd;
   const base = (k) => { const c = {}; for (const r in d.cost) if (!RES[r].mat) c[r] = Math.ceil((d.cost[r] * k) / 5) * 5; return c; };
@@ -297,9 +328,11 @@ const TOWERS = {
   belltower:   { kind: 'aura',  range: 7 },
 };
 /** Which job a building gives places for (first one). */
-function jobOfBuilding(type) { const s = BUILDINGS[type].slots; if (!s) return null; const k = Object.keys(s)[0]; return k === 'army' ? 'warrior' : k; }
+function jobOfBuilding(type) { const s = BUILDINGS[type].slots; if (!s) return null; const k = Object.keys(s)[0]; return k === 'army' ? (type === 'range' ? 'archer' : 'warrior') : k; } // the Dhanush Shala trains archers, the Akhara Sainik
 const isHome = (type) => !!BUILDINGS[type].housing;
 const isFieldType = (type) => type === 'field' || type === 'bigfield' || type === 'bigfieldV';
+/** Flat ground anyone can cross and demons ignore: fields and roads. */
+const isGround = (type) => isFieldType(type) || !!BUILDINGS[type].road;
 
 /* ---------------- Demon loot ---------------- */
 const LOOT = {
@@ -326,9 +359,9 @@ const UPGRADES = {
   axe:      { name: 'Loha Kulhadi', en: 'Iron Axes',     at: 'forge',   lvl: 1, cost: { iron: 6, gold: 8 },  desc: 'Woodcutters chop 60% faster.' },
   pick:     { name: 'Loha Gainti',  en: 'Iron Pickaxes', at: 'forge',   lvl: 1, cost: { iron: 6, wood: 10, gold: 6 },  desc: 'Miners and clay diggers dig 60% faster.' },
   plough:   { name: 'Loha Hal',     en: 'Iron Ploughs',  at: 'forge',   lvl: 1, cost: { iron: 8, wood: 20, gold: 10 },  desc: 'Each harvest gives 50% more grain.' },
-  talwar:   { name: 'Talwar',       en: 'Steel Swords',  at: 'forge',   lvl: 2, cost: { iron: 15, charcoal: 10, gold: 20 }, desc: 'Sainik deal 60% more damage, +30 HP.' },
+  talwar:   { name: 'Talwar',       en: 'Steel Swords',  at: 'forge',   lvl: 2, cost: { iron: 15, charcoal: 10, gold: 20 }, desc: 'Steel for every blade: Sainik, Khadgadhari and Urumidhari deal 60% more damage, chakrams 30% more, and Sainik get +30 HP.' },
   kavach:   { name: 'Kavach',       en: 'Armour',        at: 'forge',   lvl: 3, cost: { iron: 30, gold: 30 }, desc: 'All fighters take 35% less damage.' },
-  bow:      { name: 'Baans Dhanush', en: 'Longbows',     at: 'sawmill', lvl: 2, cost: { wood: 40, gold: 28 },  desc: 'Archers deal 50% more damage and shoot further.' },
+  bow:      { name: 'Shringa Dhanush', en: 'Horn Bows',  at: 'sawmill', lvl: 2, cost: { wood: 40, gold: 28 },  desc: 'Archers and longbowmen deal 50% more damage and shoot further.' },
   agnibaan: { name: 'Agni Baan',    en: 'Fire Arrows',   at: 'sawmill', lvl: 3, cost: { wood: 30, charcoal: 20, iron: 6, gold: 30 },  desc: 'Archer and tower arrows set demons on fire.' },
 };
 const UPGRADE_ORDER = ['axe', 'pick', 'plough', 'talwar', 'kavach', 'bow', 'agnibaan'];

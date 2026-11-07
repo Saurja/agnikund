@@ -86,6 +86,8 @@ const TOOL_CARRY = {
   thali:  { toolR: 0, armR: -0.45, elbR: 1.25 }, herbs: { toolR: 0, armR: -0.35, elbR: 1.1 },
   spear:  { toolR: -1.42, armR: -0.28, elbR: 0.95, armRz: 0.12 }, // upright at the side
   gada:   { toolR: -2.55, armR: -0.45, elbR: 2.15, armRz: 0.18 }, // resting on the shoulder
+  khanda: { toolR: -2.4, armR: -0.4, elbR: 2.05, armRz: 0.16 }, // the broadsword on the shoulder
+  urumi:  { toolR: 1.35 }, chakram: { toolR: 0, armR: -0.25, elbR: 0.7 },
 };
 const lerpN = (a, b, t) => a + (b - a) * t;
 /** A work stroke: slow wind-up to 1 by h, a quick strike back to 0, then a short follow-through. */
@@ -96,12 +98,16 @@ function stroke(c, h) {
 }
 function fightStance(v, t) {
   const b = Math.sin(t * 7 + v.id) * 0.01;
-  const J = Object.assign({}, VJ_REST, { hipY: V_HIP - 0.04 + b, legL: -0.38, kneeL: 0.42, legR: 0.3, kneeR: 0.38, lean: 0.14, twist: 0.22, headY: -0.18,
+  const scan = Math.sin(t * 0.55 + v.id * 1.7), shift = Math.sin(t * 1.1 + v.id);
+  const J = Object.assign({}, VJ_REST, { hipY: V_HIP - 0.04 + b, legL: -0.38, kneeL: 0.42 + shift * 0.06, legR: 0.3, kneeR: 0.38 - shift * 0.06, lean: 0.14, twist: 0.22 + shift * 0.05, sway: shift * 0.02, headY: -0.18 + scan * 0.3,
     armR: -0.75, armRz: 0.22, elbR: 1.25, toolR: -0.95, armL: -0.65, armLz: 0.05, elbL: 1.25, toolL: 0 });
   if (v.job === 'brute') Object.assign(J, { armR: -1.55, armL: -1.5, armRz: 0.05, armLz: -0.32, elbR: 1.15, elbL: 1.2, toolR: -2.1, toolL: null, gripL: 0, twist: 0.1 }); // the gada high in both hands
   else if (v.job === 'spear') Object.assign(J, { armR: -0.55, elbR: 0.75, armRz: 0.12, toolR: -0.12, twist: 0.32 }); // the bhala levelled over the dhaal
   else if (v.job === 'medic') Object.assign(J, { armR: -0.5, elbR: 1.0, toolR: 0, armL: -0.3, elbL: 0.8, toolL: null, twist: 0.05 });
-  else if (v.job === 'archer') Object.assign(J, { armL: -1.2, armLz: 0.55, elbL: 0.15, toolL: null, gripL: 0.15, armR: -1.0, armRz: -0.2, elbR: 1.6, toolR: null, gripR: 0, twist: 0.75, headY: -0.7, legL: -0.25, legR: 0.25 });
+  else if (v.job === 'archer' || v.job === 'longbow') Object.assign(J, { armL: -1.2, armLz: 0.55, elbL: 0.15, toolL: null, gripL: 0.15, armR: -1.0, armRz: -0.2, elbR: 1.6, toolR: null, gripR: 0, twist: 0.75, headY: -0.7, legL: -0.25, legR: 0.25 });
+  else if (v.job === 'khadgi') Object.assign(J, { armR: -1.25, armL: -1.15, armRz: 0.1, armLz: -0.34, elbR: 1.2, elbL: 1.3, toolR: -1.15, toolL: null, gripL: 0, twist: 0.3 }); // two hands on the khanda, point up
+  else if (v.job === 'urumi') Object.assign(J, { armR: -0.55, armRz: 0.35, elbR: 0.8, toolR: 0.45, armL: -0.5, elbL: 1.5, toolL: null, gripL: 0, twist: 0.35, lean: 0.18 }); // the whip-sword trailing, the other hand on guard
+  else if (v.job === 'chakri') Object.assign(J, { armR: -0.95, armRz: 0.35, elbR: 1.8, toolR: 0, armL: -0.55, elbL: 1.1, toolL: null, gripL: 0, twist: 0.45 }); // a ring cocked by the shoulder
   return J;
 }
 /*
@@ -122,14 +128,25 @@ const SWING_POSES = {
   whirl:  { armR: [-0.75, -0.3, -0.3], armRz: [0.22, 1.4, 1.4], elbR: [1.25, 0.15, 0.15], gripR: [1.0, 0.25, 0.25], armL: [-0.65, -0.3, -0.3], armLz: [0.05, 1.4, 1.4], elbL: [1.25, 0.2, 0.2], lean: [0.14, 0.05, 0.12], kneeL: [0.42, 0.4, 0.4], kneeR: [0.38, 0.4, 0.4] },
   leap:   { armR: [-1.55, -3.1, -0.25], armL: [-1.5, -3.0, -0.3], elbR: [1.15, 1.25, 0.05], elbL: [1.2, 1.25, 0.1], gripR: [1.0, 1.0, 1.35], armLz: [-0.32, -0.3, -0.3], lean: [0.1, -0.3, 0.72], hipY: [0.43, 0.45, 0.3], legL: [-0.38, -0.9, -0.8], kneeL: [0.42, 1.3, 1.0], legR: [0.3, 0.5, -0.6], kneeR: [0.38, 1.1, 1.0] },
   barrage: null, // uses the thrust, once per blow
+  // the new blades and rings
+  cleave: { armR: [-1.25, -2.0, -1.05], armL: [-1.15, -1.9, -0.95], armRz: [0.1, 1.05, -0.55], armLz: [-0.34, 0.55, -0.95], elbR: [1.2, 1.2, 0.25], elbL: [1.3, 1.35, 0.35], gripR: [1.1, 1.0, 1.25], twist: [0.3, 0.95, -0.7], lean: [0.14, -0.05, 0.3], hipY: [0.43, 0.44, 0.4], legL: [-0.38, -0.25, -0.6], kneeL: [0.42, 0.3, 0.55], sided: true },
+  sunder: { armR: [-1.25, -3.05, -0.5], armL: [-1.15, -2.95, -0.5], armLz: [-0.34, -0.3, -0.3], elbR: [1.2, 1.3, 0.1], elbL: [1.3, 1.35, 0.15], gripR: [1.1, 1.0, 1.35], lean: [0.14, -0.3, 0.62], hipY: [0.43, 0.46, 0.36], kneeL: [0.42, 0.2, 0.8], kneeR: [0.38, 0.2, 0.75], legL: [-0.38, -0.2, -0.65] },
+  lash:   { armR: [-0.55, -2.5, -0.85], armRz: [0.35, 0.85, -0.45], elbR: [0.8, 1.7, 0.0], gripR: [0.6, 1.5, 0.25], twist: [0.35, 0.75, -0.5], lean: [0.18, -0.05, 0.28], legL: [-0.38, -0.2, -0.6], kneeL: [0.42, 0.3, 0.55], sided: true },
+  coil:   { armR: [-0.55, -0.35, -0.35], armRz: [0.35, 1.45, 1.45], elbR: [0.8, 0.1, 0.1], gripR: [0.6, 0.15, 0.15], armL: [-0.5, -0.3, -0.3], armLz: [0.05, 1.2, 1.2], elbL: [1.5, 0.3, 0.3], lean: [0.18, 0.05, 0.1], kneeL: [0.42, 0.45, 0.45], kneeR: [0.38, 0.45, 0.45] },
+  throw:  { armR: [-0.95, -1.35, -1.6], armRz: [0.35, 1.0, -0.35], elbR: [1.8, 2.1, 0.1], toolR: [0, 0, 0], twist: [0.45, 1.0, -0.55], lean: [0.1, -0.05, 0.25], legL: [-0.38, -0.2, -0.6], kneeL: [0.42, 0.3, 0.5] },
+  pierce: { armR: [-1.05, -1.5, -1.25], armRz: [-0.2, -0.3, 0.25], elbR: [1.6, 2.45, 1.1], armL: [-1.25, -1.5, -1.45], twist: [0.75, 1.0, 0.9], lean: [-0.02, -0.1, 0.04], kneeL: [0.3, 0.5, 0.45], legL: [-0.25, -0.45, -0.45] },
+  rain:   { armR: [-1.05, -2.2, -2.05], armRz: [-0.2, -0.3, 0.2], elbR: [1.6, 2.4, 1.1], armL: [-1.25, -2.2, -2.1], twist: [0.75, 0.95, 0.9], lean: [-0.02, -0.3, -0.15], headX: [0, -0.45, -0.4] },
+  storm:  null, serpent: null, ricochet: null, fan: null,
   astra:  { armR: [-1.05, -2.1, -1.95], armRz: [-0.2, -0.3, 0.2], elbR: [1.6, 2.45, 1.1], armL: [-1.25, -2.15, -2.05], twist: [0.75, 1.0, 0.95], lean: [-0.02, -0.3, -0.15], legL: [-0.25, -0.55, -0.5], kneeL: [0.3, 0.6, 0.55], legR: [0.25, 0.45, 0.45], headX: [0, -0.4, -0.35] },
   sanjeevani: { armR: [-0.5, -3.0, -1.0], armL: [-0.3, -3.0, -1.0], elbR: [1.0, 0.2, 0.2], elbL: [0.8, 0.2, 0.2], armRz: [0, 0.2, 1.3], armLz: [0, 0.2, 1.3], lean: [0.05, -0.25, 0.05], hipY: [0.45, 0.5, 0.45], headX: [0, -0.5, -0.1] },
 };
 SWING_POSES.barrage = SWING_POSES.thrust;
+SWING_POSES.storm = SWING_POSES.cleave; SWING_POSES.serpent = SWING_POSES.coil; SWING_POSES.ricochet = SWING_POSES.throw;
+SWING_POSES.fan = Object.assign({}, SWING_POSES.throw, { armL: [-0.55, -1.4, -1.6], armLz: [0.05, 0.9, -0.3], elbL: [1.1, 2.0, 0.1] });
 function attackPose(v, a) {
   const S2 = SWING_POSES[a.kind] || SWING_POSES.slash;
   let p = clamp(a.t / a.dur, 0, 1), h = a.hit;
-  if (a.hits && a.kind !== 'whirl') { // several blows: wind up and strike again for each
+  if (a.hits && a.kind !== 'whirl' && a.kind !== 'coil' && a.kind !== 'serpent') { // several blows: wind up and strike again for each (spins just keep spinning)
     const k = Math.min(a.hi || 0, a.hits.length - 1), t0 = k === 0 ? 0 : a.hits[k - 1], t1 = a.hits[k];
     p = clamp((p - t0) / Math.max(0.01, (k === a.hits.length - 1 ? 1 : a.hits[k + 1]) - t0), 0, 1);
     h = clamp((t1 - t0) / Math.max(0.01, (k === a.hits.length - 1 ? 1 : a.hits[k + 1]) - t0), 0.2, 0.9);
@@ -147,8 +164,38 @@ function attackPose(v, a) {
   }
   if (a.kind === 'slam' && p < h) J.hipY += Math.sin((p / h) * Math.PI) * 0.34; // the leap
   if (a.kind === 'leap' && p < h) J.hipY += Math.sin((p / h) * Math.PI) * 1.1; // Hanuman's leap: high through the air
-  J.drawn = (a.kind === 'shoot' || a.kind === 'volley' || a.kind === 'astra') && p < h; // the bowstring is pulled until the release
+  J.drawn = (a.kind === 'shoot' || a.kind === 'volley' || a.kind === 'astra' || a.kind === 'pierce' || a.kind === 'rain') && p < h; // the bowstring is pulled until the release
   return J;
+}
+/** Sparring in the Akhara: a soldier runs through the swings of their own combo, with a breath between bouts. */
+const SPAR = { warrior: ['slash', 'slash', 'thrust', 'bash'], brute: ['smash', 'smash', 'slam'], spear: ['thrust', 'thrust', 'lunge'], khadgi: ['cleave', 'cleave', 'sunder'], urumi: ['lash', 'lash', 'coil'] };
+function sparPose(v, t) {
+  const list = SPAR[v.job] || SPAR.warrior, id = v.id || 0;
+  const cyc = t * 0.9 + id * 0.37, n = Math.floor(cyc), f = cyc - n;
+  if (n % 4 === 3) { const J = fightStance(v, t); J.headY += Math.sin(t * 1.3 + id) * 0.3; return J; } // circling, guard up
+  const kind = list[n % list.length], S2 = SWINGS[kind] || SWINGS.slash;
+  return attackPose(v, { kind, t: f * S2.dur * 1.6, dur: S2.dur * 1.6, hit: S2.hit, hits: S2.hits || null, hi: 0, side: n % 2 ? 1 : -1 });
+}
+/** An archer at the mark: draw, hold, loose, reach back for the next arrow. */
+function aimPose(v, t) {
+  const id = v.id || 0, per = 2.4, f = ((t + id * 0.53) % per) / per;
+  if (v.job === 'chakri') { const S2 = SWINGS.throw; return f < 0.45 ? fightStance(v, t) : attackPose(v, { kind: 'throw', t: ((f - 0.45) / 0.55) * S2.dur, dur: S2.dur, hit: S2.hit }); } // wind up and throw
+  const J = fightStance(v, t);
+  const draw = f < 0.5 ? Math.sin((f / 0.5) * Math.PI * 0.5) : f < 0.62 ? 1 : 0; // the loose snaps the string forward
+  const nock = f > 0.75 ? Math.sin(((f - 0.75) / 0.25) * Math.PI) : 0; // a hand back to the quiver
+  Object.assign(J, { armL: -1.45, armLz: 0.95, twist: 0.92, headY: -0.85, lean: -0.03,
+    armR: -1.05 - 0.4 * draw + 0.9 * nock, armRz: -0.2 - 0.08 * draw + 0.35 * nock, elbR: 1.5 + 0.85 * draw + 0.4 * nock });
+  J.drawn = draw > 0.2;
+  return J;
+}
+/** Once the elders have named the asura, people keep glancing toward the side he will come from. */
+function omenGlance(v, J, t) {
+  const om = typeof S !== 'undefined' && S && S.omen;
+  if (!om || om.done || om.stage < 2 || Math.sin(t * 0.25 + (v.id || 0) * 1.3) < 0.15) return;
+  let rel = Math.atan2(Math.sin(om.a), -Math.cos(om.a)) - (v.rot || 0);
+  while (rel > Math.PI) rel -= Math.PI * 2;
+  while (rel < -Math.PI) rel += Math.PI * 2;
+  J.headY = clamp(-rel, -1.1, 1.1); J.twist += clamp(-rel * 0.25, -0.3, 0.3); J.headX = -0.05;
 }
 /** Work strokes for each trade (anim 'work'), keyed by job. */
 function workPose(v, J, t) {
@@ -200,7 +247,7 @@ function villagerPose(v, o, t) {
   const J = Object.assign({}, VJ_REST);
   const carry = TOOL_CARRY[tool];
   if (carry) Object.assign(J, carry);
-  if (tool === 'bow') Object.assign(J, { armL: -0.15, elbL: 0.55, toolL: -1.3 });
+  if (tool === 'bow' || tool === 'longbow') Object.assign(J, { armL: -0.15, elbL: 0.55, toolL: -1.3 });
   if (v.job === 'warrior' || v.job === 'spear') Object.assign(J, { armL: -0.2, elbL: 0.9, toolL: 0 }); // the dhaal on the forearm, face out
   const defender = isDefender(v);
   if (anim === 'walk') {
@@ -211,7 +258,7 @@ function villagerPose(v, o, t) {
     J.hipY = V_HIP - 0.012 - Math.abs(sn) * (run ? 0.03 : 0.018);
     J.sway = sn * 0.035; J.hipTw = -sn * 0.1; J.twist = sn * 0.12; J.lean = run ? 0.22 : 0.06; J.headX = run ? -0.1 : 0.02;
     if (!carry || !(carry.armR)) { J.armR = -J.legR * 0.8 * (run ? 1.2 : 1); J.elbR = (run ? 1.3 : 0.28) + Math.max(0, -J.armR) * 0.45; }
-    if (tool !== 'bow' && v.job !== 'warrior' && v.job !== 'spear') { J.armL = -J.legL * 0.8 * (run ? 1.2 : 1); J.elbL = (run ? 1.3 : 0.28) + Math.max(0, -J.armL) * 0.45; }
+    if (tool !== 'bow' && tool !== 'longbow' && v.job !== 'warrior' && v.job !== 'spear') { J.armL = -J.legL * 0.8 * (run ? 1.2 : 1); J.elbL = (run ? 1.3 : 0.28) + Math.max(0, -J.armL) * 0.45; }
     if (v.carryAmt > 0) { // both hands on the tokri straps, the tool over the shoulder
       Object.assign(J, { armR: -0.35, elbR: 1.95, armRz: -0.12, armL: -0.35, elbL: 1.95, armLz: -0.12, lean: 0.14 });
       if (J.toolR != null) J.toolR = -2.3;
@@ -221,14 +268,16 @@ function villagerPose(v, o, t) {
       for (const k of ['armR', 'armRz', 'elbR', 'toolR', 'gripR', 'armL', 'armLz', 'elbL', 'toolL', 'gripL']) J[k] = F[k];
       J.lean = 0.25;
     }
-  } else if (anim === 'work') workPose(v, J, t);
-  else if (anim === 'shoot') { Object.assign(J, fightStance(v, t)); Object.assign(J, { armR: -1.45, armRz: -0.28, elbR: 2.3, twist: 0.92, armL: -1.45, armLz: 0.95, headY: -0.85, lean: -0.03 }); J.drawn = true; }
+  } else if (anim === 'work' && defender && v.job !== 'medic') Object.assign(J, sparPose(v, t)); // soldiers in the Akhara spar: the swings of their own combo
+  else if (anim === 'work') workPose(v, J, t);
+  else if (anim === 'shoot') Object.assign(J, aimPose(v, t)); // drawing, holding, loosing and nocking again
   else if (anim === 'sit') { // cross-legged by the fire (women kneel-sit), hands on the knees
     if (v.look && v.look.g === 'f') Object.assign(J, { hipY: 0.15, legL: -1.25, legR: -1.25, kneeL: 2.6, kneeR: 2.6, legLz: 0.1, legRz: 0.1, lean: 0.12 });
     else Object.assign(J, { hipY: 0.14, legL: -1.4, legR: -1.4, kneeL: 2.35, kneeR: 2.35, legLz: 0.85, legRz: 0.85, lean: 0.12 });
     Object.assign(J, { armL: -0.55, armR: -0.55, elbL: 0.75, elbR: 0.75, armLz: 0.15, armRz: 0.15, headX: 0.12 + Math.sin(t * 0.5 + id) * 0.05, headY: Math.sin(t * 0.31 + id * 1.7) * 0.35 });
     if (J.toolR != null) J.toolR = 0.4;
     if (id % 3 === 0) Object.assign(J, { armR: -0.9, elbR: 1.6, armRz: 0.05, headX: 0.05, headY: 0.5 + Math.sin(t * 0.8 + id) * 0.2 }); // chatting with a neighbour
+    omenGlance(v, J, t);
   } else if (anim === 'sleep') { // curled on the side by the fire
     Object.assign(J, { lie: 1, hipY: V_HIP - 0.02, legL: -0.95, legR: -0.8, kneeL: 1.45, kneeR: 1.3, armR: -1.35, elbR: 1.9, armRz: 0.1, armL: -0.7, elbL: 1.0, armLz: 0.1, lean: 0.25, headX: 0.25, toolR: 1.3, toolL: null, gripL: 0 });
   } else if (anim === 'fight') Object.assign(J, fightStance(v, t));
@@ -244,6 +293,7 @@ function villagerPose(v, o, t) {
     J.headY = Math.abs(look) > 0.6 ? Math.sign(look) * 0.45 : 0;
     J.headX = Math.sin(t * 0.23 + id) * 0.06;
     if (v.job === 'warrior') { J.armR = -0.35; J.elbR = 0.9; J.toolR = 0.35; } // the talwar held low and ready
+    omenGlance(v, J, t);
   }
   if (v.blockT > 0) Object.assign(J, { armL: -1.25, elbL: 1.45, armLz: -0.15, toolL: 0, lean: J.lean - 0.1, twist: -0.2 }); // dhaal up
   if (v.hurtT > 0 && anim !== 'atk') J.lean -= 0.28 * (v.hurtT / 0.25); // flinch
@@ -347,7 +397,7 @@ const R3 = {
   /* ---------- world (rebuilt for each new game / load) ---------- */
   buildWorld(s) {
     const sc = this.scene;
-    this.postKey = null; this.postMeshes = []; // outpost circles live in the world group, rebuilt below
+    this.postKey = null; this.postMeshes = []; this.roadKey = null; this.roadMesh = null; // outpost circles and roads live in the world group, rebuilt below
     if (this.worldGroup) {
       sc.remove(this.worldGroup);
       this.disposeTree(this.worldGroup);
@@ -1011,7 +1061,8 @@ const R3 = {
     const s = S;
     if (!this.ok || !s) return;
     const time = s.time, dark = darknessAt(s.t), lit = dark > 0.15 || (s.festival && dark > 0.05);
-    MAT.windU.value = time * (s.weather === 'rain' ? 1.6 : 1);
+    this.windAcc = (this.windAcc == null ? time : this.windAcc) + dt * (s.weather === 'rain' ? 1.6 : 1) * (this.windMul || 1); // the wind rises before an asura comes
+    MAT.windU.value = this.windAcc;
     this._dt = dt;
     if (this.fling && !App.drag) { // camera keeps gliding after a drag
       this.panBy(this.fling.x * dt, this.fling.y * dt);
@@ -1098,9 +1149,55 @@ const R3 = {
     if (this.composer) this.composer.render(); else this.renderer.render(this.scene, this.camera);
     this.syncOverlay(s);
   },
+  /*
+   * Roads are drawn as one mesh for the whole network, rebuilt when it changes: each cell joins up with its
+   * neighbours, and kerbs (stones and grass for a dirt path, a stone kerb for a brick road) run along any
+   * side where the road ends. Bricks are laid along the way the road runs.
+   */
+  syncRoads(s) {
+    const key = s.buildVer;
+    if (this.roadKey === key) return;
+    this.roadKey = key;
+    if (this.roadMesh) { this.worldGroup.remove(this.roadMesh); this.roadMesh.geometry.dispose(); this.roadMesh = null; }
+    const cells = new Map();
+    for (const b of s.buildings) if (BUILDINGS[b.type].road) cells.set(b.cx + ',' + b.cz, b.type);
+    if (!cells.size) return;
+    const p = [], rnd = mulberry32(13);
+    for (const [k, type] of cells) {
+      const [cx, cz] = k.split(',').map(Number), x = cx + 0.5, z = cz + 0.5, y = heightAt(x, z) + 0.005;
+      const n = { e: cells.has(cx + 1 + ',' + cz), w: cells.has(cx - 1 + ',' + cz), s: cells.has(cx + ',' + (cz + 1)), nn: cells.has(cx + ',' + (cz - 1)) };
+      const brick = type === 'road', alongX = (n.e || n.w) && !(n.s || n.nn) ? true : (n.s || n.nn) && !(n.e || n.w) ? false : true;
+      if (brick) {
+        p.push(box(1.0, 0.035, 1.0, 0x8a4228, x, y, z));
+        for (let r = 0; r < 4; r++) { // running-bond courses: whole bricks, then a row offset by half a brick
+          const u = -0.375 + r * 0.25, segs = r % 2 ? [[-0.375, 0.21], [0, 0.46], [0.375, 0.21]] : [[-0.25, 0.46], [0.25, 0.46]];
+          segs.forEach(([w, len], c) => {
+            const col = [0xb5532f, 0xa84a2c, 0xc2603a][(r + c + cx + cz) % 3];
+            if (alongX) p.push(box(len, 0.014, 0.21, col, x + w, y + 0.035, z + u)); else p.push(box(0.21, 0.014, len, col, x + u, y + 0.035, z + w));
+          });
+        }
+        const kerb = (kx, kz, w, d) => p.push(box(w, 0.07, d, 0x9a958c, kx, y, kz));
+        if (!n.e) kerb(x + 0.46, z, 0.08, 1.0); if (!n.w) kerb(x - 0.46, z, 0.08, 1.0);
+        if (!n.s) kerb(x, z + 0.46, 1.0, 0.08); if (!n.nn) kerb(x, z - 0.46, 1.0, 0.08);
+      } else {
+        p.push(box(1.0, 0.025, 1.0, 0xb08a5a, x, y, z));
+        p.push(box(0.6, 0.006, 0.6, 0xa07a4c, x + (rnd() - 0.5) * 0.2, y + 0.025, z + (rnd() - 0.5) * 0.2)); // a darker trodden middle
+        for (let i = 0; i < 3; i++) p.push(sph(0.035 + rnd() * 0.02, [0x9a958c, 0x8a857c, 0xb8b2a6][i], x + (rnd() - 0.5) * 0.7, y + 0.02, z + (rnd() - 0.5) * 0.7, 1, 0.5, 1));
+        const edge = (ex, ez, ax) => { for (let i = 0; i < 4; i++) { const t = -0.4 + i * 0.27 + (rnd() - 0.5) * 0.08; p.push(sph(0.05, i % 2 ? 0x9a958c : 0xb0aa9e, ex + (ax ? t : 0), y + 0.02, ez + (ax ? 0 : t), 1.2, 0.6, 1)); } p.push(cone(0.03, 0.1, 4, 0x6f9a45, ex + (ax ? 0.2 : 0), y, ez + (ax ? 0 : 0.2))); };
+        if (!n.e) edge(x + 0.48, z, false); if (!n.w) edge(x - 0.48, z, false);
+        if (!n.s) edge(x, z + 0.48, true); if (!n.nn) edge(x, z - 0.48, true);
+      }
+    }
+    const m = new THREE.Mesh(merge(p), MAT.bld || MAT.std);
+    m.receiveShadow = true; m.castShadow = false; m.userData.noAO = true;
+    this.worldGroup.add(m);
+    this.roadMesh = m;
+  },
   syncBuildings(s, time, dark, lit) {
     const seen = new Set();
+    this.syncRoads(s);
     for (const b of s.buildings) {
+      if (BUILDINGS[b.type].road) continue; // drawn with the road network
       seen.add(b.id);
       let o = this.bObjs.get(b.id);
       const state = b.done ? 'done' : 'site';
@@ -1264,86 +1361,227 @@ const R3 = {
     return o;
   },
   /*
-   * Omens of a coming asura (s.omen, set two days ahead): crows wheeling in silence over the forest where
-   * Bakasura will come from, a blood-red dusk and moon for Raktabija, a violet mist for Kalanemi, tremors
-   * and a cowering flame for Mahasura. Strength grows as the night draws near; dusk and night show it most.
+   * Omens of a coming asura (s.omen, on his day). ramp grows from the first sign at dawn to full at dusk.
+   * Everyone: an uneasy overcast light, a rising wind, birds fleeing from his side, and (from the warning
+   * at midday) a plume of smoke or dust rising over the forest exactly where he will come from.
+   * Bakasura: crows wheeling in silence. Raktabija: a reddening sky, a blood moon, the wells turning red.
+   * Kalanemi: a violet mist and phantom figures at the forest edge. Mahasura: tremors, dust, cracks in the
+   * ground, a cowering flame.
    */
+  softTex() {
+    if (this._soft) return this._soft;
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const x = c.getContext('2d'), gr = x.createRadialGradient(64, 64, 4, 64, 64, 62);
+    gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
+    return (this._soft = new THREE.CanvasTexture(c));
+  },
   omens(s, time, du, dark, bg) {
     const om = s.omen, dt = this._dt || 0.016;
-    const str = om ? om.str * (om.k === 0 ? 1.15 : 1) : 0;
-    const eve = clamp(du * 1.5 + dark * 0.9, 0, 1);
-    this.moon.color.setHex(om && om.type === 'raktabija' ? lerpHex(0x7f8cff, 0xff4030, str) : 0x7f8cff);
-    if (om && om.type === 'raktabija') { // the light itself turns red: dusk glows like embers, the moon bleeds
-      const f = str * (0.18 + 0.6 * eve);
+    const str = om ? clamp(om.ramp || 0, 0, 1) : 0, type = str > 0.01 ? om.type : null, live = type && !om.done;
+    const eve = clamp(du * 1.5 + dark * 0.9, 0, 1), R = territory(s);
+    const dx = om ? Math.sin(om.a) : 0, dz = om ? -Math.cos(om.a) : 1; // his side
+    // everyone: the light turns grey and uneasy, the wind rises
+    if (type) {
+      const f = str * (1 - dark * 0.6);
+      this.sun.intensity *= 1 - 0.32 * f;
+      this.hemi.intensity *= 1 - 0.12 * f;
+      const c2 = lerpHex(this.scene.background.getHex(), dark > 0.5 ? 0x1a1a22 : 0x8c8e96, f * 0.45);
+      this.scene.background.setHex(c2); this.scene.fog.color.setHex(c2);
+      bg = c2;
+    }
+    this.windMul = 1 + str * 1.3;
+    this.moon.color.setHex(type === 'raktabija' ? lerpHex(0x7f8cff, 0xff4030, str) : 0x7f8cff);
+    if (type === 'raktabija') { // the light itself turns red: dusk glows like embers, the moon bleeds
+      const f = str * (0.22 + 0.6 * eve);
       const c2 = lerpHex(bg, dark > 0.5 ? 0x420812 : 0xc8382c, f);
       this.scene.background.setHex(c2); this.scene.fog.color.setHex(c2);
       this.hemi.color.setHex(lerpHex(this.hemi.color.getHex(), 0xff4a3a, f * 0.65));
       this.hemi.groundColor.setHex(lerpHex(this.hemi.groundColor.getHex(), 0x3a0608, f * 0.5));
       this.sun.color.setHex(lerpHex(this.sun.color.getHex(), 0xff3a20, f * 0.6));
       this.moon.intensity *= 1 + str * 0.8;
-    } else if (om && om.type === 'kalanemi') {
-      const f = str * (0.3 + 0.7 * eve);
+    } else if (type === 'kalanemi') {
+      const f = str * (0.35 + 0.65 * eve);
       const c2 = lerpHex(bg, 0x6e5e94, f * 0.75);
       this.scene.background.setHex(c2); this.scene.fog.color.setHex(c2);
       const near = this.scene.fog.near, cd = this.cam.dist;
       this.scene.fog.near = cd + (near - cd) * (1 - 0.7 * f);
       this.scene.fog.far = cd + (this.scene.fog.far - cd) * (1 - 0.55 * f);
-    } else if (om && om.type === 'boss') { // the earth shudders now and then, dust lifts off the roofs
-      this.quakeT = (this.quakeT == null ? rand(4, 9) : this.quakeT) - dt;
+    } else if (type === 'boss' && live) { // the earth shudders, more often as he nears; dust lifts off the roofs
+      this.quakeT = (this.quakeT == null ? rand(3, 7) : this.quakeT) - dt;
       if (this.quakeT <= 0) {
-        this.quakeT = rand(12, 24) / Math.max(0.5, str);
-        this.shakeAmt = Math.max(this.shakeAmt || 0, 0.16 * str);
-        for (let i = 0; i < 8; i++) { const a = Math.random() * Math.PI * 2, r = rand(2, territory(s)); emit(s, Math.cos(a) * r, 0.1, Math.sin(a) * r, 3, { spread: 0.5, vx: 0.8, vyMin: 0.2, vyMax: 0.8, life: 1.4, colors: ['#b8a07a', '#9a8460'], g: 0.5 }); }
+        this.quakeT = rand(9, 18) / (0.4 + str);
+        this.shakeAmt = Math.max(this.shakeAmt || 0, 0.06 + 0.16 * str);
+        for (let i = 0; i < 6 + str * 8; i++) { const a = Math.random() * Math.PI * 2, r = rand(2, R); emit(s, Math.cos(a) * r, 0.1, Math.sin(a) * r, 3, { spread: 0.5, vx: 0.8, vyMin: 0.2, vyMax: 0.8, life: 1.4, colors: ['#b8a07a', '#9a8460'], g: 0.5 }); }
         sfx('stomp', this.cam.x, this.cam.z);
       }
     }
-    // Kalanemi's mist: soft violet banks drifting in from the forest over the edge of the village
-    const mist = om && om.type === 'kalanemi' ? str * (0.35 + 0.65 * eve) : 0;
+    this.omenPlume(s, time, dt, live && om.stage >= 2 ? str : 0, R, dx, dz, om);
+    this.omenBirds(s, time, dt, live && om.stage >= 1 ? str : 0, R, dx, dz);
+    this.omenMist(s, time, type === 'kalanemi' ? str * (0.4 + 0.6 * eve) : 0, R);
+    this.omenPhantoms(s, time, dt, type === 'kalanemi' && live && om.stage >= 1 ? str : 0, R, om);
+    this.omenCracks(s, type === 'boss' ? str : 0, R, dx, dz);
+    this.omenWells(s, type === 'raktabija' ? str : 0);
+    this.omenCrows(s, time, dt, type === 'bakasura' && dark < 0.85 ? str : 0, R, dx, dz, om);
+    // a distant voice from his side now and then, once the elders have named him
+    if (live && om.stage >= 2) {
+      this.voiceT = (this.voiceT == null ? rand(6, 12) : this.voiceT) - dt;
+      if (this.voiceT <= 0) { this.voiceT = rand(16, 28) / (0.5 + str); const es = ENEMY_SFX[om.type]; if (es) sfx(es.voice, dx * (R + 3), dz * (R + 3)); }
+    }
+  },
+  /** A plume rising over the forest where he will come from: dust, blood-red, violet or black smoke. */
+  omenPlume(s, time, dt, str, R, dx, dz, om) {
+    if (str < 0.01 && !this.plume) return;
+    if (!this.plume) {
+      this.plume = [];
+      for (let i = 0; i < 22; i++) {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.softTex(), color: 0x444444, transparent: true, depthWrite: false, opacity: 0, fog: false }));
+        sp.userData = { h: i / 22, ph: rand(0, 6.3), s: rand(2.6, 4) };
+        sp.renderOrder = 4; this.scene.add(sp); this.plume.push(sp);
+      }
+    }
+    const col = om && OMENS[om.type] ? OMENS[om.type].smoke : 0x888888, bx = dx * (R + 3), bz = dz * (R + 3);
+    for (const sp of this.plume) {
+      sp.visible = str > 0.01;
+      if (!sp.visible) continue;
+      const u = sp.userData, h = (u.h + time * 0.03) % 1, top = 3 + 8 * str;
+      sp.position.set(bx + Math.sin(time * 0.7 + u.ph) * (0.6 + h * 2.5), 1 + h * top, bz + Math.cos(time * 0.6 + u.ph) * (0.6 + h * 2.5));
+      sp.scale.setScalar(u.s * (0.9 + h * 2.0));
+      sp.material.color.setHex(col);
+      sp.material.opacity = Math.min(0.85, str * 0.85) * Math.sin(h * Math.PI) * (0.8 + 0.2 * Math.sin(time + u.ph));
+    }
+  },
+  /** Flocks of small birds fleeing out of the forest on his side and away over the village. */
+  omenBirds(s, time, dt, str, R, dx, dz) {
+    if (!this.flee) {
+      const geo = merge([P(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0.08, -0.32, 0.04, -0.03, 0, 0, -0.08, 0, 0, 0.08, 0, 0, -0.08, 0.32, 0.04, -0.03]), 3)), 0x3a2a20)]);
+      const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+      this.flee = { birds: [], t: rand(4, 8), run: null };
+      for (let i = 0; i < 10; i++) { const m = new THREE.Mesh(geo, mat); m.visible = false; m.userData = { o: [rand(-2, 2), rand(-0.6, 0.6), rand(-2, 2)], fl: rand(0, 6.3) }; this.scene.add(m); this.flee.birds.push(m); }
+    }
+    const F = this.flee;
+    if (!F.run && str > 0.05) { F.t -= dt; if (F.t <= 0) { F.t = rand(12, 22) / (0.5 + str); const side = rand(-0.5, 0.5); F.run = { t: 0, dur: 7, sx: dx * (R + 14) - dz * side * 8, sz: dz * (R + 14) + dx * side * 8, h: rand(5, 8) }; sfx('bird', dx * (R + 4), dz * (R + 4)); } }
+    for (const m of F.birds) m.visible = false;
+    if (!F.run) return;
+    const r = F.run;
+    r.t += dt;
+    const f = r.t / r.dur;
+    if (f >= 1) { F.run = null; return; }
+    for (const m of F.birds) {
+      const u = m.userData, x = r.sx - dx * f * (2 * R + 28) + u.o[0], z = r.sz - dz * f * (2 * R + 28) + u.o[2];
+      m.visible = true;
+      m.position.set(x, r.h + u.o[1] + Math.sin(time * 3 + u.fl) * 0.2, z);
+      m.rotation.set(0, Math.atan2(-dx, -dz), 0);
+      m.scale.set(1, 0.3 + Math.abs(Math.sin(time * 14 + u.fl)) * 1.2, 1);
+    }
+  },
+  /** Kalanemi's mist: soft violet banks drifting in from the forest over the edge of the village. */
+  omenMist(s, time, mist, R) {
     if (mist > 0.01 && !this.mist) {
-      const c = document.createElement('canvas'); c.width = c.height = 128;
-      const x = c.getContext('2d'), gr = x.createRadialGradient(64, 64, 4, 64, 64, 62);
-      gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-      x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
-      const tex = new THREE.CanvasTexture(c);
       this.mist = [];
       for (let i = 0; i < 46; i++) {
-        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, color: 0xb8a8e0, transparent: true, depthWrite: false, opacity: 0 }));
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.softTex(), color: 0xb8a8e0, transparent: true, depthWrite: false, opacity: 0 }));
         sp.userData = { a: (i / 46) * Math.PI * 2 + rand(-0.06, 0.06), d: rand(-6, 6), s: rand(5, 9), ph: rand(0, 6.3), y: rand(0.4, 1.3) };
         sp.renderOrder = 5; this.scene.add(sp); this.mist.push(sp);
       }
     }
-    if (this.mist) {
-      const R = territory(s);
-      for (const sp of this.mist) {
-        const u = sp.userData;
-        sp.visible = mist > 0.01;
-        if (!sp.visible) continue;
-        const a = u.a + time * 0.012, d = R + u.d + Math.sin(time * 0.2 + u.ph) * 1.5;
-        sp.position.set(Math.sin(a) * d, u.y, -Math.cos(a) * d);
-        sp.scale.set(u.s * 1.6, u.s * 0.55, 1);
-        sp.material.opacity = mist * 0.5 * (0.7 + 0.3 * Math.sin(time * 0.5 + u.ph));
+    if (!this.mist) return;
+    for (const sp of this.mist) {
+      const u = sp.userData;
+      sp.visible = mist > 0.01;
+      if (!sp.visible) continue;
+      const a = u.a + time * 0.012, d = R + u.d + Math.sin(time * 0.2 + u.ph) * 1.5;
+      sp.position.set(Math.sin(a) * d, u.y, -Math.cos(a) * d);
+      sp.scale.set(u.s * 1.6, u.s * 0.55, 1);
+      sp.material.opacity = mist * 0.5 * (0.7 + 0.3 * Math.sin(time * 0.5 + u.ph));
+    }
+  },
+  /** Kalanemi: tall crowned figures stand at the forest edge for a moment, and are gone when you look again. */
+  omenPhantoms(s, time, dt, str, R, om) {
+    if (str < 0.01 && !this.phantoms) return;
+    if (!this.phantoms) {
+      const c = document.createElement('canvas'); c.width = 64; c.height = 128;
+      const x = c.getContext('2d');
+      x.fillStyle = '#1a1030';
+      x.beginPath(); x.moveTo(32, 6); x.lineTo(40, 26); x.lineTo(24, 26); x.closePath(); x.fill(); // crown
+      x.beginPath(); x.arc(32, 34, 10, 0, Math.PI * 2); x.fill(); // head
+      x.beginPath(); x.moveTo(18, 46); x.lineTo(46, 46); x.lineTo(54, 124); x.lineTo(10, 124); x.closePath(); x.fill(); // robe
+      x.fillStyle = '#d0a8ff'; x.fillRect(26, 32, 4, 3); x.fillRect(34, 32, 4, 3); // eyes
+      const tex = new THREE.CanvasTexture(c);
+      this.phantoms = [];
+      for (let i = 0; i < 3; i++) {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 }));
+        sp.scale.set(1.3, 2.6, 1); sp.userData = { t: rand(0, 6), on: false, x: 0, z: 0 };
+        this.scene.add(sp); this.phantoms.push(sp);
       }
     }
-    // Bakasura's crows
-    const crows = om && om.type === 'bakasura' && dark < 0.85;
-    if (crows && !this.crows) {
+    for (const sp of this.phantoms) {
+      const u = sp.userData;
+      sp.visible = str > 0.01;
+      if (!sp.visible) continue;
+      u.t -= dt;
+      if (u.t <= 0) { // appear somewhere along the forest edge on his side, or fade away again
+        u.on = !u.on; u.t = u.on ? rand(1.5, 3.5) : rand(4, 10) / (0.4 + str);
+        if (u.on) { const a = om.a + rand(-0.7, 0.7), d = R + rand(2.5, 5); u.x = Math.sin(a) * d; u.z = -Math.cos(a) * d; }
+      }
+      sp.position.set(u.x, 1.3 + heightAt(u.x, u.z), u.z);
+      const target = u.on ? 0.55 * str : 0;
+      sp.material.opacity += (target - sp.material.opacity) * Math.min(1, dt * 3);
+    }
+  },
+  /** Mahasura: cracks spread across the ground at the edge of the village on his side. */
+  omenCracks(s, str, R, dx, dz) {
+    if (str < 0.01 && !this.cracks) return;
+    if (!this.cracks) {
+      const c = document.createElement('canvas'); c.width = c.height = 256;
+      const x = c.getContext('2d'), rnd = mulberry32(7);
+      x.strokeStyle = 'rgba(30, 18, 12, 0.9)'; x.lineCap = 'round';
+      const crack = (px, py, a, len, w) => { for (let i = 0; i < 12 && len > 4; i++) { const nx = px + Math.cos(a) * len / 6, ny = py + Math.sin(a) * len / 6; x.lineWidth = w; x.beginPath(); x.moveTo(px, py); x.lineTo(nx, ny); x.stroke(); px = nx; py = ny; a += (rnd() - 0.5) * 0.9; w *= 0.88; if (rnd() < 0.2) crack(px, py, a + (rnd() - 0.5) * 2, len * 0.5, w); } };
+      for (let i = 0; i < 7; i++) crack(128, 128, (i / 7) * Math.PI * 2 + rnd(), 150, 5);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, opacity: 0 }));
+      m.rotation.x = -Math.PI / 2; m.renderOrder = 1; this.scene.add(m);
+      this.cracks = m;
+    }
+    const m = this.cracks, px = dx * (R + 1.5), pz = dz * (R + 1.5);
+    m.visible = str > 0.01;
+    m.position.set(px, heightAt(px, pz) + 0.04, pz);
+    m.scale.setScalar(0.4 + 0.6 * str);
+    m.material.opacity = Math.min(1, str * 1.3);
+  },
+  /** Raktabija: the water in every well darkens to the colour of blood. */
+  omenWells(s, str) {
+    if (str < 0.01 && !this.wellTint) return;
+    const want = new Set();
+    this.wellTint = this.wellTint || new Map();
+    if (str > 0.01) for (const b of s.buildings) if (b.type === 'well' && b.done) {
+      want.add(b.id);
+      let m = this.wellTint.get(b.id);
+      if (!m) { m = new THREE.Mesh(new THREE.CircleGeometry(0.5, 16), new THREE.MeshBasicMaterial({ color: 0x8a0a14, transparent: true, depthWrite: false })); m.rotation.x = -Math.PI / 2; this.scene.add(m); this.wellTint.set(b.id, m); }
+      m.position.set(b.x, heightAt(b.x, b.z) + 0.6, b.z);
+      m.material.opacity = 0.85 * Math.min(1, str * 1.6);
+    }
+    for (const [id, m] of this.wellTint) if (!want.has(id)) { this.scene.remove(m); m.geometry.dispose(); m.material.dispose(); this.wellTint.delete(id); }
+  },
+  /** Bakasura's crows: a silent flock wheeling over the forest on his side, more of them as the day goes on. */
+  omenCrows(s, time, dt, str, R, dx, dz, om) {
+    if (str > 0.01 && !this.crows) {
       const geo = merge([P(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0.12, -0.5, 0.06, -0.05, 0, 0, -0.12, 0, 0, 0.12, 0, 0, -0.12, 0.5, 0.06, -0.05]), 3)), 0x15121a), sph(0.08, 0x15121a, 0, 0, 0, 0.8, 0.7, 2)]);
       const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: true });
       this.crows = [];
-      for (let i = 0; i < 18; i++) { const m = new THREE.Mesh(geo, mat); m.userData = { r: rand(2.5, 6.5), h: rand(4.5, 7.5), sp: rand(0.35, 0.6) * (i % 5 === 0 ? -1 : 1), ph: rand(0, 6.3), fl: rand(0, 6.3) }; this.scene.add(m); this.crows.push(m); }
+      for (let i = 0; i < 26; i++) { const m = new THREE.Mesh(geo, mat); m.userData = { r: rand(2.5, 6.5), h: rand(4.5, 7.5), sp: rand(0.35, 0.6) * (i % 5 === 0 ? -1 : 1), ph: rand(0, 6.3), fl: rand(0, 6.3), k: i / 26 }; this.scene.add(m); this.crows.push(m); }
     }
-    if (this.crows) {
-      const R = territory(s), a = om && om.a != null ? om.a : 0, cx = Math.sin(a) * (R + 3), cz = -Math.cos(a) * (R + 3);
-      for (const m of this.crows) {
-        m.visible = !!crows;
-        if (!crows) continue;
-        const u = m.userData, th = time * u.sp + u.ph;
-        m.position.set(cx + Math.cos(th) * u.r, u.h + Math.sin(time * 0.7 + u.ph) * 0.6, cz + Math.sin(th) * u.r);
-        m.rotation.set(0, -th + (u.sp > 0 ? 0 : Math.PI), Math.sin(th * 2) * 0.25);
-        m.scale.set(1.3, 0.35 + Math.abs(Math.sin(time * 7 + u.fl)) * 1.1, 1.3); // wings beating
-      }
-      if (crows) { this.cawT = (this.cawT || 0) - dt; if (this.cawT <= 0) { this.cawT = rand(5, 11) / Math.max(0.5, str); sfx('crow', cx, cz); } }
+    if (!this.crows) return;
+    const cx = dx * (R + 3), cz = dz * (R + 3);
+    for (const m of this.crows) {
+      const u = m.userData;
+      m.visible = str > 0.01 && u.k < 0.35 + str * 0.65; // the flock grows through the day
+      if (!m.visible) continue;
+      const th = time * u.sp + u.ph;
+      m.position.set(cx + Math.cos(th) * u.r, u.h + Math.sin(time * 0.7 + u.ph) * 0.6, cz + Math.sin(th) * u.r);
+      m.rotation.set(0, -th + (u.sp > 0 ? 0 : Math.PI), Math.sin(th * 2) * 0.25);
+      m.scale.set(1.3, 0.35 + Math.abs(Math.sin(time * 7 + u.fl)) * 1.1, 1.3); // wings beating
     }
+    if (str > 0.01) { this.cawT = (this.cawT || 0) - dt; if (this.cawT <= 0) { this.cawT = rand(5, 11) / Math.max(0.5, str); sfx('crow', cx, cz); } }
   },
   /** Sleep: little "z" letters drift up from every home with sleepers inside and from those asleep by the fire. */
   syncZzz(s, dt) {
@@ -1590,10 +1828,11 @@ const R3 = {
       this.potGeo = merge([sph(0.15, 0xb5532f, 0, 0, 0), cyl(0.07, 0.09, 0.08, 10, 0x8f3f22, 0, 0.13, 0)]);
       this.ballGeo = merge([sph(0.17, 0x2a2a30, 0, 0, 0)]);
       this.rockGeo = merge([sph(0.26, 0x8a8681, 0, 0, 0, 1.1, 0.85, 1), sph(0.14, 0x76726d, 0.15, 0.1, 0.05)]);
-      for (const g of [this.arrowGeo.geometry, this.potGeo, this.ballGeo, this.rockGeo]) g.userData.shared = true;
-      this.shellPool = { pot: [], ball: [], rock: [] };
+      this.chakGeo = merge([P(new THREE.TorusGeometry(0.17, 0.028, 4, 20), 0xd8dde6, 0, 0, 0, Math.PI / 2), P(new THREE.TorusGeometry(0.13, 0.01, 3, 18), 0xe8b830, 0, 0.012, 0, Math.PI / 2)]);
+      for (const g of [this.arrowGeo.geometry, this.potGeo, this.ballGeo, this.rockGeo, this.chakGeo]) g.userData.shared = true;
+      this.shellPool = { pot: [], ball: [], rock: [], chakram: [] };
     }
-    const arrows = [], shells = { pot: [], ball: [], rock: [] };
+    const arrows = [], shells = { pot: [], ball: [], rock: [], chakram: [] };
     for (const p of s.projectiles) (shells[p.kind] || arrows).push(p);
     if (!this.trailGeo) { // two crossed glowing ribbons behind each arrow, so a shot reads as a streak
       const a = new THREE.PlaneGeometry(0.07, 1).translate(0, -0.5, 0).rotateX(Math.PI / 2);
@@ -1628,10 +1867,11 @@ const R3 = {
         tr.scale.set(p.fire || p.crit ? 1.6 : 1, 1, Math.min(1.5, Math.hypot(p.vx, p.vy, p.vz) * 0.075));
       }
     });
-    for (const k of ['pot', 'ball', 'rock']) {
+    for (const k of ['pot', 'ball', 'rock', 'chakram']) {
       const pool = this.shellPool[k], list = shells[k];
       while (pool.length < list.length) {
-        const m = new THREE.Mesh(k === 'pot' ? this.potGeo : k === 'rock' ? this.rockGeo : this.ballGeo, MAT.std);
+        const m = new THREE.Mesh(k === 'pot' ? this.potGeo : k === 'rock' ? this.rockGeo : k === 'chakram' ? this.chakGeo : this.ballGeo, MAT.std);
+        if (k === 'chakram') { const tr = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.3, 20).rotateX(-Math.PI / 2), this.fxMat(true)); tr.material.color.setHex(0xcfe4ff); tr.material.opacity = 0.35; tr.renderOrder = 5; m.add(tr); }
         m.castShadow = true;
         if (k === 'pot') { const fl = flameCluster(0.14); fl.position.y = 0.12; m.add(fl); m.userData.fl = fl; }
         this.scene.add(m);
@@ -1642,7 +1882,7 @@ const R3 = {
         m.visible = !!p;
         if (!p) return;
         m.position.set(p.x, p.y, p.z);
-        m.rotation.x += 0.2; m.rotation.z += 0.13;
+        if (k === 'chakram') { m.rotation.set(0.25, (m.rotation.y || 0) + 0.9, 0); } else { m.rotation.x += 0.2; m.rotation.z += 0.13; } // a chakram spins flat as it flies
         if (m.userData.fl) { animateFlames(m.userData.fl, s.time * 2 + i, 1); this.lightSrc.push({ x: p.x, y: p.y, z: p.z, r: 3, c: 0xff7a30, k: 1 }); }
       });
     }
@@ -1750,7 +1990,7 @@ const R3 = {
     this.omens(s, time, du, dark, bg);
     const F = s.fire, FL = fireLv(s);
     const flick = 1 + Math.sin(time * 10) * 0.06 + Math.sin(time * 23) * 0.04;
-    this.fireLight.intensity = (0.12 + 1.15 * dark) * (0.35 + 0.65 * F.intensity) * flick * (s.omen && s.omen.type === 'boss' ? 1 - 0.2 * s.omen.str * (0.6 + 0.4 * Math.sin(time * 0.9)) : 1); // the flame cowers before Mahasura
+    this.fireLight.intensity = (0.12 + 1.15 * dark) * (0.35 + 0.65 * F.intensity) * flick * (s.omen && s.omen.type === 'boss' ? 1 - 0.22 * (s.omen.ramp || 0) * (0.6 + 0.4 * Math.sin(time * 0.9)) : 1); // the flame cowers before Mahasura
     this.fireLight.distance = FL.light * (0.6 + 0.4 * F.intensity);
     this.fireLight.position.y = 1.6 + s.fire.level * 0.15;
     // pick the light sources nearest the view

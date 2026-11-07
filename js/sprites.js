@@ -195,6 +195,10 @@ const JOB_LOOK = {
   smelt:   { H: '#37474f', G: '#ff8a1f', C: '#5d4037', c: '#3e2723', D: '#4e342e', d: '#3e2723' },
   trader:  { H: '#ffd54f', G: '#e65100', C: '#6a1b9a', c: '#e8b830' },
   stone:   { H: '#78909c', G: '#546e7a' },
+  khadgi:  { H: '#3a1414', G: '#e8b830', C: '#2e2a2a', c: '#e8b830', D: '#8a1c1c', d: '#4a1218' },
+  urumi:   { H: '#f4ecd8', G: '#c9962e', C: '#f4ecd8', c: '#c9962e', D: '#e8dcc0', d: '#c9962e' },
+  longbow: { H: '#556b2f', G: '#c9a66b', C: '#4a5a2a', c: '#8a6a3a', D: '#e6dbbf', d: '#4a5a2a' },
+  chakri:  { H: '#1a237e', G: '#ff9933', C: '#283593', c: '#ff9933', D: '#e6dbbf', d: '#1a237e' },
 };
 
 function makeLook(g) {

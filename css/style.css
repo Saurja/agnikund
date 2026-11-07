@@ -102,11 +102,13 @@ button.ib.paused { color: var(--accent); background: var(--accent-soft); }
 body.lowgfx .bar, body.lowgfx .panel, body.lowgfx #buildbar, body.lowgfx #placeBar, body.lowgfx .toast, body.lowgfx #tooltip {
   -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(26, 20, 17, 0.95);
 }
-#topbar {
+#topbar { min-width: 0;
   position: absolute; top: 12px; left: 12px; right: 12px;
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 10px;
   pointer-events: none;
+  z-index: 9; /* above the side panels, so the materials dropdown opens over the Jobs panel (screens sit at 10) */
 }
+body.mat-open #tooltip { display: none; } /* no hover card over the open dropdown */
 #topbar > * { pointer-events: auto; }
 .bar { display: flex; align-items: center; gap: 2px; height: 46px; padding: 0 6px; border-radius: var(--r-lg); }
 .bar .sep { width: 1px; height: 22px; background: var(--line-2); margin: 0 6px; flex: none; }
@@ -122,21 +124,21 @@ body.lowgfx .bar, body.lowgfx .panel, body.lowgfx #buildbar, body.lowgfx #placeB
 #matGroup { display: contents; }
 #matGroup .res.mat b { font-size: 14px; }
 #matGroup .res.mat small { display: none; }
-body.mobile #matGroup .res.mat small { display: block; flex: 1; font-size: 12px; color: var(--text-2); }
+body.mobile #matGroup .res.mat small, body.fold-mats #matGroup .res.mat small { display: block; flex: 1; font-size: 12px; color: var(--text-2); }
 #matBtn { display: none; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 #matBtn .chev { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; opacity: 0.7; transition: transform 0.2s var(--ease); }
-body.mobile #matBtn { display: flex; }
-body.mobile #matGroup {
+body.mobile #matBtn, body.fold-mats #matBtn { display: flex; } /* fold-mats: a desktop window too narrow for every good in one row */
+body.mobile #matGroup, body.fold-mats #matGroup {
   display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 8;
   flex-direction: column; align-items: stretch; gap: 2px; padding: 6px; min-width: 150px;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow);
   -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
 }
-body.mobile #matGroup .sep { display: none; }
-body.mobile #matGroup .res.mat { justify-content: space-between; }
-body.mobile.mat-open #matGroup { display: flex; }
-body.mobile.mat-open #matBtn .chev { transform: rotate(180deg); }
-body.mobile.mat-open #matBtn { background: var(--raise-2); }
+body.mobile #matGroup .sep, body.fold-mats #matGroup .sep { display: none; }
+body.mobile #matGroup .res.mat, body.fold-mats #matGroup .res.mat { justify-content: space-between; }
+body.mobile.mat-open #matGroup, body.fold-mats.mat-open #matGroup { display: flex; }
+body.mobile.mat-open #matBtn .chev, body.fold-mats.mat-open #matBtn .chev { transform: rotate(180deg); }
+body.mobile.mat-open #matBtn, body.fold-mats.mat-open #matBtn { background: var(--raise-2); }
 .ico { display: inline-block; width: 24px; height: 24px; background-size: contain; background-repeat: no-repeat; background-position: center; image-rendering: pixelated; flex: none; }
 .ico.sm { width: 16px; height: 16px; }
 #clock { justify-self: center; gap: 10px; padding: 0 14px 0 6px; transition: box-shadow 0.4s; }
@@ -156,17 +158,56 @@ body.mobile.mat-open #matBtn { background: var(--raise-2); }
 }
 #minimap { display: block; width: 100%; height: 100%; border-radius: 50%; cursor: crosshair; background: #2f6f8a; }
 
-#bossbar { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); width: min(380px, 60%); pointer-events: none; text-align: center; }
+/* an omen on the clock: an eye while the land shows its signs, the asura's name once the elders read them */
+#omenBadge { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px 0 7px; margin-left: 2px; border-radius: 99px; background: rgba(240, 195, 90, 0.14); color: var(--warn); font: 600 12px/1 var(--font); white-space: nowrap; cursor: help; }
+#omenBadge.hidden { display: none; }
+#omenBadge svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+#omenBadge em { font-style: normal; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+body.mobile #omenBadge em, body.fold-mats #omenBadge em { display: none; } /* tight top bars: just the eye */
+body.mobile #omenBadge { padding: 0 6px; margin-left: 0; }
+#omenBadge.s1 em { display: none; }
+#omenBadge.s1 { padding: 0 6px; animation: omenBlink 3.2s ease-in-out infinite; }
+#omenBadge.s3 { background: rgba(238, 107, 92, 0.22); color: #ffb4a8; animation: omenPulse 1.2s ease-in-out infinite; }
+@keyframes omenBlink { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes omenPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(238, 107, 92, 0.0); } 50% { box-shadow: 0 0 0 4px rgba(238, 107, 92, 0.28); } }
+/* the last warning: a banner under the top bar for a few seconds */
+#omenBanner { width: min(460px, 100%); padding: 12px 18px 14px; text-align: center; pointer-events: none; border-radius: var(--r-lg);
+  background: linear-gradient(180deg, rgba(64, 14, 12, 0.92), rgba(30, 10, 10, 0.9)); box-shadow: 0 0 0 1px rgba(238, 107, 92, 0.45), 0 18px 40px rgba(0, 0, 0, 0.5); animation: bannerIn 0.6s var(--ease); }
+#omenBanner.out { animation: bannerOut 0.6s var(--ease) forwards; }
+#omenBanner small { display: block; font: 600 11px/1 var(--font); letter-spacing: 0.22em; text-transform: uppercase; color: #ffb4a8; }
+#omenBanner b { display: block; margin: 6px 0 2px; font: 400 30px/1.05 'Yatra One', var(--font); color: #fff2e6; letter-spacing: 0.02em; }
+#omenBanner span { display: block; font: 500 13px/1.3 var(--font); color: #ffd9cc; }
+#omenBanner p { margin: 8px 0 0; font: 400 12.5px/1.4 var(--font); color: var(--text-2); }
+@keyframes bannerIn { from { opacity: 0; transform: translateY(-12px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes bannerOut { to { opacity: 0; transform: translateY(-10px); } }
+body.mobile #omenBanner b { font-size: 24px; }
+/* phones have little room under the top bar: the newest two notifications (one while a panel is open); the rest wait in the log */
+body.mobile #toasts .toast:nth-last-child(n+3) { display: none; }
+body.mobile.info-open #toasts .toast:not(:last-child) { display: none; }
+body.mobile.log-open #toasts, body.mobile.log-open #omenBanner { display: none; } /* the open log already lists them all */
+body.mobile #omenBanner { padding: 9px 14px 10px; }
+/* portrait with the info sheet up: the asura's banner, while it shows, takes the place of the notifications */
+body.portrait.info-open #omenBanner:not(.hidden) ~ #toasts { display: none; }
+@media (max-height: 700px) { body.portrait #info { max-height: 40%; } }
+/* small landscape phones: no room between the Jobs chip and a side panel, so the chip steps aside while one is open */
+@media (max-width: 760px) {
+  html body.landscape.info-open #jobs, html body.landscape.log-open #jobs { display: none; }
+  html body.landscape.info-open #alerts, html body.landscape.log-open #alerts { left: calc((100% - 350px) / 2); width: min(300px, calc(100% - 374px)); min-width: 0; } /* (html: beats the wider-landscape rule further down) */
+}
+body.mobile #omenBanner p { display: none; } /* the counter-tip is in the badge's tooltip and the log */
+/* the alerts column, top centre: the boss bar, then the last omen warning, then the notifications, stacked so they never overlap */
+#alerts { position: absolute; top: 66px; left: 50%; transform: translateX(-50%); width: min(480px, 90%); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 6; }
+#bossbar { width: min(380px, 100%); pointer-events: none; text-align: center; }
+#bossbar.hidden, #omenBanner.hidden { display: none; }
 #bossbar span { display: block; font: 600 11px/1 var(--font); letter-spacing: 0.18em; text-transform: uppercase; color: #ffb4a8; margin-bottom: 6px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
 #bossbar .track { height: 8px; border-radius: 99px; background: rgba(20, 8, 8, 0.75); overflow: hidden; box-shadow: 0 0 0 1px rgba(238, 107, 92, 0.4); }
 #bossbar .track i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #c0392b, var(--bad)); transition: width 0.25s; }
 
 /* toasts */
 #toasts {
-  position: absolute; top: 68px; left: 50%; transform: translateX(-50%);
-  width: min(480px, 90%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
+  width: 100%;
+  display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
 }
-#bossbar:not(.hidden) ~ #toasts { top: 104px; }
 .toast {
   display: flex; align-items: flex-start; gap: 9px; max-width: 100%;
   padding: 9px 14px 9px 11px; border-radius: 12px; font-size: 13px; line-height: 1.4; color: var(--text);
@@ -227,6 +268,14 @@ body.mobile.mat-open #matBtn { background: var(--raise-2); }
 .sec { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .sec > h4 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); display: flex; align-items: center; gap: 8px; }
 .sec > h4 .tag { margin-left: auto; }
+/* a soldier's fighting numbers: a two-column grid of small stat tiles with a bar each */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 4px 0 6px; }
+.stats .st { padding: 6px 8px 7px; border-radius: 9px; background: var(--raise); cursor: help; }
+.stats .st span { display: block; font-size: 11px; color: var(--text-2); letter-spacing: 0.02em; }
+.stats .st b { display: block; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.stats .st i { display: block; height: 3px; margin-top: 5px; border-radius: 9px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.stats .st i em { display: block; height: 100%; border-radius: 9px; background: var(--accent); }
+p.hits { margin: 4px 0; line-height: 1.35; }
 .meter { margin: 8px 0; }
 .meter .ml { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-2); margin-bottom: 5px; }
 .meter .ml em { font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
@@ -565,7 +614,7 @@ body.mobile #placeBar {
   bottom: calc(104px + env(safe-area-inset-bottom, 0px)); transform: none; animation: fadeIn 0.2s ease;
 }
 body.mobile #placeMsg { flex: 1; min-width: 0; white-space: normal; line-height: 1.3; }
-body.mobile #toasts { width: calc(100% - 16px); }
+body.mobile #alerts { width: calc(100% - 16px); }
 body.mobile .toast { font-size: 12.5px; padding: 8px 12px 8px 10px; }
 body.mobile #pausedTag { font-size: 15px; }
 
@@ -577,8 +626,7 @@ body.portrait #controls { grid-area: ctrl; }
 body.portrait #mapwrap { top: calc(104px + env(safe-area-inset-top, 0px)); right: calc(8px + env(safe-area-inset-right, 0px)); width: 96px; height: 96px; padding: 3px; }
 body.portrait #jobs { top: calc(104px + env(safe-area-inset-top, 0px)); left: calc(8px + env(safe-area-inset-left, 0px)); width: min(248px, calc(100% - 128px)); max-height: calc(100% - 228px); }
 body.portrait.info-open #jobsBody { display: none; }
-body.portrait #toasts, body.portrait #bossbar { top: calc(104px + env(safe-area-inset-top, 0px)); }
-body.portrait #bossbar { width: calc(100% - 140px); }
+body.portrait #alerts { top: calc(208px + env(safe-area-inset-top, 0px)); } /* below the Jobs chip and the minimap */
 
 /* landscape: one slim row; info slides in on the right in place of the minimap */
 body.landscape #topbar { grid-template-columns: auto 1fr auto; }
@@ -586,8 +634,9 @@ body.landscape #mapwrap { top: calc(58px + env(safe-area-inset-top, 0px)); right
 body.landscape #jobs { top: calc(58px + env(safe-area-inset-top, 0px)); left: calc(8px + env(safe-area-inset-left, 0px)); max-height: calc(100% - 170px); }
 body.landscape #info { left: auto; width: 300px; top: calc(58px + env(safe-area-inset-top, 0px)); max-height: none; }
 body.landscape.info-open #mapwrap { display: none; }
-body.landscape #toasts { top: calc(58px + env(safe-area-inset-top, 0px)); width: min(400px, calc(100% - 600px)); min-width: 260px; }
-body.landscape #bossbar { top: calc(60px + env(safe-area-inset-top, 0px)); }
+body.landscape #alerts { top: calc(58px + env(safe-area-inset-top, 0px)); width: min(400px, calc(100% - 660px)); min-width: 240px; } /* between the Jobs chip and the side panel */
+body.landscape.info-open #alerts, body.landscape.log-open #alerts { left: calc(50% - 30px); width: min(340px, calc(100% - 610px)); min-width: 220px; }
+body.landscape.build-open #toasts { display: none; } /* a short screen with the build tray up: messages wait in the log, the placement bar says the rest */
 body.landscape #placeBar { left: 50%; right: auto; transform: translateX(-50%); width: min(560px, calc(100% - 16px)); }
 
 /* screens on phones */
@@ -606,8 +655,8 @@ body.portrait .title-screen .credits { position: static; margin: 18px auto 0; ma
 body.landscape .title-screen { padding-left: max(28px, env(safe-area-inset-left, 0px)); }
 body.landscape .title-screen .credits { left: max(28px, env(safe-area-inset-left, 0px)); right: 16px; }
 body.mobile .over-card .obtns { flex-direction: column; }/* toasts float above panels; in portrait they sit below the jobs chip */
-#toasts { z-index: 6; }
-body.portrait #toasts { top: calc(156px + env(safe-area-inset-top, 0px)); }/* short landscape phones: a slimmer build tray and one side panel at a time */
+
+/* short landscape phones: a slimmer build tray and one side panel at a time */
 body.landscape .bcard { width: 76px; padding: 3px 3px 4px; }
 body.landscape .bcard img { width: 46px; height: 30px; margin-bottom: 2px; }
 body.landscape .bcard b { font-size: 10.5px; }
@@ -632,7 +681,8 @@ body.touch .toast .tx { width: 30px; height: 30px; }
   position: absolute; top: 2px; right: 1px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px;
   font: 600 10px/16px var(--font); color: var(--accent-ink); background: var(--accent); box-shadow: 0 0 0 2px var(--surface-solid); pointer-events: none;
 }
-#logPanel { right: 12px; top: 68px; width: 330px; max-height: min(64%, 560px); display: flex; flex-direction: column; z-index: 7; }
+#logPanel { right: 12px; top: 236px; width: 330px; max-height: calc(100% - 330px); display: flex; flex-direction: column; z-index: 7; } /* under the minimap, where the info panel sits */
+body.log-open:not(.mobile) #info { display: none; } /* one side panel at a time on the right */
 #logPanel:not(.hidden) { display: flex; }
 #logPanel .panel-head { border-bottom: 1px solid var(--line); flex: none; }
 #logPanel .panel-head .ghost { margin-left: auto; padding: 6px 10px; font-size: 12px; }

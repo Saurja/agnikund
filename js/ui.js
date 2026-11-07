@@ -22,6 +22,10 @@ const SAMPLE_LOOKS = {
   smelt:   { g: 'm', skin: '#7a4a2a', hair: '#1a1212', cloth: '#5d4037', lower: '#4e342e', head: '#37474f', head2: '#ff8a1f', stache: true, trim: '#d8cfb6' },
   priest:  { g: 'm', skin: '#cf9561', hair: '#1a1212', cloth: '#ff8f1f', lower: '#ffb84d', head: '#ff8f1f', head2: '#ffb84d', stache: false, trim: '#d8cfb6' },
   trader:  { g: 'm', skin: '#b5784a', hair: '#1a1212', cloth: '#6a1b9a', lower: '#f4ecd8', head: '#ffd54f', head2: '#e65100', stache: true, trim: '#d8cfb6' },
+  khadgi:  { g: 'm', skin: '#8d5524', hair: '#1a1212', cloth: '#2e2a2a', lower: '#8a1c1c', head: '#3a1414', head2: '#e8b830', stache: true, trim: '#d8cfb6' },
+  urumi:   { g: 'f', skin: '#a0673a', hair: '#1a1212', cloth: '#f4ecd8', lower: '#f4ecd8', trim: '#c9962e', covered: false },
+  longbow: { g: 'm', skin: '#9c6239', hair: '#1a1212', cloth: '#4a5a2a', lower: '#e6dbbf', head: '#556b2f', head2: '#c9a66b', stache: true, trim: '#d8cfb6' },
+  chakri:  { g: 'm', skin: '#a0673a', hair: '#1a1212', cloth: '#283593', lower: '#e6dbbf', head: '#1a237e', head2: '#ff9933', stache: true, trim: '#d8cfb6' },
 };
 const BUILD_VIS_H = { temple: 66, tower: 60, akhara: 30, lamp: 40, field: 24, range: 22, bazaar: 28 };
 
@@ -145,7 +149,7 @@ const UI = {
       case 'villager': h = `<b>${r.name}</b> · ${JOBS[r.job].name} <small>(${JOBS[r.job].en})</small><br>${r.task || ''}<br><small>Click to see details or change job</small>`; break;
       case 'enemy': h = `<b>${ENEMIES[r.type].name}</b> <small>${ENEMIES[r.type].en}</small><br>Health ${Math.ceil(r.hp)} / ${r.maxHp}`; break;
       case 'fire': h = `<b>Agnikund</b> · level ${S.fire.level}<br>The sacred fire. It eats wood; if demons put it out, you lose.<br><small>Click to upgrade it or invite travellers</small>`; break;
-      case 'building': if (this.removeMode) { h = `<b>Destroy ${BUILDINGS[r.type].name}</b><br>You get back ${this.refundText(r)}<br><small>Click to ${BUILDINGS[r.type].wall ? 'destroy it' : 'choose'}</small>`; break; } { const d = BUILDINGS[r.type]; h =`<b>${d.name}</b> <small>${d.en}</small><br>${d.desc}<br><small>${r.done ? `Strength ${Math.ceil(r.hp)} / ${r.maxHp}` : `Under construction ${Math.floor((r.progress / d.time) * 100)}%`} · click for options</small>`; break; }
+      case 'building': if (this.removeMode) { h = `<b>Destroy ${BUILDINGS[r.type].name}</b><br>You get back ${this.refundText(r)}<br><small>Click to ${BUILDINGS[r.type].line ? 'destroy it' : 'choose'}</small>`; break; } { const d = BUILDINGS[r.type]; h =`<b>${d.name}</b> <small>${d.en}</small><br>${d.desc}<br><small>${r.done ? `Strength ${Math.ceil(r.hp)} / ${r.maxHp}` : `Under construction ${Math.floor((r.progress / d.time) * 100)}%`} · click for options</small>`; break; }
       case 'tree': h = r.sacred ? '<b>Pavitra Van</b> <small>sacred grove</small><br>Villagers without a hut hide here from demons. Never cut.' : `<b>${TREE_INFO[r.type].name}</b> <small>${TREE_INFO[r.type].en}</small><br>${r.stump ? 'Stump — regrowing' : r.wood + ' wood'} · chopped by Lakadhara`; break;
       case 'rock': h = `<b>Chattan</b> <small>Boulder</small><br>${r.stone} stone · mined by Khanik from a Khadaan`; break;
       case 'loot': h = `<b>${LOOT[r.kind].name}</b> <small>${LOOT[r.kind].en}</small><br>+${r.amt} ${RES[LOOT[r.kind].res].en.toLowerCase()} · dropped by a demon<br><small>Idle villagers collect it in daylight</small>`; break;
@@ -182,7 +186,7 @@ const UI = {
         <i class="ico" style="background-image:url(${this.jobIcons[job]})"></i>
         <div class="nm"><b>${J.name}</b><small>${J.en}</small></div>
         <span class="ct">0</span>
-        <div class="bt"><button data-act="dec" data-tip="${J.weapon ? `Take the ${WEAPONS[J.weapon].name} back; one ${J.name} becomes a plain Sainik` : `Send one ${J.name} back to idle`}">${svgIcon('minus')}</button><button data-act="inc" data-tip="${J.weapon ? `Hand a <b>${WEAPONS[J.weapon].name}</b> from the armoury to a Sainik, making a <b>${J.name}</b>` : `Give an idle villager the job of <b>${J.name}</b>${J.building ? `<br><small>Each ${BUILDINGS[J.building].name} has room for ${BUILDINGS[J.building].slots[slotKey(job)]}</small>` : ''}`}">${svgIcon('plus')}</button></div>
+        <div class="bt"><button data-act="dec" data-tip="${J.weapon ? `Take the ${WEAPONS[J.weapon].name} back; one ${J.name} becomes a plain ${JOBS[weaponBase(J.weapon)].name}` : `Send one ${J.name} back to idle`}">${svgIcon('minus')}</button><button data-act="inc" data-tip="${J.weapon ? `Hand a <b>${WEAPONS[J.weapon].name}</b> from the armoury to a ${JOBS[weaponBase(J.weapon)].name}, making a <b>${J.name}</b>` : `Give an idle villager the job of <b>${J.name}</b>${J.building ? `<br><small>Each ${BUILDINGS[J.building].name} has room for ${BUILDINGS[J.building].slots[slotKey(job)]}</small>` : ''}`}">${svgIcon('plus')}</button></div>
       </div>`;
     }).join('');
     box.addEventListener('click', (ev) => {
@@ -209,13 +213,17 @@ const UI = {
       row.classList.toggle('hidden', !unlocked);
       if (!unlocked) continue;
       const slots = jobSlots(S, job), used = usedSlots(S, job);
+      if (slotKey(job) === 'army') { // hover a soldier type for its numbers
+        const T = soldierStats(S, job), nm = row.querySelector('.nm');
+        nm.dataset.tip = job === 'medic' ? `<b>${J.name}</b> · ${J.en}<br>Heals ${T.heal.toFixed(0)} a second · Health ${T.hp}` : `<b>${J.name}</b> · ${J.en}<br>Attack <b>${T.dmg.toFixed(0)}</b> · ${T.rate.toFixed(2)} a second · ${T.dps.toFixed(1)} damage/s<br>${T.ranged ? 'Range' : 'Reach'} ${T.reach.toFixed(1)} · Health ${T.hp}${T.block ? ` · Block ${Math.round(T.block * 100)}%` : ''}<br><small>Hits ${T.targets}</small>`;
+      }
       const ct = row.querySelector('.ct');
       const small = row.querySelector('small');
       if (J.weapon) {
         const have = S.armory[J.weapon] || 0;
         ct.textContent = String(n);
         small.textContent = `${have} ${WEAPONS[J.weapon].name} in armoury`;
-        row.querySelector('[data-act=inc]').disabled = !have || jobCount(S, 'warrior') === 0;
+        row.querySelector('[data-act=inc]').disabled = !have || jobCount(S, weaponBase(J.weapon)) === 0;
       } else {
         ct.textContent = slots === Infinity ? String(n) : slotKey(job) === 'army' ? `${n} · ${used}/${slots}` : `${n}/${slots}`;
         small.textContent = slots === 0 ? `needs ${BUILDINGS[J.building].name}` : J.en;
@@ -301,7 +309,7 @@ const UI = {
   /** Remove mode: walls go at once; anything bigger asks first in a small pop-up. */
   askRemove(b, x, y) {
     const def = BUILDINGS[b.type];
-    if (def.wall) { demolish(S, b); this.hideConfirm(); this.refresh(true); return; }
+    if (def.line) { demolish(S, b); this.hideConfirm(); this.refresh(true); return; } // a wall piece or a stretch of road goes at once
     let pop = this._pop;
     if (!pop) {
       pop = this._pop = document.createElement('div');
@@ -335,11 +343,11 @@ const UI = {
     this.select(null);
     const def = BUILDINGS[type];
     const cx = Math.round(R3.cam.x - def.fw / 2), cz = Math.round(R3.cam.z - def.fd / 2);
-    this.ghost = { type, cx, cz, ok: canPlace(S, type, cx, cz).ok, wall: !!def.wall };
+    this.ghost = { type, cx, cz, ok: canPlace(S, type, cx, cz).ok, wall: !!def.line };
     R3.setGhost(this.ghost);
     $('placeBar').classList.remove('hidden');
     const touch = App.touch || document.body.classList.contains('touch');
-    const how = def.wall ? (touch ? 'tap a spot, then Place — repeat for more pieces' : 'click, or click-and-drag to build a line') : (touch ? 'tap the ground, Rotate if you like, then Place' : 'click your land to place · R to rotate');
+    const how = def.line ? (touch ? 'tap a spot, then Place — repeat for more pieces' : `click, or click-and-drag to ${def.road ? 'lay a road' : 'build a line'}`) : (touch ? 'tap the ground, Rotate if you like, then Place' : 'click your land to place · R to rotate');
     $('placeMsg').textContent = `${def.name}: ${how}`;
     $('placeOk').classList.toggle('hidden', !touch);
     sfx('click');
@@ -502,6 +510,7 @@ const UI = {
         html += this.meter('pow' + (full ? ' full' : ''), (v.power || 0) / 100, `Shakti · ${U.name}`, full ? 'Ready!' : `${Math.floor(v.power || 0)}%`);
         html += `<p><small><b>${U.name}</b> (${U.en}): ${U.desc}. Fills as they fight and take blows.</small></p>`;
       }
+      if (isDefender(v)) html += this.sec('Fighting', this.soldierStatsHTML(s, v.job));
       if (v.entranced > 0 && v.callBy) html += `<div class="actions"><button data-action="holdback" class="primary" data-tip="Folk wisdom: never answer the first or second call">${svgIcon('alert')}Hold ${v.name} back from Nishi Dak</button></div>`;
       if (v.heldBy) html += `<p class="miss">Seized by a Mamdo Bhoot! Strike it hard or stun it to break its grip.</p>`;
       if (v.hp < v.maxHp - 0.5) { // hurt: natural recovery, a healer on the way, and herbs to heal them at once
@@ -520,15 +529,15 @@ const UI = {
       } else if (['wood', 'stone', 'farm', 'clay'].includes(v.job)) html += `<div class="stockrow">${this.ico(v.job === 'farm' ? 'food' : v.job, true)}${this.meter('stock', 0, 'Tokri', 'empty')}</div>`;
       if (v.gold > 0) html += status('info', `<b>${v.gold}</b> gold in the hip pouch`);
       if (!isDefender(v)) html += validHome(s, v) ? status('home', 'Hides in their Jhopdi when demons come') : status('tree', 'No hut — hides in the sacred grove');
-      if (v.job === 'warrior') { // hand this Sainik a weapon
-        const arm = WEAPON_ORDER.filter((w) => (s.armory[w] || 0) > 0);
+      if (v.job === 'warrior' || v.job === 'archer') { // hand this Sainik (or Dhanurdhar) a weapon
+        const arm = WEAPON_ORDER.filter((w) => (s.armory[w] || 0) > 0 && weaponBase(w) === v.job);
         if (arm.length) {
           let b = '<div class="actions">';
           for (const w of arm) b += `<button data-action="equip" data-job="${WEAPONS[w].job}" data-tip="${JOBS[WEAPONS[w].job].desc}">${WEAPONS[w].name} → ${JOBS[WEAPONS[w].job].name} <span class="tag">${s.armory[w]}</span></button>`;
           html += this.sec('Give a weapon', b + '</div>');
-        } else if (WEAPON_ORDER.some((w) => weaponReady(s, w))) html += '<p><small>Craft a weapon at the Lohar or Aara Mill to make this Sainik a special soldier.</small></p>';
+        } else if (WEAPON_ORDER.some((w) => weaponBase(w) === v.job && weaponReady(s, w))) html += `<p><small>Craft a weapon at the Lohar or Aara Mill to make this ${JOBS[v.job].name} a special soldier.</small></p>`;
       }
-      if (JOBS[v.job].weapon) html += `<div class="actions"><button data-action="disarm" data-tip="Return the ${WEAPONS[JOBS[v.job].weapon].name} to the armoury">Back to Sainik</button></div>`;
+      if (JOBS[v.job].weapon) html += `<div class="actions"><button data-action="disarm" data-tip="Return the ${WEAPONS[JOBS[v.job].weapon].name} to the armoury">Back to ${JOBS[weaponBase(JOBS[v.job].weapon)].name}</button></div>`;
       let g = '<div class="jobgrid">';
       for (const job of ['idle', ...JOB_ORDER]) {
         if (JOBS[job].weapon) continue; // special soldiers are made by handing a Sainik a weapon
@@ -577,9 +586,9 @@ const UI = {
           const cap = bSlots(b, job);
           const army = k === 'army';
           let w = ws.length ? `<p>${ws.map((v) => v.name + (army ? ` <small>(${JOBS[v.job].name})</small>` : '')).join(', ')}</p>` : '<p><small>Nobody works here yet.</small></p>';
-          w += `<div class="actions"><button class="${idleVillagers(s).length && ws.length < cap ? 'primary' : ''}" data-action="bassign" data-tip="Send an idle villager to work here as ${JOBS[job].name}" ${idleVillagers(s).length && ws.length < cap ? '' : 'disabled'}>${svgIcon('plus')}${army ? 'Train Sainik' : 'Assign'}</button>`;
+          w += `<div class="actions"><button class="${idleVillagers(s).length && ws.length < cap ? 'primary' : ''}" data-action="bassign" data-tip="Send an idle villager to work here as ${JOBS[job].name}" ${idleVillagers(s).length && ws.length < cap ? '' : 'disabled'}>${svgIcon('plus')}${army ? `Train ${JOBS[job].name}` : 'Assign'}</button>`;
           w += `<button data-action="bremove" data-tip="Send one worker back to idle" ${ws.length ? '' : 'disabled'}>${svgIcon('minus')}Remove</button></div>`;
-          if (army) w += '<p><small>Soldiers start as Sainik. Craft weapons at the Lohar or Aara Mill to make Gadadhari, Bhaladhari or Dhanurdhar.</small></p>';
+          if (army) w += job === 'archer' ? '<p><small>Archers train here as Dhanurdhar. Hand one a Lamba Dhanush (Aara Mill) or Chakrams (Lohar) for a longbowman or a chakram thrower.</small></p>' : '<p><small>Soldiers start as Sainik. Craft weapons at the Lohar to make Gadadhari, Khadgadhari or Urumidhari, a Bhala at the Aara Mill for a Bhaladhari.</small></p>';
           html += this.sec(army ? 'Soldiers' : JOBS[job].name, w, `<span class="tag">${ws.length} / ${cap}</span>`);
         }
         // building levels (Lohar, Aara Mill): upgrade, craft weapons, research
@@ -690,7 +699,7 @@ const UI = {
         setJob(S, v, job); sfx('click');
       } break;
       case 'equip': equipSoldier(S, btn.dataset.job, sel && sel.kind === 'villager' ? sel.ref : null); break;
-      case 'disarm': if (sel && sel.ref) { setJob(S, sel.ref, 'warrior'); sfx('click'); } break;
+      case 'disarm': if (sel && sel.ref && JOBS[sel.ref.job].weapon) { setJob(S, sel.ref, weaponBase(JOBS[sel.ref.job].weapon)); sfx('click'); } break;
       case 'craft': craftWeapon(S, btn.dataset.key, +btn.dataset.n || 1); break;
       case 'bupgrade': startUpgrade(S, sel.ref); break;
       case 'upfire': upgradeFire(S); break;
@@ -814,6 +823,7 @@ const UI = {
   },
   refresh(force) {
     if (!S) return;
+    if ((this._fitN = (this._fitN || 0) + 1) % 6 === 0 || force) this.fitTopbar(); // the bar grows as numbers and the omen badge change
     const s = S;
     for (const k of RES_ORDER) {
       const el = document.querySelector(`.res[data-res="${k}"]`);
@@ -852,6 +862,15 @@ const UI = {
     this.drawDial();
     this.updateJobs();
     this.updateCards();
+    // the omen on the clock: an eye at the first sign, his name once the elders read it, red as night nears
+    const om = s.omen && !s.omen.done && s.omen.stage >= 1 ? s.omen : null, ob = $('omenBadge');
+    ob.classList.toggle('hidden', !om);
+    if (om) {
+      const B = ENEMIES[om.type], O = OMENS[om.type], d = dirXZ(om.a), side = compassOf(d.x, d.z);
+      ob.className = 'omen s' + om.stage;
+      ob.querySelector('em').textContent = om.stage >= 2 ? B.name : ''; // the side is in its tooltip, the banner and on the minimap
+      ob.dataset.tip = om.stage >= 2 ? `<b>${B.name}</b>, the ${B.en}, comes tonight from the <b>${side}</b>.<br>${O.sign}<br><small>${O.counter}</small>` : `<b>An omen</b><br>${O.sign}<br><small>Something will come tonight. Watch the land.</small>`;
+    }
     const boss = s.enemies.find((e) => ENEMIES[e.type].boss && !e.fake && !e.dead);
     $('bossbar').classList.toggle('hidden', !boss);
     if (boss) { $('bossbar').querySelector('i').style.width = (boss.hp / boss.maxHp) * 100 + '%'; $('bossbar').querySelector('span').textContent = ENEMIES[boss.type].name; }
@@ -911,6 +930,53 @@ const UI = {
     this._mmSeed = s.seed;
   },
   mmPos(wx, wz, N) { return [(wx / (2 * this.MM_SCALE) + 0.5) * N, (wz / (2 * this.MM_SCALE) + 0.5) * N]; },
+  /**
+   * Keep the desktop top bar on one line: when the goods, the clock and the controls no longer fit side by
+   * side, the five materials fold into their dropdown (as on phones); they unfold again once the window is wider.
+   */
+  fitTopbar() {
+    const B = document.body;
+    if (B.classList.contains('mobile') || $('hud').classList.contains('hidden')) { B.classList.remove('fold-mats'); return; }
+    const r = (id) => $(id).getBoundingClientRect();
+    const res = r('resbar'), clk = r('clock'), ctl = r('controls');
+    const tight = ctl.right > innerWidth - 4 || clk.left - res.right < 6 || ctl.left - clk.right < 6;
+    if (!B.classList.contains('fold-mats')) { if (tight) { B.classList.add('fold-mats'); this._foldW = innerWidth; } }
+    else if (innerWidth > (this._foldW || 0) + 160) { B.classList.remove('fold-mats'); requestAnimationFrame(() => this.fitTopbar()); }
+  },
+  /** A soldier's numbers as a small stat grid: attack, speed, damage a second, reach, defence, and what they hit. */
+  soldierStatsHTML(s, job) {
+    const T = soldierStats(s, job), pct = (x) => Math.round(x * 100) + '%';
+    const cell = (label, value, f, tip) => `<div class="st"${tip ? ` data-tip="${tip}"` : ''}><span>${label}</span><b>${value}</b>${f != null ? `<i><em style="width:${Math.round(clamp(f, 0.04, 1) * 100)}%"></em></i>` : ''}</div>`;
+    let g = '<div class="stats">';
+    if (job === 'medic') {
+      g += cell('Healing', `${T.heal.toFixed(0)}/s`, T.heal / 12, 'Health given to one wounded fighter every second');
+      g += cell('Health', T.hp, T.hp / 140) + cell('Armour', T.armour ? pct(T.armour) : '—', T.armour, 'Less damage taken (Kavach armour from the Lohar)');
+    } else {
+      g += cell('Attack', T.dmg.toFixed(T.dmg < 10 ? 1 : 0), T.dmg / 20, 'Damage per blow or shot, with your upgrades');
+      g += cell('Speed', `${T.rate.toFixed(2)}/s`, T.rate / 1.3, 'Blows or shots a second');
+      g += cell('Damage/s', T.dps.toFixed(1), T.dps / 18, 'About how much damage they deal each second, crits included');
+      g += cell(T.ranged ? 'Range' : 'Reach', `${T.reach.toFixed(1)} steps`, T.ranged ? T.reach / 15 : T.reach / 2, T.ranged ? 'How far they can shoot' : 'How far their weapon reaches');
+      g += cell('Health', T.hp, T.hp / 140);
+      g += cell('Defence', T.block ? `${pct(T.block)} block` : T.armour ? pct(T.armour) : '—', Math.max(T.block, T.armour), `${T.block ? `Blocks ${pct(T.block)} of blows with the dhaal. ` : ''}${T.armour ? `Kavach armour: ${pct(T.armour)} less damage.` : 'Kavach armour (Lohar) cuts all damage by 35%.'}`);
+      g += cell('Crit', pct(T.crit), T.crit / 0.25, 'Chance of a critical hit for 1.8× damage');
+      g += cell('Move', `${Math.round(T.speed * 100)}%`, T.speed / 1.1, 'Walking speed compared with a villager');
+    }
+    g += '</div>';
+    if (T.targets) g += `<p class="hits"><small>Hits ${T.targets}.</small></p>`;
+    if (T.special) g += `<p class="hits"><small><b>${T.special.name}</b> (${T.special.en}, every ${T.special.cd} s): ${T.special.desc}.</small></p>`;
+    return g;
+  },
+  /** The last warning before a great asura: a banner with his name, his side and how to meet him. */
+  omenBanner(o) {
+    const el = $('omenBanner'), B = ENEMIES[o.type], d = dirXZ(o.a);
+    el.querySelector('b').textContent = B.name;
+    el.querySelector('span').textContent = `the ${B.en}, comes from the ${compassOf(d.x, d.z)}`;
+    el.querySelector('p').textContent = OMENS[o.type].counter;
+    el.classList.remove('hidden', 'out'); void el.offsetWidth;
+    clearTimeout(this._omenT);
+    this._omenT = setTimeout(() => { el.classList.add('out'); this._omenT = setTimeout(() => el.classList.add('hidden'), 650); }, 7500);
+    this.logPush(`Tonight: ${B.name}, the ${B.en}, from the ${compassOf(d.x, d.z)}. ${OMENS[o.type].counter}`, 'danger');
+  },
   drawMinimap() {
     const s = S;
     if (!s || !R3.ok) return;
@@ -927,7 +993,7 @@ const UI = {
     x.beginPath(); x.arc(N / 2, N / 2, territory(s) * k, 0, Math.PI * 2); x.stroke();
     for (const b of s.buildings) {
       const d = BUILDINGS[b.type], p = this.mmPos(b.x, b.z, N);
-      x.fillStyle = d.wall ? '#f4ecd8' : b.done ? '#e8b060' : '#b89060';
+      x.fillStyle = d.road ? (d.road > 1.3 ? '#c8643c' : '#c9a878') : d.wall ? '#f4ecd8' : b.done ? '#e8b060' : '#b89060';
       x.fillRect(p[0] - (d.fw * k) / 2, p[1] - (d.fd * k) / 2, Math.max(1.5, d.fw * k), Math.max(1.5, d.fd * k));
     }
     x.fillStyle = '#ffd84a';
@@ -938,6 +1004,14 @@ const UI = {
     for (const l of s.loot) { const p = this.mmPos(l.x, l.z, N); x.beginPath(); x.arc(p[0], p[1], 1.8, 0, Math.PI * 2); x.fill(); }
     x.fillStyle = '#ff3b2f';
     for (const e of s.enemies) { const p = this.mmPos(e.x, e.z, N), r = ENEMIES[e.type].boss ? 3 : 1.6; x.fillRect(p[0] - r, p[1] - r, r * 2, r * 2); }
+    if (s.omen && !s.omen.done && s.omen.stage >= 2 && !s.omen.spawned) { // where the asura will come from: a pulsing arc on the rim and an arrow in
+      const a = s.omen.a, ca = Math.atan2(-Math.cos(a), Math.sin(a)), pul = 0.55 + 0.45 * Math.sin(performance.now() / 260);
+      x.strokeStyle = `rgba(255, 70, 50, ${0.5 + 0.5 * pul})`; x.lineWidth = s.omen.stage >= 3 ? 5 : 3.5;
+      x.beginPath(); x.arc(N / 2, N / 2, N / 2 - 3, ca - 0.35, ca + 0.35); x.stroke();
+      const r0 = N / 2 - 8, r1 = N / 2 - 20, ex = N / 2 + Math.cos(ca) * r1, ey = N / 2 + Math.sin(ca) * r1;
+      x.fillStyle = `rgba(255, 90, 60, ${0.6 + 0.4 * pul})`;
+      x.beginPath(); x.moveTo(ex, ey); x.lineTo(N / 2 + Math.cos(ca - 0.12) * r0, N / 2 + Math.sin(ca - 0.12) * r0); x.lineTo(N / 2 + Math.cos(ca + 0.12) * r0, N / 2 + Math.sin(ca + 0.12) * r0); x.closePath(); x.fill();
+    }
     // what the camera sees
     const corners = [[0, 0], [innerWidth, 0], [innerWidth, innerHeight], [0, innerHeight]].map(([cx, cy]) => R3.groundAt(cx, cy));
     if (corners.every(Boolean)) {

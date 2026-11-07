@@ -224,7 +224,7 @@ function stockList(s, b) {
   return goods.map((r) => ({ r, n: Math.floor(st[r] || 0), cap: b ? stockCap(b, r) : Infinity }));
 }
 const isDefender = (v) => slotKey(v.job) === 'army';
-const isMelee = (v) => isDefender(v) && v.job !== 'archer' && v.job !== 'medic';
+const isMelee = (v) => isDefender(v) && !RANGED_JOBS.has(v.job);
 function jobCount(s, job) { let n = 0; for (const v of s.villagers) if (v.job === job) n++; return n; }
 /** Total places for a job (soldiers of every kind share the same 'army' places). */
 function jobSlots(s, job) {
@@ -337,6 +337,7 @@ function setJob(s, v, job) {
 function assignJob(s, job) {
   const J = JOBS[job];
   if (J.weapon) return equipSoldier(s, job);
+  if (job === 'archer' && !s.buildings.some((b) => b.type === 'range' && b.done)) { toast('Build a Dhanush Shala (Archery Range) to train Dhanurdhar.', 'warn'); return false; }
   if (usedSlots(s, job) >= jobSlots(s, job)) {
     toast(`Build a ${BUILDINGS[J.building].name} (${BUILDINGS[J.building].en}) to make room for more ${J.name}.`, 'warn');
     return false;
@@ -358,11 +359,11 @@ function equipSoldier(s, job, v) {
     return false;
   }
   if (!v) {
-    const list = s.villagers.filter((o) => o.job === 'warrior');
-    if (!list.length) { toast(`Train a Sainik at the Akhara first, then hand them the ${W.name}.`, 'danger', 5); sfx('error'); return false; }
+    const base = weaponBase(J.weapon), list = s.villagers.filter((o) => o.job === base);
+    if (!list.length) { toast(base === 'archer' ? `Train a Dhanurdhar at a Dhanush Shala first, then hand them the ${W.name}.` : `Train a Sainik at the Akhara first, then hand them the ${W.name}.`, 'danger', 5); sfx('error'); return false; }
     v = list[0];
   }
-  if (v.job !== 'warrior') { toast(`Only a Sainik (foot soldier) can take up a ${W.name}.`, 'warn'); return false; }
+  if (v.job !== weaponBase(J.weapon)) { toast(weaponBase(J.weapon) === 'archer' ? `Only a Dhanurdhar (archer) can take up a ${W.name}.` : `Only a Sainik (foot soldier) can take up a ${W.name}.`, 'warn'); return false; }
   s.armory[J.weapon]--;
   setJob(s, v, job);
   toast(`${v.name} takes up the ${W.name} and becomes a ${J.name} (${J.en})!`, 'good');
@@ -373,7 +374,7 @@ function equipSoldier(s, job, v) {
 function unassignJob(s, job) {
   const list = s.villagers.filter((v) => v.job === job);
   if (!list.length) return false;
-  setJob(s, list[list.length - 1], JOBS[job].weapon ? 'warrior' : 'idle'); // special soldiers step back down to Sainik
+  setJob(s, list[list.length - 1], JOBS[job].weapon ? weaponBase(JOBS[job].weapon) : 'idle'); // special soldiers step back down to Sainik or Dhanurdhar
   sfx('click');
   return true;
 }
@@ -395,7 +396,7 @@ function craftWeapon(s, key, n) {
   const herbal = W.at === 'vaidyashala';
   sfx(W.at === 'forge' ? 'anvil' : herbal ? 'heal' : 'saw', b.x, b.z);
   emit(s, b.x, 1.2, b.z, 10, { spread: 0.5, vx: 1.2, vyMin: 1, vyMax: 3, life: 0.6, colors: W.at === 'forge' ? ['#ffcc33', '#ff8a1f', '#fff3b0'] : herbal ? ['#8ef09a', '#d8ffd0', '#5fd36f'] : ['#e8c896', '#c89a5e'], g: herbal ? -0.5 : 6, add: W.at === 'forge' || herbal });
-  tip('equip', `${W.name} ready! In Kaam, press + next to ${JOBS[W.job].name} to hand it to a Sainik.`);
+  tip('equip', `${W.name} ready! In Kaam, press + next to ${JOBS[W.job].name} to hand it to a ${JOBS[weaponBase(key)].name}.`);
   return made;
 }
 /** Upgrade the Lohar or Aara Mill to its next level (a Mistri does the work). */
@@ -456,7 +457,7 @@ function canPlace(s, type, cx, cz, ignoreCost) {
       if (s.grove && distXZ(px, pz, s.grove.x, s.grove.z) < s.grove.r + 0.9) return { ok: false, why: 'This is the Pavitra Van — the sacred grove cannot be built on' };
       const k = cellIdx(cx + i, cz + j);
       if (k < 0) return { ok: false, why: 'Out of bounds' };
-      if (s.grid[k]) return { ok: false, why: 'Something is already built here' };
+      if (s.grid[k]) { const o = s.bById.get(s.grid[k]); if (!(o && BUILDINGS[o.type].road && !def.road)) return { ok: false, why: o && BUILDINGS[o.type].road ? 'There is already a road here' : 'Something is already built here' }; } // a building may go over a road
     }
   }
   if (!ignoreCost && !canAfford(s, def.cost)) return { ok: false, why: 'Not enough resources', afford: false };
@@ -469,6 +470,7 @@ function clearFootprint(s, type, cx, cz) {
   s.trees = s.trees.filter((t) => { if (t.x > x0 && t.x < x1 && t.z > z0 && t.z < z1) { if (!t.stump) wood += Math.floor(t.wood * 0.5); tc = true; return false; } return true; });
   s.rocks = s.rocks.filter((r) => { if (r.x > x0 - 0.3 && r.x < x1 + 0.3 && r.z > z0 - 0.3 && r.z < z1 + 0.3) { stone += Math.floor(r.stone * 0.5); rc = true; return false; } return true; });
   const c = bCenterOf(type, cx, cz);
+  for (const o of s.buildings.slice()) if (BUILDINGS[o.type].road && !def.road && o.cx >= cx && o.cx < cx + def.fw && o.cz >= cz && o.cz < cz + def.fd) { refund(s, BUILDINGS[o.type].cost, 1); removeBuilding(s, o); } // the road under it is lifted
   if (wood) addRes(s, 'wood', wood, c.x, c.z);
   if (stone) addRes(s, 'stone', stone, c.x, c.z, 2.2);
   if (tc) s.treeVer++;
@@ -487,10 +489,11 @@ function placeBuilding(s, type, cx, cz, rot, quiet) {
   clearFootprint(s, type, cx, cz);
   const autoRot = def.fw !== def.fd ? (c.z > 0 ? Math.PI : 0) : faceFireRot(c.x, c.z); // long buildings only turn 180°
   const b = { id: s.nextId++, type, cx, cz, x: c.x, z: c.z, rot: rot != null ? rot : autoRot, done: false, progress: 0, hp: 1, maxHp: def.hp, grow: 0, cd: 0, offerT: 0 };
+  if (def.instant) { b.done = true; b.progress = def.time; b.hp = def.hp; } // a road is laid at once
   addBuilding(s, b);
   emit(s, c.x, 0.2, c.z, 10, { spread: def.fw / 2, vx: 1.2, vyMin: 1, vyMax: 3, life: 0.8, colors: ['#c8a46a', '#a77c4b', '#e0bf88'], g: 6 });
   if (!quiet) sfx('place', c.x, c.z);
-  if (!canBuildNow(s)) tip('needBuilder', 'Construction sites need a builder. Assign a Mistri in the Kaam panel, or leave someone idle: idle villagers build too.');
+  if (!def.instant && !canBuildNow(s)) tip('needBuilder', 'Construction sites need a builder. Assign a Mistri in the Kaam panel, or leave someone idle: idle villagers build too.');
   return b;
 }
 /** Cells on a straight line between two cells (for dragging walls). */
@@ -511,8 +514,8 @@ function placeWallLine(s, type, cells, rot) {
     if (placeBuilding(s, type, cx, cz, rot, true)) n++; else skipped++;
   }
   if (n) sfx('place');
-  if (poor) toast(`Ran out of resources after ${n} wall pieces.`, 'warn');
-  else if (!n) { toast('Walls cannot go there.', 'warn'); sfx('error'); }
+  if (poor) toast(`Ran out of resources after ${n} pieces.`, 'warn');
+  else if (!n) { toast(BUILDINGS[type].road ? 'The road cannot go there.' : 'Walls cannot go there.', 'warn'); sfx('error'); }
   return n;
 }
 function demolish(s, b) {
@@ -644,17 +647,19 @@ function deliver(s, v, d) {
  * buildings, smoothed into straight runs. The building a walker starts in or is heading into never
  * blocks them, so people can still step out of a hut or work inside a clay pit.
  */
-const NAV_WALK = (type) => { const d = BUILDINGS[type]; return d.wall || isFieldType(type) || type === 'akhara' || type === 'range'; };
+const NAV_WALK = (type) => { const d = BUILDINGS[type]; return d.wall || isGround(type) || type === 'akhara' || type === 'range'; };
 function navGrid(s) {
   if (s._nav && s._nav.ver === s.buildVer) return s._nav;
-  const g = (s._nav && s._nav.g) || new Int32Array(GRID * GRID);
+  const g = (s._nav && s._nav.g) || new Int32Array(GRID * GRID), rd = (s._nav && s._nav.rd) || new Float32Array(GRID * GRID);
+  rd.fill(1); let roads = 0;
+  for (const b of s.buildings) { const sp = BUILDINGS[b.type].road; if (sp) { const k = cellIdx(b.cx, b.cz); if (k >= 0) { rd[k] = 1 / sp; roads++; } } } // a road cell costs less to cross
   g.fill(0);
   for (const b of s.buildings) {
     if (NAV_WALK(b.type)) continue;
     const d = BUILDINGS[b.type];
     for (let i = 0; i < d.fw; i++) for (let j = 0; j < d.fd; j++) { const k = cellIdx(b.cx + i, b.cz + j); if (k >= 0) g[k] = b.id; }
   }
-  s._nav = { ver: s.buildVer, g };
+  s._nav = { ver: s.buildVer, g, rd, roads };
   return s._nav;
 }
 /** The building blocking this point for a walker, or 0. a / b: building ids the walker may pass through. */
@@ -696,7 +701,8 @@ function navPath(nav, x0, z0, x1, z1, a, b) {
   const heap = [];
   const push = (k, f) => { _navOpen[k] = f; heap.push(k); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (_navOpen[heap[p]] <= f) break; heap[i] = heap[p]; i = p; } heap[i] = k; };
   const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { let i = 0; const f = _navOpen[last]; for (;;) { let c = i * 2 + 1; if (c >= heap.length) break; if (c + 1 < heap.length && _navOpen[heap[c + 1]] < _navOpen[heap[c]]) c++; if (_navOpen[heap[c]] >= f) break; heap[i] = heap[c]; i = c; } heap[i] = last; } return top; };
-  const h = (cx, cz) => { const ax = Math.abs(cx - gx), az = Math.abs(cz - gz); return Math.max(ax, az) + 0.414 * Math.min(ax, az); };
+  const hk = nav.roads ? 0.66 : 1; // with roads about, a step can cost as little as a road step
+  const h = (cx, cz) => { const ax = Math.abs(cx - gx), az = Math.abs(cz - gz); return (Math.max(ax, az) + 0.414 * Math.min(ax, az)) * hk; };
   _navSeen[S0] = _navStamp; _navG[S0] = 0; _navFrom[S0] = -1;
   push(S0, h(sx, sz));
   let found = false, n = 0;
@@ -709,7 +715,7 @@ function navPath(nav, x0, z0, x1, z1, a, b) {
       const nx = cx + dx, nz = cz + dz;
       if (!free(nx, nz)) continue;
       if (dx && dz && (!free(cx + dx, cz) || !free(cx, cz + dz))) continue; // no squeezing past a corner
-      const nk = cellIdx(nx, nz), ng = gk + (dx && dz ? 1.414 : 1);
+      const nk = cellIdx(nx, nz), ng = gk + (dx && dz ? 1.414 : 1) * (nav.rd ? nav.rd[nk] : 1);
       if (_navSeen[nk] === _navStamp && _navG[nk] <= ng) continue;
       _navSeen[nk] = _navStamp; _navG[nk] = ng; _navFrom[nk] = k;
       push(nk, ng + h(nx, nz));
@@ -729,21 +735,26 @@ function navWaypoint(s, v, tx, tz) {
   let P = v._nav;
   if (P && (P.ver !== nav.ver || Math.abs(P.tx - tx) + Math.abs(P.tz - tz) > 1.2)) P = v._nav = null;
   if (!P) {
-    if (navClear(nav, v.x, v.z, tx, tz, a, b)) return null;
+    // with roads about, a longer trip is planned even across open ground, so walkers take the road when it is quicker
+    const far = nav.roads > 0 && Math.abs(tx - v.x) + Math.abs(tz - v.z) > 7;
+    if (!far && navClear(nav, v.x, v.z, tx, tz, a, b)) return null;
     const pts = navPath(nav, v.x, v.z, tx, tz, a, b);
     if (!pts) return null;
-    pts.push({ x: tx, z: tz });
-    P = v._nav = { ver: nav.ver, tx, tz, pts, i: 0 };
+    for (const q of pts) q.r = nav.rd[cellIdx(Math.floor(q.x), Math.floor(q.z))] < 1;
+    pts.push({ x: tx, z: tz, r: false });
+    P = v._nav = { ver: nav.ver, tx, tz, pts, i: 0, road: pts.some((q) => q.r) };
   }
   P.pts[P.pts.length - 1].x = tx; P.pts[P.pts.length - 1].z = tz;
-  // now and then skip ahead to the farthest point in sight (straight runs, not grid steps)
+  // now and then skip ahead to the farthest point in sight (straight runs, not grid steps), never cutting off a road
   if (!(P.chk > s.time)) {
     P.chk = s.time + 0.2;
-    for (let j = Math.min(P.pts.length - 1, P.i + 8); j > P.i; j--) if (navClear(nav, v.x, v.z, P.pts[j].x, P.pts[j].z, a, b)) { P.i = j; break; }
+    for (let j = Math.min(P.pts.length - 1, P.i + 8); j > P.i; j--) {
+      if (P.road) { let mixed = false; for (let k = P.i + 1; k <= j && !mixed; k++) if (P.pts[k].r !== P.pts[P.i].r) mixed = true; if (mixed) continue; }
+      if (navClear(nav, v.x, v.z, P.pts[j].x, P.pts[j].z, a, b)) { P.i = j; break; }
+    }
   }
-  const w = P.pts[P.i];
-  if (P.i === P.pts.length - 1) { v._nav = null; return null; }
-  if (distXZ(v.x, v.z, w.x, w.z) < 0.2) P.i++;
+  if (P.i === P.pts.length - 1) return null; // the last stretch is straight to the target
+  if (distXZ(v.x, v.z, P.pts[P.i].x, P.pts[P.i].z) < 0.2) P.i++;
   return P.pts[P.i];
 }
 /** The nearest open spot to p (p itself when nothing stands there): for seats, wandering and waiting places. */
@@ -794,6 +805,7 @@ function faceTo(v, x, z) { if (Math.abs(x - v.x) + Math.abs(z - v.z) > 0.01) v.r
 function villagerSpeed(s, v) {
   let sp = V_SPEED;
   if (v.carryAmt > 0) sp *= 0.82;
+  const rb = buildingAtPoint(s, v.x, v.z); if (rb && BUILDINGS[rb.type].road) sp *= BUILDINGS[rb.type].road; // quicker on a path or a road
   if (s.hungry) sp *= 0.8;
   if (s.fire.dim) sp *= 0.9;
   if (phaseOf(s.t) === 'dusk') sp *= 1.3;
@@ -824,7 +836,7 @@ function assignDefenders(s) {
   const fronts = s.fronts.length ? s.fronts : [{ a: 0, w: 1 }, { a: Math.PI / 2, w: 1 }, { a: Math.PI, w: 1 }, { a: -Math.PI / 2, w: 1 }];
   const W = (f) => f.w || 0.001;
   const tot = fronts.reduce((a, f) => a + W(f), 0);
-  for (const group of [['warrior', 'brute', 'spear'], ['archer', 'medic']]) {
+  for (const group of [JOB_ORDER.filter((j) => slotKey(j) === 'army' && !RANGED_JOBS.has(j)), [...RANGED_JOBS]]) {
     const list = s.villagers.filter((v) => group.includes(v.job)).sort((a, b) => a.id - b.id);
     const n = list.length;
     const counts = fronts.map((f) => Math.floor((n * W(f)) / tot));
@@ -1616,10 +1628,34 @@ function shelterAI(s, v, dt, spd) {
 function fx(s, kind, o) { if (s.fx && s.fx.length < 200) s.fx.push(Object.assign({ kind }, o)); }
 function shake(s, a) { s.shake = Math.max(s.shake || 0, a); }
 function hitStop(s, t) { if (!s.demo) s.hitStop = Math.max(s.hitStop || 0, t); }
-const WEAPON_FX = { warrior: 0xf4f6ff, brute: 0xffb347, spear: 0x9fd0ff, archer: 0xffe9a8, medic: 0x8ef09a };
+const WEAPON_FX = { warrior: 0xf4f6ff, brute: 0xffb347, spear: 0x9fd0ff, archer: 0xffe9a8, medic: 0x8ef09a, khadgi: 0xffe0a0, urumi: 0xc8f0ff, longbow: 0xfff0c0, chakri: 0xd8e8ff };
+/**
+ * A soldier type's fighting numbers, for the info panel: damage per blow (with upgrades), blows a second,
+ * damage a second, reach or range, how many demons one blow can hit, crit and block chance, armour.
+ */
+const TARGETS = { warrior: 'one demon; every third blow is a heavy thrust', brute: 'the target and everything around it', spear: 'one demon from far off, double damage to giants and asuras', khadgi: 'every demon in a wide arc in front', urumi: 'up to 3 demons in a wide arc', archer: 'one demon', longbow: 'a line of up to 3 demons (the arrow goes through)', chakri: 'up to 4 demons, the ring bouncing between them' };
+function soldierStats(s, job) {
+  const st = SOLDIERS[job] || SOLDIERS.warrior, M = SOLDIER_MOVES[job] || {}, ranged = RANGED_JOBS.has(job);
+  const fest = s.festival ? 1.5 : 1, crit = M.crit || 0;
+  let dmg, rate, reach;
+  if (job === 'medic') return { heal: st.heal * workRate(s), hp: st.hp + 0, block: 0, armour: s.upgrades.kavach ? 0.35 : 0, crit: 0, special: M.ability, ult: ULTIMATES[job] };
+  if (ranged) {
+    dmg = (st.dmg || 6) * (job === 'chakri' ? (s.upgrades.talwar ? 1.3 : 1) : s.upgrades.bow ? 1.5 : 1) * fest;
+    rate = 1 / (st.cd || 1.35);
+    reach = (st.range || 10) + (s.upgrades.bow && job !== 'chakri' ? 2.5 : 0);
+  } else {
+    dmg = soldierDmg(s, { job });
+    const swings = (M.atk || ['slash']).map((k) => SWINGS[k].dur);
+    rate = 1 / Math.max(st.cd, swings.reduce((a, b) => a + b, 0) / swings.length);
+    if (job === 'warrior') dmg *= (2 + 1.5) / 3; // the heavy thrust that ends the combo
+    reach = st.reach;
+  }
+  const hp = (st.hp || 40) + (job === 'warrior' && s.upgrades.talwar ? 30 : 0);
+  return { dmg, rate, dps: dmg * rate * (1 + crit * 0.8), reach, ranged, crit, block: M.block || 0, armour: s.upgrades.kavach ? 0.35 : 0, hp, speed: st.speed || 1, targets: TARGETS[job] || '', special: M.ability, ult: ULTIMATES[job] };
+}
 function soldierDmg(s, v) {
   const st = SOLDIERS[v.job] || SOLDIERS.warrior;
-  return (st.dmg || 6) * (v.job === 'warrior' && s.upgrades.talwar ? 1.6 : 1) * (s.festival ? 1.5 : 1);
+  return (st.dmg || 6) * ((v.job === 'warrior' || v.job === 'khadgi' || v.job === 'urumi') && s.upgrades.talwar ? 1.6 : 1) * (s.festival ? 1.5 : 1); // steel for every blade
 }
 const canReach = (v, o, reach) => !o.dead && !(ENEMIES[o.type].fly && o.y > 1.2) && distXZ(o.x, o.z, v.x, v.z) <= reach + ENEMIES[o.type].r;
 function enemiesNear(s, x, z, r) { let n = 0; for (const e of s.enemies) if (!e.dead && !(ENEMIES[e.type].fly && e.y > 1.2) && distXZ(e.x, e.z, x, z) < r + ENEMIES[e.type].r) n++; return n; }
@@ -1667,7 +1703,8 @@ function startMelee(s, v, e) {
   const big = def.boss || def.cost >= 6;
   if ((v.abilT || 0) <= 0 && M.ability) {
     const k = M.ability.key;
-    if ((k === 'bash' && !(e.stunT > 0)) || (k === 'slam' && (enemiesNear(s, v.x, v.z, 2.2) >= 2 || big)) || k === 'lunge') { ab = M.ability; kind = k; }
+    if ((k === 'bash' && !(e.stunT > 0)) || (k === 'slam' && (enemiesNear(s, v.x, v.z, 2.2) >= 2 || big)) || k === 'lunge'
+      || (k === 'sunder' && (big || enemiesNear(s, e.x, e.z, 1.6) >= 2)) || (k === 'coil' && enemiesNear(s, v.x, v.z, 2.4) >= 2)) { ab = M.ability; kind = k; }
   }
   if (!ab) {
     v.combo = ((v.combo || 0) + 1) % M.atk.length;
@@ -1687,7 +1724,7 @@ function tickAttack(s, v, dt) {
   a.t += dt;
   v.anim = 'atk';
   const hitT = a.dur * a.hit;
-  if (a.kind === 'whirl') v.rot += dt * 15; // the hero's wheel spins
+  if (a.kind === 'whirl' || a.kind === 'serpent' || a.kind === 'coil') v.rot += dt * (a.kind === 'coil' ? 9 : 15); // the hero's wheel and the urumi spin
   else if (!a.done && a.foe && !a.foe.dead && a.kind !== 'lunge' && a.kind !== 'leap') faceTo(v, a.foe.x, a.foe.z);
   if (a.kind === 'lunge' && a.t < hitT) { const step = (a.dist / hitT) * dt; v.x += a.dx * step; v.z += a.dz * step; v.rot = Math.atan2(a.dx, a.dz); }
   if (a.kind === 'leap' && a.t < hitT) { // Hanuman's leap: an arc through the air to the thick of the demons
@@ -1762,6 +1799,65 @@ function resolveAttack(s, v, a) {
       fx(s, 'thrust', { x: v.x - fx0 * 0.6, z: v.z - fz0 * 0.6, rot: v.rot, c: a.ult ? 0xffd27a : 0xbfe2ff, len: L + 0.9, heavy: true });
       sfx('sword', v.x, v.z); sfx('whoosh', v.x, v.z);
       if (crit || a.ult) hitStop(s, 0.04);
+      gained = n;
+      break;
+    }
+    case 'cleave': case 'storm': { // the Khanda cuts through every demon in a wide arc (Shamsher Toofan: three great steps of it)
+      if (a.kind === 'storm') { const t2 = nearestEnemy(s, v.x, v.z, 4, true); if (t2) faceTo(v, t2.x, t2.z); v.x += Math.sin(v.rot) * 0.4; v.z += Math.cos(v.rot) * 0.4; }
+      const R = reach + (a.kind === 'storm' ? 0.6 : 0.25), arc = st.arc || 1.2, fx0 = Math.sin(v.rot), fz0 = Math.cos(v.rot);
+      let n = 0;
+      for (const o of s.enemies) {
+        if (o.dead || (ENEMIES[o.type].fly && o.y > 1.2)) continue;
+        const rx = o.x - v.x, rz = o.z - v.z, d = Math.hypot(rx, rz);
+        if (d > R + ENEMIES[o.type].r) continue;
+        if (d > 0.5 && Math.acos(clamp((rx * fx0 + rz * fz0) / d, -1, 1)) > arc) continue;
+        hitEnemy(s, o, base * (a.kind === 'storm' ? 1.6 : 1) * C * (n ? 0.8 : 1), v, { crit, knock: a.kind === 'storm' ? 1.4 : 0.8, big: a.kind === 'storm' || crit });
+        n++;
+      }
+      fx(s, 'slash', { x: v.x, z: v.z, rot: v.rot, side: a.side, c: a.ult ? 0xffd27a : col, len: R + 0.2, heavy: true });
+      sfx(n ? 'sword' : 'whoosh', v.x, v.z);
+      if (n >= 3) floater(s, v.x, 2.4, v.z, `×${n}`, '#ffd27a', 'callout');
+      if (crit || a.ult) hitStop(s, 0.04);
+      if (a.kind === 'storm') shake(s, 0.08);
+      gained = n;
+      break;
+    }
+    case 'sunder': { // Dvidha Vaar: an overhead blow that splits one demon and throws back the ones beside it
+      fx(s, 'smash', { x: v.x, z: v.z, rot: v.rot, side: 1, c: 0xffe0a0, len: reach + 0.4, heavy: true });
+      const c = e && canReach(v, e, reach + 0.3) ? e : null;
+      if (c) { hitEnemy(s, c, base * 2.6 * C * (ENEMIES[c.type].boss || ENEMIES[c.type].cost >= 6 ? 1.3 : 1), v, { crit, knock: 1.6, stun: 0.6, big: true }); gained = 1; }
+      const cx = c ? c.x : v.x + Math.sin(v.rot) * reach, cz = c ? c.z : v.z + Math.cos(v.rot) * reach;
+      for (const o of s.enemies) if (o !== c && !o.dead && !(ENEMIES[o.type].fly && o.y > 1.2) && distXZ(o.x, o.z, cx, cz) < 1.6 + ENEMIES[o.type].r) { hitEnemy(s, o, base * 0.6, { x: cx, z: cz }, { knock: 1.9 }); gained++; }
+      fx(s, 'ring', { x: cx, z: cz, r: 1.7, c: 0xffe0a0, dur: 0.4 });
+      emit(s, cx, 0.1, cz, 14, { spread: 0.4, vx: 2, vyMin: 0.4, vyMax: 1.6, life: 0.6, colors: ['#d8c4a0', '#c8b08a'], g: 4 });
+      shake(s, 0.14); hitStop(s, 0.06); sfx('thud', v.x, v.z); sfx('sword', v.x, v.z);
+      break;
+    }
+    case 'lash': { // the Urumi whips out: several demons in a wide arc, out to two steps away
+      const R = st.reach + 0.35, arc = st.arc || 1.5, fx0 = Math.sin(v.rot), fz0 = Math.cos(v.rot);
+      const hits = s.enemies.filter((o) => {
+        if (o.dead || (ENEMIES[o.type].fly && o.y > 1.6)) return false;
+        const rx = o.x - v.x, rz = o.z - v.z, d = Math.hypot(rx, rz);
+        return d <= R + ENEMIES[o.type].r && (d < 0.5 || Math.acos(clamp((rx * fx0 + rz * fz0) / d, -1, 1)) <= arc);
+      }).sort((p1, p2) => distXZ(p1.x, p1.z, v.x, v.z) - distXZ(p2.x, p2.z, v.x, v.z)).slice(0, st.maxHit || 3);
+      for (const o of hits) hitEnemy(s, o, base * C, v, { crit, knock: 0.3 });
+      fx(s, 'slash', { x: v.x, z: v.z, rot: v.rot, side: a.side, c: col, len: R + 0.2, heavy: crit });
+      sfx(hits.length ? 'sword' : 'whoosh', v.x, v.z);
+      gained = hits.length;
+      break;
+    }
+    case 'coil': case 'serpent': { // Kalari Chakra / Sarpa Nritya: the whip-sword spins round, cutting and slowing all it reaches
+      const R = a.kind === 'serpent' ? 2.9 : 2.4;
+      let n = 0;
+      for (const o of s.enemies) {
+        if (o.dead || (ENEMIES[o.type].fly && o.y > 1.6) || distXZ(o.x, o.z, v.x, v.z) > R + ENEMIES[o.type].r) continue;
+        hitEnemy(s, o, base * (a.kind === 'serpent' ? 1.3 : 0.9) * C, v, { crit, knock: 0.7 });
+        o.slowT = Math.max(o.slowT || 0, 2.5);
+        n++;
+      }
+      for (let k = 0; k < 3; k++) fx(s, 'slash', { x: v.x, z: v.z, rot: v.rot + (k * Math.PI * 2) / 3, side: 1, c: a.ult ? 0xffd27a : col, len: R, heavy: true });
+      fx(s, 'ring', { x: v.x, z: v.z, r: R + 0.2, c: a.ult ? 0xffd27a : col, dur: 0.35 });
+      sfx('whoosh', v.x, v.z); if (n) sfx('sword', v.x, v.z);
       gained = n;
       break;
     }
@@ -1873,38 +1969,120 @@ function warriorAI(s, v, dt, phase, spd) {
     v.task = 'Training at the Akhara';
   } else v.task = 'Walking to the Akhara';
 }
-/** Loose an arrow from an archer (crits fly gold; volleys and Agni Baan burn). */
+/** Loose an arrow from an archer or longbowman (crits fly gold; volleys and Agni Baan burn; longbow arrows pierce). */
 function archerShot(s, v, target, o) {
   o = o || {};
-  const crit = Math.random() < (SOLDIER_MOVES.archer.crit || 0);
-  const dmg = 6 * (s.upgrades.bow ? 1.5 : 1) * (s.festival ? 1.5 : 1) * (o.mult || 1) * (crit ? 1.8 : 1);
-  const p = shootArrow(s, v.x, 1.0, v.z, target, dmg, false, o.kind || 'arrow', o.speed || 17);
+  const M = SOLDIER_MOVES[v.job] || SOLDIER_MOVES.archer, st = SOLDIERS[v.job] || SOLDIERS.archer;
+  const crit = Math.random() < (M.crit || 0);
+  const dmg = (st.dmg || 6) * (s.upgrades.bow ? 1.5 : 1) * (s.festival ? 1.5 : 1) * (o.mult || 1) * (crit ? 1.8 : 1);
+  const p = shootArrow(s, v.x, 1.0, v.z, target, dmg, false, o.kind || 'arrow', o.speed || (v.job === 'longbow' ? 23 : 17));
   p.crit = crit; p.fire = !!(o.fire || s.upgrades.agnibaan); p.byArcher = true; p.owner = v.id;
+  if (o.pierce || st.pierce) p.pierce = o.pierce || st.pierce; // a longbow arrow goes on through the demons behind
   return p;
 }
+/** Throw a chakram: it flies flat to the target, bounces on to the next demon nearby, and comes back to the hand. */
+function chakramThrow(s, v, target, bounces, mult) {
+  const st = SOLDIERS.chakri, M = SOLDIER_MOVES.chakri;
+  const crit = Math.random() < (M.crit || 0);
+  const dmg = st.dmg * (s.upgrades.talwar ? 1.3 : 1) * (s.festival ? 1.5 : 1) * (mult || 1) * (crit ? 1.8 : 1);
+  const p = { x: v.x + Math.sin(v.rot) * 0.3, y: 1.0, z: v.z + Math.cos(v.rot) * 0.3, vx: 0, vy: 0, vz: 0, dmg, life: 6, kind: 'chakram', flat: true, tgt: target, bounce: bounces, hit: new Set(), owner: v.id, crit, spd: 11, stuck: false, dead: false };
+  s.projectiles.push(p);
+  sfx('whoosh', v.x, v.z);
+  return p;
+}
+function nextChakramTarget(s, p) {
+  let best = null, bd = 3.8;
+  for (const e of s.enemies) {
+    if (e.dead || p.hit.has(e.id) || e.hidden > 0 || (ENEMIES[e.type].fly && e.y > 2.2)) continue;
+    const d = distXZ(e.x, e.z, p.x, p.z);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+function chakramStep(s, p, dt) {
+  p.life -= dt;
+  if (p.life <= 0) { p.dead = true; return; }
+  const owner = s.villagers.find((u) => u.id === p.owner);
+  if (!p.returning && (!p.tgt || p.tgt.dead || p.tgt.hidden > 0)) { const n = p.bounce >= 0 ? nextChakramTarget(s, p) : null; if (n) p.tgt = n; else p.returning = true; }
+  let tx, ty, tz;
+  if (p.returning) { if (!owner || owner.inside) { p.dead = true; return; } tx = owner.x; ty = 1.0; tz = owner.z; }
+  else { tx = p.tgt.x; ty = p.tgt.y + ENEMIES[p.tgt.type].h * 0.5; tz = p.tgt.z; }
+  const dx = tx - p.x, dy = ty - p.y, dz = tz - p.z, d = Math.hypot(dx, dy, dz) || 1, step = p.spd * dt;
+  p.vx = (dx / d) * p.spd; p.vy = (dy / d) * p.spd; p.vz = (dz / d) * p.spd;
+  if (d > step + 0.2) { p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; return; }
+  p.x = tx; p.y = ty; p.z = tz;
+  if (p.returning) { p.dead = true; return; } // caught again
+  const e = p.tgt;
+  hitEnemy(s, e, p.dmg, p, { crit: p.crit, knock: 0.45 });
+  p.hit.add(e.id);
+  if (owner) addPower(s, owner, SHAKTI.arrow);
+  fx(s, 'impact', { x: p.x, y: p.y, z: p.z, c: 0xd8e8ff, s: 0.8 });
+  sfx('sword', p.x, p.z);
+  p.dmg *= 0.85;
+  p.bounce--;
+  if (p.bounce >= 0) { const n = nextChakramTarget(s, p); if (n) { p.tgt = n; return; } }
+  p.returning = true;
+}
+/** How each ranged soldier shoots: their normal shot, their special, and the moment they loose it. */
+const RANGED_KIT = {
+  archer:  { shot: 'shoot', ab: 'volley',   abWhen: (s, v, t) => enemiesNear(s, t.x, t.z, 3) >= 3 },
+  longbow: { shot: 'shoot', ab: 'pierce',   abWhen: (s, v, t) => enemiesNear(s, t.x, t.z, 3) >= 2 || ENEMIES[t.type].boss || ENEMIES[t.type].cost >= 6 },
+  chakri:  { shot: 'throw', ab: 'ricochet', abWhen: (s, v, t) => enemiesNear(s, t.x, t.z, 3.5) >= 3 },
+};
+function rangedRelease(s, v, a, range) {
+  const foe = a.foe && !a.foe.dead ? a.foe : null;
+  switch (a.kind) {
+    case 'volley': { // Baan Varsha: five fire arrows rain on the crowd around the target
+      const c = foe || nearestEnemy(s, v.x, v.z, range, false);
+      if (c) {
+        const pool = s.enemies.filter((o) => !o.dead && distXZ(o.x, o.z, c.x, c.z) < 3).sort(() => Math.random() - 0.5);
+        for (let i = 0; i < 5; i++) archerShot(s, v, pool[i % pool.length] || c, { fire: true, mult: 0.9 });
+      }
+      sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
+      break;
+    }
+    case 'astra': { // Agni Astra: one great blazing arrow into the thick of them
+      const c = densestEnemy(s, v.x, v.z, range + 2, 2.6) || foe;
+      if (c) { const p = archerShot(s, v, c, { kind: 'astra', mult: 7, fire: true, speed: 15 }); p.splash = 2.6; p.burn = 7; }
+      sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
+      break;
+    }
+    case 'pierce': { // Bhedi Baan: a heavy shaft that drives through the whole line
+      if (foe) { archerShot(s, v, foe, { mult: 3, pierce: 8, speed: 28 }); fx(s, 'thrust', { x: v.x, z: v.z, rot: v.rot, c: 0xfff0c0, len: 3.2, heavy: true }); }
+      sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z); shake(s, 0.04);
+      break;
+    }
+    case 'rain': { // Shara Varsha: a dozen arrows fall over the thickest knot of demons
+      const c = densestEnemy(s, v.x, v.z, range + 2, 3) || foe;
+      if (c) {
+        const pool = s.enemies.filter((o) => !o.dead && distXZ(o.x, o.z, c.x, c.z) < 3.4);
+        for (let i = 0; i < 12; i++) archerShot(s, v, pool[i % pool.length] || c, { mult: 1.3, speed: 15 + (i % 4) });
+      }
+      sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
+      break;
+    }
+    case 'throw': if (foe) chakramThrow(s, v, foe, SOLDIERS.chakri.bounce, 1); break;
+    case 'ricochet': if (foe) chakramThrow(s, v, foe, 6, 1.2); break;
+    case 'fan': { // Chakra Toofan: five rings at once, each to its own demon
+      const near = s.enemies.filter((o) => !o.dead && !(o.hidden > 0) && distXZ(o.x, o.z, v.x, v.z) < range + 1).sort((p1, p2) => distXZ(p1.x, p1.z, v.x, v.z) - distXZ(p2.x, p2.z, v.x, v.z));
+      for (let i = 0; i < 5; i++) { const t = near[i % Math.max(1, near.length)] || foe; if (t) chakramThrow(s, v, t, 3, 1.4); }
+      fx(s, 'ring', { x: v.x, z: v.z, r: 1.4, c: 0xd8e8ff, dur: 0.4 });
+      break;
+    }
+    default: if (foe) { archerShot(s, v, foe); sfx('bow', v.x, v.z); }
+  }
+}
+/** Archers, longbowmen and chakram throwers: they hold the second line and fight from range. */
 function archerAI(s, v, dt, phase, spd) {
   const night = phase !== 'day';
-  const range = 10 + (s.upgrades.bow ? 2.5 : 0);
-  if (v.atk) { // drawing the bow: the arrow flies at the release point
+  const st = SOLDIERS[v.job] || SOLDIERS.archer, kit = RANGED_KIT[v.job] || RANGED_KIT.archer;
+  const range = (st.range || 10) + (s.upgrades.bow && v.job !== 'chakri' ? 2.5 : 0);
+  if (v.atk) { // drawing (or winding up a throw): the shot flies at the release point
     const a = v.atk;
     a.t += dt;
     v.anim = 'atk';
     if (a.foe && !a.foe.dead) faceTo(v, a.foe.x, a.foe.z);
-    if (!a.done && a.t >= a.dur * a.hit) {
-      a.done = true;
-      if (a.kind === 'volley') { // Baan Varsha: five fire arrows rain on the crowd around the target
-        const c = a.foe && !a.foe.dead ? a.foe : nearestEnemy(s, v.x, v.z, range, false);
-        if (c) {
-          const pool = s.enemies.filter((o) => !o.dead && distXZ(o.x, o.z, c.x, c.z) < 3).sort(() => Math.random() - 0.5);
-          for (let i = 0; i < 5; i++) archerShot(s, v, pool[i % pool.length] || c, { fire: true, mult: 0.9 });
-        }
-        sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
-      } else if (a.kind === 'astra') { // Agni Astra: one great blazing arrow into the thick of them
-        const c = densestEnemy(s, v.x, v.z, range + 2, 2.6) || (a.foe && !a.foe.dead ? a.foe : null);
-        if (c) { const p = archerShot(s, v, c, { kind: 'astra', mult: 7, fire: true, speed: 15 }); p.splash = 2.6; p.burn = 7; }
-        sfx('bow', v.x, v.z); sfx('whoosh', v.x, v.z);
-      } else if (a.foe && !a.foe.dead) { archerShot(s, v, a.foe); sfx('bow', v.x, v.z); }
-    }
+    if (!a.done && a.t >= a.dur * a.hit) { a.done = true; rangedRelease(s, v, a, range); }
     if (a.t >= a.dur) v.atk = null;
     return;
   }
@@ -1917,9 +2095,10 @@ function archerAI(s, v, dt, phase, spd) {
     return;
   }
   const target = nearestEnemy(s, v.x, v.z, range, false);
+  const word = v.job === 'chakri' ? 'chakram ready' : 'bow ready';
   if (night && !target) {
     const p = postPos(s, v);
-    if (moveTo(v, p.x, p.z, spd * 1.2, dt)) { v.anim = 'stand'; v.rot = Math.atan2(p.x, p.z); v.task = 'Watching the ' + compassOf(p.x, p.z) + ' with bow ready'; }
+    if (moveTo(v, p.x, p.z, spd * 1.2, dt)) { v.anim = 'stand'; v.rot = Math.atan2(p.x, p.z); v.task = 'Watching the ' + compassOf(p.x, p.z) + ' with ' + word; }
     else v.task = 'Taking position for the night';
     return;
   }
@@ -1927,30 +2106,30 @@ function archerAI(s, v, dt, phase, spd) {
     faceTo(v, target.x, target.z);
     v.anim = 'shoot';
     v.combatT = 1.5;
-    v.task = 'Shooting at the ' + ENEMIES[target.type].name;
-    if (v.atkCd <= 0 && (v.power || 0) >= 100) { startUltimate(s, v, 'astra', target); return; }
+    v.task = (v.job === 'chakri' ? 'Throwing chakrams at the ' : 'Shooting at the ') + ENEMIES[target.type].name;
+    if (v.atkCd <= 0 && (v.power || 0) >= 100 && ULTIMATES[v.job]) { startUltimate(s, v, ULTIMATES[v.job].key, target); return; }
     if (v.atkCd <= 0) {
-      const ab = SOLDIER_MOVES.archer.ability;
-      const volley = (v.abilT || 0) <= 0 && enemiesNear(s, target.x, target.z, 3) >= 3;
-      const kind = volley ? 'volley' : 'shoot';
+      const ab = SOLDIER_MOVES[v.job].ability;
+      const special = (v.abilT || 0) <= 0 && kit.abWhen(s, v, target);
+      const kind = special ? kit.ab : kit.shot;
       v.atk = { kind, t: 0, dur: SWINGS[kind].dur, hit: SWINGS[kind].hit, foe: target, done: false };
-      v.atkCd = 1.35;
-      if (volley) { v.abilT = ab.cd; floater(s, v.x, 2.0, v.z, ab.name + '!', '#ffd27a', 'callout'); }
+      v.atkCd = st.cd || 1.35;
+      if (special) { v.abilT = ab.cd; floater(s, v.x, 2.0, v.z, ab.name + '!', '#ffd27a', 'callout'); }
     }
     return;
   }
   const rg = validWorkplace(s, v, 'range');
   if (!rg) { v.task = 'Needs a Dhanush Shala'; return idleAI(s, v, dt, spd); }
-  // two ranks at the firing line under the shelter, each archer on one of the three targets
+  // two ranks at the firing line under the shelter, each one on one of the three targets
   const i = workplaceIndex(s, v);
   const p = localToWorld(rg, -1.35 + (i >= 5 ? 0.45 : 0), -1.0 + (i % 5) * 0.5);
   if (!moveTo(v, p.x, p.z, spd, dt)) { v.task = 'Walking to the Dhanush Shala'; return; }
   const tg = localToWorld(rg, 1.55, [-0.9, 0, 0.9][i % 3]);
   faceTo(v, tg.x, tg.z);
   v.anim = 'shoot';
-  v.task = 'Practising archery';
+  v.task = v.job === 'chakri' ? 'Practising with the chakram' : v.job === 'longbow' ? 'Practising with the longbow' : 'Practising archery';
   v.offerT += dt;
-  if (v.offerT > 2.6 + i * 0.4) { v.offerT = 0; shootArrow(s, v.x, 1.0, v.z, { x: tg.x, y: 0.95, z: tg.z, practice: true }, 0, true); }
+  if (v.offerT > 2.6 + i * 0.4) { v.offerT = 0; shootArrow(s, v.x, 1.0, v.z, { x: tg.x, y: 0.95, z: tg.z, practice: true }, 0, true, v.job === 'chakri' ? 'chakram' : 'arrow'); }
 }
 function updateVillager(s, v, dt, phase) {
   v.animT += dt;
@@ -1998,7 +2177,7 @@ function updateVillager(s, v, dt, phase) {
     if (ub && !nearestEnemy(s, v.x, v.z, 6, true)) return upgradeHelpAI(s, v, ub, dt, spd);
   }
   if (isMelee(v)) return warriorAI(s, v, dt, phase, spd);
-  if (v.job === 'archer') return archerAI(s, v, dt, phase, spd);
+  if (v.job === 'archer' || v.job === 'longbow' || v.job === 'chakri') return archerAI(s, v, dt, phase, spd);
   if (v.job === 'medic') return medicAI(s, v, dt, phase, spd);
   if (shelterAI(s, v, dt, spd)) return;
   if (v.job === 'priest') priestHeal(s, v, dt);
@@ -2183,7 +2362,7 @@ function rockImpact(s, p) {
   p.dead = true;
   for (const v of s.villagers) if (!v.inside && distXZ(v.x, v.z, p.x, p.z) < p.splash) damageVillager(s, v, p.dmg * (distXZ(v.x, v.z, p.x, p.z) < 0.6 ? 1 : 0.6), p);
   const b = buildingAtPoint(s, p.x, p.z);
-  if (b && b.hp > 0) { b.hp -= p.dmg * 1.5; if (b.hp <= 0) destroyBuilding(s, b); }
+  if (b && b.hp > 0 && !BUILDINGS[b.type].road) { b.hp -= p.dmg * 1.5; if (b.hp <= 0) destroyBuilding(s, b); }
   fx(s, 'ring', { x: p.x, z: p.z, r: p.splash + 0.3, c: 0xc8b08a, dur: 0.5 });
   emit(s, p.x, 0.2, p.z, 22, { spread: 0.5, vx: 2.6, vyMin: 1, vyMax: 3.5, life: 0.9, colors: ['#8a8a8a', '#6b6b6b', '#a89a86'], g: 8 });
   shake(s, 0.22); sfx('crash', p.x, p.z);
@@ -2216,6 +2395,7 @@ function explode(s, p) {
 function updateProjectiles(s, dt) {
   for (const p of s.projectiles) {
     if (p.stuck) { p.life -= dt; if (p.life <= 0) p.dead = true; continue; }
+    if (p.flat) { chakramStep(s, p, dt); continue; } // a thrown chakram homes in, bounces and returns
     p.vy -= GRAV3 * dt;
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
     p.life -= dt;
@@ -2231,10 +2411,12 @@ function updateProjectiles(s, dt) {
         const d = ENEMIES[e.type];
         if (distXZ(p.x, p.z, e.x, e.z) < d.r + 0.2 && p.y > e.y - 0.1 && p.y < e.y + d.h + 0.1) {
           if (p.kind !== 'arrow') { explode(s, p); break; }
+          if (p.passed && p.passed.has(e.id)) continue;
           hitEnemy(s, e, p.dmg, p, { crit: p.crit, knock: p.crit ? 0.6 : 0.25, fire: p.fire });
           if (p.fire || s.upgrades.agnibaan) { e.fireT = 2.5; e.fireDps = 3; }
           if (p.crit) hitStop(s, 0.03);
           if (p.owner) { const o = s.villagers.find((u) => u.id === p.owner); if (o) addPower(s, o, SHAKTI.arrow); }
+          if (p.pierce > 1) { p.pierce--; (p.passed || (p.passed = new Set())).add(e.id); p.dmg *= 0.8; continue; } // on through the next one
           p.dead = true;
           break;
         }
@@ -2494,17 +2676,39 @@ function vanishFake(s, e, struck) {
   sfx('ghost_vanish', e.x, e.z);
 }
 /*
- * Omens. Two days before a great asura comes, the land warns of him: crows circling over the forest
- * (Bakasura), a blood-red sky at dusk (Raktabija), a violet mist (Kalanemi), tremors (Mahasura). The
- * renderer reads s.omen; the village's message history quietly notes the sign, with no pop-up.
+ * Omens. On the day a great asura will come, the land warns of him in three rising stages, each read
+ * through the world itself first and the interface second:
+ *   1 Sign (early morning): the first strange sign; a quiet line in the message history and an eye on the clock.
+ *   2 Warning (midday): the signs are everywhere; the elders name him, the side he will come from, and how to meet him.
+ *   3 Imminent (late afternoon until he comes): a banner and the war drums; the minimap marks his side.
+ * s.omen.ramp (0..1) is how strongly the renderer changes the world; after he falls (or at dawn) it fades away.
  */
-function updateOmen(s, announce) {
-  let o = null;
-  for (const k of [0, 1, 2]) { const bt = bossForDay(s.day + k); if (bt) { o = { type: bt, k }; break; } }
-  if (!o) { s.omen = null; return; }
-  const prev = s.omen && s.omen.type === o.type ? s.omen : null;
-  s.omen = { type: o.type, k: o.k, a: prev && prev.a != null ? prev.a : Math.random() * Math.PI * 2, str: o.k === 2 ? 0.55 : 1 };
-  if (announce && o.k > 0 && !s.demo && typeof UI !== 'undefined' && UI.logPush) UI.logPush(OMENS[o.type].sign, 'info');
+const OMEN_STAGE_T = [0, 3, 62, DUSK_T - 16];
+function omenStageAt(t) { const ph = phaseOf(t); if (ph !== 'day') return 3; let st = 0; for (let i = 1; i <= 3; i++) if (t >= OMEN_STAGE_T[i]) st = i; return st; }
+/** A new day (or a loaded game): is a great asura coming tonight? */
+function updateOmen(s, quiet) {
+  const bt = bossForDay(s.day);
+  if (s.omen && s.omen.day === s.day && s.omen.type === bt) return;
+  if (s.omen && s.omen.ramp > 0.02 && !bt) { s.omen.done = true; return; } // last night's omen is still fading
+  s.omen = bt ? { type: bt, day: s.day, a: Math.random() * Math.PI * 2, stage: quiet ? omenStageAt(s.t) : 0, ramp: quiet && phaseOf(s.t) !== 'day' ? 1 : 0, done: false } : null;
+}
+function tickOmen(s, dt) {
+  const o = s.omen;
+  if (!o) return;
+  if (o.done) { o.ramp -= dt * 0.08; if (o.ramp <= 0) s.omen = null; return; }
+  const ph = phaseOf(s.t);
+  const want = ph === 'day' ? clamp((s.t - OMEN_STAGE_T[1]) / (DUSK_T - 10 - OMEN_STAGE_T[1]), 0, 1) : 1;
+  o.ramp += (want - o.ramp) * Math.min(1, dt * 0.6);
+  const st = omenStageAt(s.t);
+  if (st > o.stage) { o.stage = st; omenStage(s, o, st); }
+  if (o.spawned && !s.enemies.some((e) => e.type === o.type && !e.dead && !e.fake)) o.done = true; // he has fallen
+}
+function omenStage(s, o, st) {
+  if (s.demo) return;
+  const B = ENEMIES[o.type], O = OMENS[o.type], d = dirXZ(o.a), side = compassOf(d.x, d.z);
+  if (st === 1) { if (typeof UI !== 'undefined' && UI.logPush) UI.logPush(O.sign, 'info'); sfx('bellSoft'); }
+  else if (st === 2) toast(`The elders read the omen: ${B.name}, the ${B.en}, will come tonight from the ${side}. ${O.counter}`, 'warn', 12);
+  else if (st === 3) { if (typeof UI !== 'undefined' && UI.omenBanner) UI.omenBanner(o); sfx('drum'); }
 }
 /** A drop of Raktabija's blood rises as a little demon. */
 function spawnRakta(s, e, a, r) {
@@ -2548,7 +2752,7 @@ function devourAI(s, e, def, spd, dt) {
     const ux = (f.x - e.x) / d, uz = (f.z - e.z) / d;
     if (f.b == null || distXZ(f.x, f.z, e.x, e.z) > 3) { // walk on (buildings in the way get smashed by the normal code)
       const probe = buildingAtPoint(s, e.x + ux * (def.r + 0.3), e.z + uz * (def.r + 0.3));
-      if (probe && probe !== f.b && !isFieldType(probe.type) && probe.hp > 0) { enemyAttack(s, e, probe, 'building'); return true; }
+      if (probe && probe !== f.b && !isGround(probe.type) && probe.hp > 0) { enemyAttack(s, e, probe, 'building'); return true; }
     }
     e.vx = ux * spd; e.vz = uz * spd; e.x += e.vx * dt; e.z += e.vz * dt; e.rot = Math.atan2(ux, uz);
     return true;
@@ -2585,7 +2789,7 @@ function tickCharge(s, e, dt) {
     shake(s, 0.2);
   }
   const b = buildingAtPoint(s, e.x + c.dx * 0.8, e.z + c.dz * 0.8);
-  if (b && b.hp > 0 && !isFieldType(b.type)) { b.hp -= 60; sfx('crash', b.x, b.z); shake(s, 0.35); if (b.hp <= 0) destroyBuilding(s, b); e.charge = null; e.stunT = 0.6; return; }
+  if (b && b.hp > 0 && !isGround(b.type)) { b.hp -= 60; sfx('crash', b.x, b.z); shake(s, 0.35); if (b.hp <= 0) destroyBuilding(s, b); e.charge = null; e.stunT = 0.6; return; }
   if (c.t >= c.dur) e.charge = null;
 }
 /* Mamdo Bhoot: seizes someone and twists their neck, unless they are freed in time. */
@@ -2780,9 +2984,10 @@ function updateEnemy(s, e, dt) {
   }
   let slow = 1;
   e.vuln = 1;
+  if (e.slowT > 0) { e.slowT -= dt; slow = 0.55; } // tangled in the urumi's coils
   for (const b of s.buildings) {
     if (!b.done || b.hp <= 0) continue;
-    if (b.type === 'lamp' && distXZ(b.x, b.z, e.x, e.z) < 4.5 + (bLevel(b) - 1)) { slow = 0.6; e.hp -= 2.5 * bLevel(b) * dt; }
+    if (b.type === 'lamp' && distXZ(b.x, b.z, e.x, e.z) < 4.5 + (bLevel(b) - 1)) { slow = Math.min(slow, 0.6); e.hp -= 2.5 * bLevel(b) * dt; }
     else if (b.type === 'belltower' && distXZ(b.x, b.z, e.x, e.z) < TOWERS.belltower.range) { slow = Math.min(slow, 0.6); e.vuln = 1.25; }
   }
   if (e.fireT > 0) { // set alight by fire pots or Agni Baan arrows
@@ -2839,7 +3044,7 @@ function updateEnemy(s, e, dt) {
       let best = null, bd = 6;
       for (const b of s.buildings) {
         const bdef = BUILDINGS[b.type];
-        if (bdef.wall || isFieldType(b.type) || b.hp <= 0) continue;
+        if (bdef.wall || isGround(b.type) || b.hp <= 0) continue;
         const d = distToBuilding(b, e.x, e.z);
         if (d < bd) { bd = d; best = b; }
       }
@@ -2858,7 +3063,7 @@ function updateEnemy(s, e, dt) {
   let dx = (tx - e.x) / d, dz = (tz - e.z) / d;
   if (!def.ghost) {
     const probe = buildingAtPoint(s, e.x + dx * (def.r + 0.3), e.z + dz * (def.r + 0.3));
-    if (probe && !isFieldType(probe.type) && probe.hp > 0 && probe !== e.tb) return enemyAttack(s, e, probe, 'building');
+    if (probe && !isGround(probe.type) && probe.hp > 0 && probe !== e.tb) return enemyAttack(s, e, probe, 'building');
   }
   // keep apart from other demons
   for (const o of s.enemies) {
@@ -2896,7 +3101,11 @@ function updateAmbient(s, dt) {
   for (const a of s.ambient) {
     a.t -= dt;
     if (a.kind === 'cow') {
-      a.sit = ph !== 'day';
+      const afraid = s.omen && !s.omen.done && s.omen.stage >= 2; // the cattle feel it coming and huddle by the fire
+      a.sit = ph !== 'day' || (afraid && distXZ(a.x, a.z, a.hx || 0, a.hz || 0) < 0.4);
+      if (afraid && !a.sit && a.hx == null) { const ang = Math.atan2(a.z, a.x) + 0.3, p = freeSpot(s, { x: Math.cos(ang) * 3.6, z: Math.sin(ang) * 3.6 }); a.hx = p.x; a.hz = p.z; }
+      if (!afraid) a.hx = a.hz = null;
+      if (afraid && !a.sit) { a.walk = !moveTo(a, a.hx, a.hz, 0.7, dt); continue; }
       if (a.sit) { a.walk = false; continue; }
       if (a.t <= 0) {
         const ang = Math.random() * Math.PI * 2, r = rand(4.5, R - 1.5);
@@ -2909,7 +3118,7 @@ function updateAmbient(s, dt) {
       const ar = Math.hypot(a.x, a.z);
       if (ar < 3.2) { a.x *= 3.2 / (ar || 1); a.z *= 3.2 / (ar || 1); }
     } else if (a.kind === 'peacock') {
-      if (ph !== 'day') { a.hidden = true; continue; }
+      if (ph !== 'day' || (s.omen && !s.omen.done && s.omen.stage >= 2)) { a.hidden = true; continue; } // peafowl hide from what is coming
       if (a.hidden) { a.hidden = false; const ang = Math.random() * Math.PI * 2; a.x = Math.cos(ang) * (R + 3); a.z = Math.sin(ang) * (R + 3); a.tx = a.x; a.tz = a.z; }
       if (a.fan > 0) { a.fan -= dt; a.walk = false; continue; }
       if (a.t <= 0) {
@@ -2953,6 +3162,7 @@ function onDusk(s) {
 function onNight(s) { sfx('night'); }
 function onDawn(s) {
   sfx('conch');
+  if (s.omen) s.omen.done = true; // the night is over: the land slowly settles
   if (s.enemies.length) toast('Dawn breaks! The sun burns the demons away.', 'good');
   else toast('Dawn breaks over the village. Shubh prabhat!', 'good');
 }
@@ -2998,7 +3208,7 @@ function onNewDay(s) {
   }
   if (s.day === 2) tip('day2', 'Build an Akhara to train Sainik (warriors). Drag Bamboo Walls (Baad) around the edge of your land to hold demons back.');
   if (s.day === 4) tip('day4', 'Vetala — flying spirits — fly over walls. Dhanurdhar (archers) can shoot them down.');
-  updateOmen(s, true);
+  updateOmen(s);
   Game.save();
 }
 function gameOver(s, reason) {
@@ -3073,7 +3283,7 @@ const Game = {
       S.villagers.push(makeVillager(S, p.x, p.z, i % 2 ? 'f' : 'm'));
     }
     S.stats.maxPop = S.villagers.length;
-    updateOmen(S, false);
+    updateOmen(S);
     setTimeout(() => toast('Namaste, Mukhiya! Keep the sacred Agnikund burning and protect your people from the demons of the night.', 'tip', 9), 600);
     return S;
   },
@@ -3135,12 +3345,13 @@ const Game = {
     s.ambient = (data.ambient || []).map((a) => ({ kind: a.kind, x: a.x, z: a.z, tx: a.x, tz: a.z, rot: 0, t: 0, fan: 0, sit: false }));
     s.loot = data.loot || [];
     s.armory = data.armory || {};
+    if (s.armory.dhanush) { s.res.wood = (s.res.wood || 0) + 14 * s.armory.dhanush; delete s.armory.dhanush; } // archers need no crafted bow any more: old bows go back as wood
     s.fireStock = data.fireStock || {};
     rebuildGrid(s);
     syncStock(s); // older saves: everything starts on the Agnikund heap
     S = s;
     fixJobOverflow(s); // older saves: jobs now need their workplace buildings
-    updateOmen(s, false);
+    updateOmen(s, true);
     S = s;
     return true;
   },
@@ -3155,10 +3366,12 @@ const Game = {
     if (prev < DAWN_T && s.t >= DAWN_T) onDawn(s);
     if (s.t >= DAY_LEN) { s.t -= DAY_LEN; onNewDay(s); }
     const ph = phaseOf(s.t);
+    tickOmen(s, dt);
     while (s.spawnQueue.length && s.spawnQueue[0].at <= s.t && ph === 'night') {
       const q = s.spawnQueue.shift();
       const f = s.fronts[q.front] || { a: Math.random() * Math.PI * 2 };
       spawnEnemy(s, q.type, f.a);
+      if (s.omen && q.type === s.omen.type) s.omen.spawned = true;
       if (ENEMIES[q.type].boss) { const d = dirXZ(f.a), B = ENEMIES[q.type]; toast(`${B.name.toUpperCase()}, ${B.en}, rises in the ${compassOf(d.x, d.z)}!`, 'danger', 8); sfx('roar'); }
     }
     if (ph === 'dawn' || ph === 'day') s.spawnQueue.length = 0;

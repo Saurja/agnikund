@@ -124,7 +124,7 @@ const App = {
   fitUI() {
     const w = window.innerWidth, h = window.innerHeight;
     const coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-    const mobile = Math.min(w, h) < 600 || (coarse && w < 900);
+    const mobile = Math.min(w, h) < 600 || (coarse && w < 900) || w < 820; // narrow windows (tablets, split screens) use the two-row phone layout
     const portrait = h > w;
     const B = document.body.classList;
     B.toggle('touch', coarse);
@@ -142,6 +142,12 @@ const App = {
       UI.setJobsCollapsed(mobile);
     }
     document.querySelectorAll('.uiPct').forEach((el) => { el.textContent = Math.round(this.uiScale * 100) + '%'; });
+    if (typeof UI !== 'undefined' && UI.fitTopbar) UI.fitTopbar();
+    if (!(mobile && portrait) && !$('hud').classList.contains('hidden')) { // still too wide for one row (desktop, phone landscape): shrink the interface until it fits
+      const r = (id) => $(id).getBoundingClientRect();
+      const need = r('resbar').width + r('clock').width + r('controls').width + 44 * f, avail = w - 8;
+      if (need > avail) { const nf = Math.max(0.5, (f * avail) / need); this.uiZoom = nf; $('hud').style.zoom = nf; }
+    }
   },
   setQuality(q) {
     R3.setQuality(q);
@@ -173,7 +179,7 @@ const App = {
       const mode = e.button === 2 ? 'rotate' : e.button === 1 ? 'pan' : 'click';
       this.drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, mode, moved: false, shift: e.shiftKey, t: performance.now(), vx: 0, vy: 0 };
       R3.fling = null;
-      if (mode === 'click' && UI.buildType && BUILDINGS[UI.buildType].wall && !this.touch) {
+      if (mode === 'click' && UI.buildType && BUILDINGS[UI.buildType].line && !this.touch) {
         const g = R3.groundAt(e.clientX, e.clientY);
         if (g) this.wallDrag = [Math.floor(g.x), Math.floor(g.z)];
       }
@@ -337,11 +343,12 @@ const App = {
         for (const e of S.enemies) { if (e.dead) continue; foes++; if (Math.hypot(e.x, e.z) < territory(S) + 4) near++; if (ENEMIES[e.type].boss) boss = true; }
         this.battleT = foes ? 4 : Math.max(0, (this.battleT || 0) - dt); // stay in battle a few seconds after the last one falls
         Sound.mode = ph === 'day' || ph === 'dawn' ? (foes ? 'battle' : 'day') : this.battleT > 0 ? 'battle' : 'night';
-        Sound.threat = boss ? 1 : clamp(near / 8, 0, 1);
+        Sound.threat = boss ? 1 : Math.max(clamp(near / 8, 0, 1), S.omen && !S.omen.done && S.omen.stage >= 3 ? 0.4 : 0);
         // ambience: fire crackle when the camera is near the Agnikund, birds by day, crickets and owls at night, rain
         const dark = darknessAt(S.t), cd = Math.hypot(R3.cam.x, R3.cam.z) + R3.cam.dist * 0.35;
         Sound.amb.fire = clamp(1 - (cd - 8) / 22, 0, 1) * clamp(S.fire.intensity == null ? 1 : S.fire.intensity, 0.3, 1);
-        Sound.amb.day = ph === 'day' ? (S.weather === 'rain' ? 0.2 : 1) : 0;
+        const omenHush = S.omen && !S.omen.done ? S.omen.ramp || 0 : 0; // the birds fall silent before an asura comes
+        Sound.amb.day = ph === 'day' ? (S.weather === 'rain' ? 0.2 : 1) * (1 - 0.75 * omenHush) : 0;
         Sound.amb.night = clamp(dark * 1.2 - 0.2, 0, 1) * (foes ? 0.5 : 1);
         Sound.amb.rain = S.weather === 'rain' ? 1 : 0;
         Sound.amb.dawn = ph === 'dawn' || (ph === 'day' && S.t < 12) ? 1 : 0; // the rooster's moment
