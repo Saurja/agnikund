@@ -2120,7 +2120,7 @@ function archerShot(s, v, target, o) {
   const M = SOLDIER_MOVES[v.job] || SOLDIER_MOVES.archer, st = SOLDIERS[v.job] || SOLDIERS.archer;
   const crit = Math.random() < (M.crit || 0);
   const dmg = (st.dmg || 6) * (s.upgrades.bow ? 1.5 : 1) * (s.festival ? 1.5 : 1) * (o.mult || 1) * (crit ? 1.8 : 1);
-  const p = shootArrow(s, v.x, 1.0, v.z, target, dmg, false, o.kind || 'arrow', o.speed || (v.job === 'longbow' ? 23 : 17));
+  const p = shootArrow(s, v.x, 0.8, v.z, target, dmg, false, o.kind || 'arrow', o.speed || (v.job === 'longbow' ? 23 : 17));
   p.crit = crit; p.fire = !!(o.fire || s.upgrades.agnibaan); p.byArcher = true; p.owner = v.id;
   if (o.pierce || st.pierce) p.pierce = o.pierce || st.pierce; // a longbow arrow goes on through the demons behind
   return p;
@@ -2274,7 +2274,7 @@ function archerAI(s, v, dt, phase, spd) {
   v.anim = 'shoot';
   v.task = v.job === 'chakri' ? 'Practising with the chakram' : v.job === 'longbow' ? 'Practising with the longbow' : 'Practising archery';
   v.offerT += dt;
-  if (v.offerT > 2.6 + i * 0.4) { v.offerT = 0; shootArrow(s, v.x, 1.0, v.z, { x: tg.x, y: 0.95, z: tg.z, practice: true }, 0, true, v.job === 'chakri' ? 'chakram' : 'arrow'); }
+  if (v.offerT > 2.6 + i * 0.4) { v.offerT = 0; shootArrow(s, v.x, 0.8, v.z, { x: tg.x, y: 0.85, z: tg.z, practice: true }, 0, true, v.job === 'chakri' ? 'chakram' : 'arrow'); }
 }
 function updateVillager(s, v, dt, phase) {
   v.animT += dt;
@@ -2366,7 +2366,7 @@ function damageVillager(s, v, dmg, from) {
   }
   v.hp -= dmg;
   addPower(s, v, SHAKTI.struck); // pain feeds a fighter's Shakti
-  if (dmg >= 1) floater(s, v.x + rand(-0.12, 0.12), 1.6, v.z, String(Math.round(dmg)), '#ff7a6b', 'dmg hurt');
+  if (dmg >= 1) floater(s, v.x + rand(-0.12, 0.12), 1.4, v.z, String(Math.round(dmg)), '#ff7a6b', 'dmg hurt');
   if (!isDefender(v)) v.scared = true;
   if (v.hp <= 0) killVillager(s, v);
 }

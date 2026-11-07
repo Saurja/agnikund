@@ -154,7 +154,7 @@ function initMaterials(tier) {
   MAT.useOutline = false; // the modern look relies on light, shadow and occlusion rather than ink lines
   MAT.ramp = MAT.ramp || toonRamp([95, 165, 220, 255]);
   MAT.std = surfaceMat({ vertexColors: true });
-  MAT.bld = MAT.tier === 'low' ? MAT.std : texturize(surfaceMat({ vertexColors: true, roughness: 0.92 }), 0.05); // (a whisper of grain: low-poly reads from clean facets)
+  MAT.bld = MAT.tier === 'low' ? MAT.std : texturize(surfaceMat({ vertexColors: true, roughness: 0.92 }), 0.09); // (a little grain: big flat roofs and walls read as plaster and tile, not plastic)
   MAT.bhoot = MAT.tier === 'low' ? surfaceMat({ vertexColors: true, transparent: true, opacity: 0.82, emissive: 0x2a3848 }) : ghostMat();
   MAT.char = charMat();
   MAT.outline = MAT.outline || outlineMat(0.028);
@@ -737,35 +737,35 @@ Models.building = function (type, level) {
       const sq = (rt, rb, h, c, y) => p.push(P(new THREE.CylinderGeometry(rt, rb, h, 4), c, 0, y + h / 2, 0, 0, Q4, 0)); // square frustum: half-width = r × 0.707
       p.push(box(1.36, 0.14, 1.32, 0xa08a6e, 0, 0, 0));                                        // plinth
       for (let i = 0; i < 4; i++) p.push(box(0.32, 0.03, 0.08, i % 2 ? 0x968878 : 0xb5a796, -0.5 + i * 0.33, 0.14, 0.62)); // its edge stones
-      p.push(box(1.1, 0.82, 1.04, limed ? 0xf0e4c8 : C.mud, 0, 0.14, 0));                    // walls
+      p.push(box(1.1, 1.0, 1.04, limed ? 0xf0e4c8 : C.mud, 0, 0.14, 0));                     // walls (a villager stands under the eave)
       p.push(box(1.12, limed ? 0.2 : 0.06, 1.06, limed ? 0xb0482c : C.white, 0, limed ? 0.14 : 0.32, 0));
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(box(0.11, 0.84, 0.11, C.wood, sx * 0.55, 0.14, sz * 0.52)); // corner posts
-      p.push(box(1.2, 0.08, 1.14, C.wood, 0, 0.94, 0));                                         // wall plate
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) p.push(box(0.11, 1.02, 0.11, C.wood, sx * 0.55, 0.14, sz * 0.52)); // corner posts
+      p.push(box(1.2, 0.08, 1.14, C.wood, 0, 1.12, 0));                                         // wall plate
       // door: a dark opening in a chunky frame, a marigold toran, a mud step
-      p.push(box(0.38, 0.62, 0.06, C.dark, 0, 0.14, 0.52));
-      p.push(box(0.08, 0.66, 0.1, C.woodL, -0.23, 0.14, 0.53)); p.push(box(0.08, 0.66, 0.1, C.woodL, 0.23, 0.14, 0.53)); p.push(box(0.58, 0.09, 0.11, C.wood, 0, 0.78, 0.53));
-      for (let i = 0; i < 7; i++) p.push(P(new THREE.OctahedronGeometry(0.034, 0), i % 2 ? C.saffron : C.marigold, -0.21 + i * 0.07, 0.74 - (i % 2) * 0.03, 0.6));
+      p.push(box(0.38, 0.76, 0.06, C.dark, 0, 0.14, 0.52));
+      p.push(box(0.08, 0.8, 0.1, C.woodL, -0.23, 0.14, 0.53)); p.push(box(0.08, 0.8, 0.1, C.woodL, 0.23, 0.14, 0.53)); p.push(box(0.58, 0.09, 0.11, C.wood, 0, 0.92, 0.53));
+      for (let i = 0; i < 7; i++) p.push(P(new THREE.OctahedronGeometry(0.034, 0), i % 2 ? C.saffron : C.marigold, -0.21 + i * 0.07, 0.88 - (i % 2) * 0.03, 0.6));
       p.push(box(0.6, 0.07, 0.22, 0xa08a6e, 0, 0, 0.74));
       // a barred window in the east wall, dung cakes drying on the west, red chillies by the door
-      p.push(box(0.05, 0.24, 0.3, C.dark, 0.555, 0.42, 0)); p.push(box(0.08, 0.05, 0.38, C.wood, 0.57, 0.38, 0)); p.push(box(0.08, 0.05, 0.38, C.wood, 0.57, 0.66, 0));
-      for (const z of [-0.075, 0, 0.075]) p.push(box(0.03, 0.24, 0.025, C.wood, 0.575, 0.42, z));
-      for (let i = 0; i < 6; i++) p.push(P(new THREE.CylinderGeometry(0.07, 0.07, 0.03, 6), 0x6e5238, -0.565, 0.36 + Math.floor(i / 3) * 0.2, -0.24 + (i % 3) * 0.2, 0, 0, Math.PI / 2));
-      for (let i = 0; i < 5; i++) p.push(coneC(0.024, 0.09, 4, C.red, 0.34, 0.86 - i * 0.07, 0.56, Math.PI));
+      p.push(box(0.05, 0.24, 0.3, C.dark, 0.555, 0.52, 0)); p.push(box(0.08, 0.05, 0.38, C.wood, 0.57, 0.48, 0)); p.push(box(0.08, 0.05, 0.38, C.wood, 0.57, 0.76, 0));
+      for (const z of [-0.075, 0, 0.075]) p.push(box(0.03, 0.24, 0.025, C.wood, 0.575, 0.52, z));
+      for (let i = 0; i < 6; i++) p.push(P(new THREE.CylinderGeometry(0.07, 0.07, 0.03, 6), 0x6e5238, -0.565, 0.42 + Math.floor(i / 3) * 0.2, -0.24 + (i % 3) * 0.2, 0, 0, Math.PI / 2));
+      for (let i = 0; i < 5; i++) p.push(coneC(0.024, 0.09, 4, C.red, 0.34, 1.0 - i * 0.07, 0.56, Math.PI));
       // roof: a ragged eave lip, the lower thatch slope, a rope tie, the steep top and a clay kalash
-      sq(1.17, 1.2, 0.08, C.thatchD, 0.94);
-      sq(0.62, 1.16, 0.6, C.thatch, 1.0);
-      sq(0.65, 0.65, 0.05, C.thatchD, 1.57);
-      p.push(P(new THREE.ConeGeometry(0.66, 0.58, 4), varyHex(C.thatch, 4, 0.03), 0, 1.61 + 0.29, 0, 0, Q4, 0));
-      p.push(P(new THREE.CylinderGeometry(0.025, 0.035, 0.16, 4), C.wood, 0, 2.18, 0));
-      p.push(P(new THREE.OctahedronGeometry(0.08, 0), C.brick, 0, 2.3, 0, 0, Q4, 0, 1, 1.25, 1));
+      sq(1.17, 1.2, 0.08, C.thatchD, 1.12);
+      sq(0.62, 1.16, 0.6, C.thatch, 1.18);
+      sq(0.65, 0.65, 0.05, C.thatchD, 1.75);
+      p.push(P(new THREE.ConeGeometry(0.66, 0.58, 4), varyHex(C.thatch, 4, 0.03), 0, 1.79 + 0.29, 0, 0, Q4, 0));
+      p.push(P(new THREE.CylinderGeometry(0.025, 0.035, 0.16, 4), C.wood, 0, 2.36, 0));
+      p.push(P(new THREE.OctahedronGeometry(0.08, 0), C.brick, 0, 2.48, 0, 0, Q4, 0, 1, 1.25, 1));
       if (level >= 2) { // a timber porch under the eave: two posts and a lintel
-        for (const sx of [-0.42, 0.42]) { p.push(box(0.09, 0.8, 0.09, C.woodL, sx, 0.14, 0.76)); p.push(box(0.14, 0.05, 0.14, 0xa08a6e, sx, 0.09, 0.76)); }
-        p.push(box(0.96, 0.08, 0.1, C.wood, 0, 0.9, 0.76));
+        for (const sx of [-0.42, 0.42]) { p.push(box(0.09, 0.98, 0.09, C.woodL, sx, 0.14, 0.76)); p.push(box(0.14, 0.05, 0.14, 0xa08a6e, sx, 0.09, 0.76)); }
+        p.push(box(0.96, 0.08, 0.1, C.wood, 0, 1.08, 0.76));
       }
       // matkas by the side wall
       p.push(P(new THREE.OctahedronGeometry(0.13, 0), C.brick, 0.7, 0.13, -0.3, 0, 0.4, 0, 1, 0.9, 1));
       p.push(P(new THREE.OctahedronGeometry(0.09, 0), C.brickD, 0.72, 0.09, -0.52, 0, 0.2, 0, 1, 0.9, 1));
-      ud.lights.push({ x: 0, y: 0.5, z: 0.95, r: 3.2, c: 0xffb060 });
+      ud.lights.push({ x: 0, y: 0.6, z: 0.95, r: 3.2, c: 0xffb060 });
       break;
     }
     case 'field': {
@@ -1283,9 +1283,9 @@ Models.loot = function (kind) {
   else if (kind === 'stone') { p.push(sph(0.16, 0xa8a49c, 0, 0.12, 0, 1, 0.75, 1)); p.push(sph(0.11, 0xc4beb2, 0.16, 0.09, 0.1)); glow = 0xe0e0ff; }
   else if (kind === 'food') { p.push(sph(0.18, 0xd6b47a, 0, 0.16, 0, 1, 1.1, 0.9)); p.push(sph(0.06, 0x9c7b45, 0, 0.36, 0)); p.push(cone(0.03, 0.1, 6, 0xf2d16b, 0.04, 0.38, 0)); glow = 0xfff0a0; }
   else if (kind === 'chest') {
-    p.push(box(0.6, 0.32, 0.4, 0x8a5a2e, 0, 0, 0)); p.push(P(CylG(0.2, 0.2, 0.6, 14, 1, false, 0, Math.PI), 0x9a6a3a, 0, 0.32, 0, 0, 0, Math.PI / 2));
-    for (const sx of [-0.22, 0.22]) p.push(box(0.05, 0.34, 0.42, 0xf2c230, sx, 0, 0));
-    p.push(box(0.1, 0.12, 0.04, 0xf2c230, 0, 0.22, 0.21));
+    p.push(box(0.44, 0.24, 0.3, 0x8a5a2e, 0, 0, 0)); p.push(P(CylG(0.15, 0.15, 0.44, 14, 1, false, 0, Math.PI), 0x9a6a3a, 0, 0.24, 0, 0, 0, Math.PI / 2));
+    for (const sx of [-0.16, 0.16]) p.push(box(0.04, 0.26, 0.32, 0xf2c230, sx, 0, 0));
+    p.push(box(0.08, 0.09, 0.03, 0xf2c230, 0, 0.16, 0.16));
     glow = 0xffd84a;
   }
   if (p.length) g.add(meshOf(p));
@@ -1295,7 +1295,7 @@ Models.loot = function (kind) {
     g.add(gem);
     glow = 0x6ff6ff;
   }
-  const halo = glowMesh(new THREE.CircleGeometry(kind === 'chest' ? 0.6 : 0.35, 20), glow, 0.35);
+  const halo = glowMesh(new THREE.CircleGeometry(kind === 'chest' ? 0.45 : 0.3, 20), glow, 0.35);
   halo.rotation.x = -Math.PI / 2; halo.position.y = 0.03;
   g.add(halo);
   g.userData = { halo, glow };
@@ -1468,26 +1468,26 @@ function buildTreeGeo(type, variant, lod) {
     if (!lod) for (let i = 0; i < 3; i++) p.push(P(new THREE.OctahedronGeometry(0.1, 0), 0x6e4a22, x + Math.cos(i * 2.1) * 0.13, y - 0.13, Math.sin(i * 2.1) * 0.13)); // coconuts
   } else if (type === 'banyan') {
     // a squat, buttressed trunk, two big limbs, a wide flat-topped canopy, aerial roots hanging to the ground
-    trunkParts(p, 0.36, 0.26, 1.5, bark, lod ? 5 : 7, 0);
-    for (const s of [-1, 1]) p.push(P(new THREE.CylinderGeometry(0.09, 0.15, 1.25, 5), bark, s * 0.46, 1.62, s * 0.12, 0, 0, -s * 0.9));
+    trunkParts(p, 0.36, 0.26, 1.75, bark, lod ? 5 : 7, 0);
+    for (const s of [-1, 1]) p.push(P(new THREE.CylinderGeometry(0.09, 0.15, 1.25, 5), bark, s * 0.46, 1.87, s * 0.12, 0, 0, -s * 0.9));
     const blobs = [];
-    for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + rnd() * 0.5, d = 0.75 + rnd() * 0.45; blobs.push([Math.cos(a) * d * 1.25, 2.1 + rnd() * 0.35, Math.sin(a) * d, 0.75 + rnd() * 0.3]); }
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + rnd() * 0.5, d = 0.75 + rnd() * 0.45; blobs.push([Math.cos(a) * d * 1.25, 2.35 + rnd() * 0.35, Math.sin(a) * d, 0.75 + rnd() * 0.3]); }
     for (const b of blobs) p.push(leaf(b[3], V(rnd() > 0.5 ? 0x3f9a3e : 0x4aa646), b[0], b[1], b[2], 1.15, 0.72, 1.05, rnd() * 3));
-    p.push(leaf(0.95, V(0x5cb24c), 0, 2.7, 0, 1.3, 0.62, 1.15));
-    if (!lod) for (let i = 0; i < 7; i++) { const a = rnd() * Math.PI * 2, d = 0.6 + rnd() * 0.9; p.push(P(new THREE.CylinderGeometry(0.025, 0.04, 1.85, 4), 0x9a7856, Math.cos(a) * d * 1.2, 0.92, Math.sin(a) * d)); } // hanging roots
+    p.push(leaf(0.95, V(0x5cb24c), 0, 2.95, 0, 1.3, 0.62, 1.15));
+    if (!lod) for (let i = 0; i < 7; i++) { const a = rnd() * Math.PI * 2, d = 0.6 + rnd() * 0.9; p.push(P(new THREE.CylinderGeometry(0.025, 0.04, 2.1, 4), 0x9a7856, Math.cos(a) * d * 1.2, 1.05, Math.sin(a) * d)); } // hanging roots
   } else if (type === 'mango') {
-    // a sturdy trunk and a round, dense, dark crown hung with golden fruit
-    trunkParts(p, 0.17, 0.12, 1.15, bark, lod ? 4 : 6, (rnd() - 0.5) * 0.15);
-    p.push(leaf(0.8, V(0x3b8f38), 0, 1.65, 0, 1.15, 0.92, 1.1, rnd() * 3));
-    p.push(leaf(0.56, V(0x4aa040), (rnd() - 0.5) * 0.5, 2.2, (rnd() - 0.5) * 0.4, 1, 1, 1, rnd() * 3));
-    p.push(leaf(0.5, V(0x3b8f38), 0.55, 1.5, 0.3)); p.push(leaf(0.48, V(0x449a3c), -0.5, 1.55, -0.28));
-    if (!lod) for (let i = 0; i < 7; i++) { const a = rnd() * Math.PI * 2, y = 1.3 + rnd() * 0.7; p.push(P(new THREE.OctahedronGeometry(0.075, 0), 0xffb21f, Math.cos(a) * 0.86, y, Math.sin(a) * 0.86, 0, 0, 0, 1, 1.3, 1)); }
+    // a sturdy trunk and a round, dense, dark crown hung with golden fruit (the crown clears a hut's roof)
+    trunkParts(p, 0.17, 0.12, 1.45, bark, lod ? 4 : 6, (rnd() - 0.5) * 0.15);
+    p.push(leaf(0.8, V(0x3b8f38), 0, 1.95, 0, 1.15, 0.92, 1.1, rnd() * 3));
+    p.push(leaf(0.56, V(0x4aa040), (rnd() - 0.5) * 0.5, 2.5, (rnd() - 0.5) * 0.4, 1, 1, 1, rnd() * 3));
+    p.push(leaf(0.5, V(0x3b8f38), 0.55, 1.8, 0.3)); p.push(leaf(0.48, V(0x449a3c), -0.5, 1.85, -0.28));
+    if (!lod) for (let i = 0; i < 7; i++) { const a = rnd() * Math.PI * 2, y = 1.6 + rnd() * 0.7; p.push(P(new THREE.OctahedronGeometry(0.075, 0), 0xffb21f, Math.cos(a) * 0.86, y, Math.sin(a) * 0.86, 0, 0, 0, 1, 1.3, 1)); }
   } else { // neem: slender forked trunk, light airy yellow-green clusters in tiers
-    const top = trunkParts(p, 0.12, 0.075, 1.4, 0x7d5e40, lod ? 4 : 5, (rnd() - 0.5) * 0.25);
-    for (const s of [-1, 1]) p.push(P(new THREE.CylinderGeometry(0.035, 0.055, 0.7, 4), 0x7d5e40, top.x + s * 0.2, 1.55, 0, 0, 0, -s * 0.6));
+    const top = trunkParts(p, 0.12, 0.075, 1.65, 0x7d5e40, lod ? 4 : 5, (rnd() - 0.5) * 0.25);
+    for (const s of [-1, 1]) p.push(P(new THREE.CylinderGeometry(0.035, 0.055, 0.7, 4), 0x7d5e40, top.x + s * 0.2, 1.8, 0, 0, 0, -s * 0.6));
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + rnd(), d = i < 5 ? 0.35 + rnd() * 0.25 : 0;
-      p.push(leaf(0.36 + rnd() * 0.16, V(rnd() > 0.5 ? 0x86c24a : 0x74b23e), top.x + Math.cos(a) * d, i < 5 ? 1.55 + rnd() * 0.35 : 2.25, Math.sin(a) * d, 1, 0.85, 1, rnd() * 3));
+      p.push(leaf(0.36 + rnd() * 0.16, V(rnd() > 0.5 ? 0x86c24a : 0x74b23e), top.x + Math.cos(a) * d, i < 5 ? 1.8 + rnd() * 0.35 : 2.5, Math.sin(a) * d, 1, 0.85, 1, rnd() * 3));
     }
   }
   return merge(p);
@@ -1518,10 +1518,10 @@ Models.pondGeo = function (r, seed) {
     for (let k = 0; k < 5; k++) p.push(P(new THREE.ConeGeometry(0.02, 0.45 + rnd() * 0.35, 3), k % 2 ? 0x6f9a3a : 0x86ae46, x + (rnd() - 0.5) * 0.22, 0.25, z + (rnd() - 0.5) * 0.22, (rnd() - 0.5) * 0.3, 0, (rnd() - 0.5) * 0.3));
     if (rnd() < 0.6) p.push(P(new THREE.CylinderGeometry(0.025, 0.025, 0.12, 4), 0x6e4a2a, x, 0.62, z)); // a bulrush head
   }
-  for (let i = 0; i < 9; i++) { // lily pads, a few with a lotus
-    const a = rnd() * Math.PI * 2, d = rnd() * (r - 0.5), x = Math.cos(a) * d, z = Math.sin(a) * d;
-    p.push(P(new THREE.CylinderGeometry(0.16 + rnd() * 0.06, 0.16, 0.015, 6, 1, false, 0.4, Math.PI * 1.8), 0x4f9a3a, x, 0.02, z, 0, rnd() * 6, 0));
-    if (i % 3 === 0) { p.push(P(new THREE.ConeGeometry(0.06, 0.08, 5), 0xf2a6c0, x, 0.07, z)); p.push(P(new THREE.OctahedronGeometry(0.025, 0), 0xffe08a, x, 0.1, z)); }
+  for (let i = 0; i < 12; i++) { // lily pads (a hand's breadth across), a few with a lotus
+    const a = rnd() * Math.PI * 2, d = rnd() * (r - 0.4), x = Math.cos(a) * d, z = Math.sin(a) * d;
+    p.push(P(new THREE.CylinderGeometry(0.1 + rnd() * 0.05, 0.1, 0.015, 6, 1, false, 0.4, Math.PI * 1.8), 0x4f9a3a, x, 0.02, z, 0, rnd() * 6, 0));
+    if (i % 3 === 0) { p.push(P(new THREE.ConeGeometry(0.045, 0.06, 5), 0xf2a6c0, x, 0.06, z)); p.push(P(new THREE.OctahedronGeometry(0.018, 0), 0xffe08a, x, 0.085, z)); }
   }
   for (let i = 0; i < 10; i++) { // stones on the bank
     const a = rnd() * Math.PI * 2, d = r + 0.15 + rnd() * 0.3;
@@ -1778,6 +1778,12 @@ function addPiles(g, spots) {
  */
 function hexOf(c) { return typeof c === 'number' ? c : parseInt(String(c).slice(1), 16); }
 const V_HIP = 0.47;
+/*
+ * One scale for the whole village. A grid cell is 1 unit and the buildings fill their cells, so a villager
+ * is drawn a little under a unit tall (hut walls and doors are cut for that), the demons are sized up from
+ * the villager (ENEMIES.scale), the cattle sized down, and the trees rise above the hut roofs.
+ */
+const V_SCALE = 0.8, TREE_SCALE = 1.15, COW_SCALE = 0.85, PEACOCK_SCALE = 0.7;
 /*
  * Each job's costume, all on the one jointed rig. legs: 'dhoti' (draped to the knee, bare calves,
  * chappals), 'lungi' (checked, to the knee), 'pants' (fitted, with wrapped shins and boots). sleeve:

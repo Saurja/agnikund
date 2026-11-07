@@ -763,7 +763,10 @@ const R3 = {
       if (THREE.SSAOPass && THREE.SimplexNoise) {
         const ao = new THREE.SSAOPass(this.scene, this.camera, w, h);
         ao.beautyRenderTarget.stencilBuffer = true; // (the see-through silhouettes use the stencil to draw as one shape)
-        ao.kernelRadius = 0.55; ao.minDistance = 0.0004; ao.maxDistance = 0.02;
+        // the reach of the occlusion (fractions of the camera's depth range): short, so a tree canopy
+        // shades its own trunk and a hut its own plinth, but no longer casts a dark halo on the ground
+        // several units below it
+        ao.kernelRadius = 0.55; ao.minDistance = 0.0004; ao.maxDistance = 0.004;
         // 16 samples instead of 32: the same soft contact shadows for half the work
         ao.kernelSize = 16; ao.generateSampleKernel();
         ao.ssaoMaterial.defines.KERNEL_SIZE = 16; ao.ssaoMaterial.uniforms.kernel.value = ao.kernel; ao.ssaoMaterial.needsUpdate = true;
@@ -819,8 +822,8 @@ const R3 = {
       this.treeWas.set(t.id, t.stump);
       const y = heightAt(t.x, t.z);
       const tilt = t.shake > 0 ? Math.sin(t.shake * 40) * 0.05 : 0;
-      this.setInst(sl.m, sl.i, t.x, y, t.z, t.rot, t.stump ? 0 : t.scale, tilt);
-      this.setInst(sl.sm, sl.si, t.x, y, t.z, t.rot, t.stump ? t.scale : 0, 0);
+      this.setInst(sl.m, sl.i, t.x, y, t.z, t.rot, t.stump ? 0 : t.scale * TREE_SCALE, tilt);
+      this.setInst(sl.sm, sl.si, t.x, y, t.z, t.rot, t.stump ? t.scale * TREE_SCALE : 0, 0);
     }
     if (all) for (const [id, sl] of this.treeSlot) if (!live.has(id)) { this.setInst(sl.m, sl.i, 0, -50, 0, 0, 0, 0); this.setInst(sl.sm, sl.si, 0, -50, 0, 0, 0, 0); }
     this.forestDirty = true; // (the trees in view get packed again, see cullChunks)
@@ -832,7 +835,7 @@ const R3 = {
     piv.position.set(t.x, heightAt(t.x, t.z), t.z);
     piv.rotation.y = Math.random() * Math.PI * 2;
     const m = new THREE.Mesh(sl.m.geometry, MAT.std);
-    m.scale.setScalar(t.scale);
+    m.scale.setScalar(t.scale * TREE_SCALE);
     m.rotation.y = t.rot;
     m.castShadow = true;
     piv.add(m);
@@ -1028,7 +1031,8 @@ const R3 = {
     // rangoli around the fire
     const tex = new THREE.CanvasTexture(this.rangoliCanvas(this.quality === 'low' ? 512 : 1024));
     tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy ? this.renderer.capabilities.getMaxAnisotropy() : 1);
-    const rang = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshPhongMaterial({ map: tex, transparent: true, depthWrite: false, shininess: 0, specular: 0x000000 }));
+    // (tinted a shade of cream: powder on earth, so the rangoli sits in the village's palette instead of glowing like a print)
+    const rang = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshPhongMaterial({ map: tex, color: 0xe8ddd0, transparent: true, depthWrite: false, shininess: 0, specular: 0x000000 }));
     rang.rotation.x = -Math.PI / 2; rang.position.y = 0.025; rang.receiveShadow = true;
     g.add(rang);
     // diyas around the kund
@@ -1853,7 +1857,7 @@ const R3 = {
     for (const v of s.villagers) {
       if (!v.sleep) continue;
       if (v.inside && v.home) { const b = getB(s, v.home); if (b) { const k = 'b' + b.id; const e = src.get(k); if (e) e.n++; else src.set(k, { x: b.x, y: BUILDINGS[b.type].ht + 0.15, z: b.z, n: 1, gap: 1.0 }); } }
-      else if (v.anim === 'sleep') src.set('v' + v.id, { x: v.x, y: 0.55, z: v.z, n: 1, gap: 1.5 });
+      else if (v.anim === 'sleep') src.set('v' + v.id, { x: v.x, y: 0.45, z: v.z, n: 1, gap: 1.5 });
     }
     for (const [k, e] of src) {
       let t = this.zSrc.get(k);
@@ -1893,7 +1897,7 @@ const R3 = {
       const bob = Math.sin(time * 3 + l.id) * 0.06;
       o.position.set(l.x, heightAt(l.x, l.z) + 0.05 + Math.max(0, bob), l.z);
       o.rotation.y = time * 1.2 + l.id;
-      o.userData.halo.material.opacity = 0.25 + 0.15 * Math.sin(time * 4 + l.id);
+      o.userData.halo.material.opacity = 0.16 + 0.1 * Math.sin(time * 4 + l.id); // a soft pool of light, not a disc
       if (l.kind === 'gem' || l.kind === 'chest') this.lightSrc.push({ x: l.x, y: 0.6, z: l.z, r: 2.2, c: o.userData.glow, k: 0.8 });
     }
     for (const [id, o] of this.lootObjs) if (!seen.has(id)) { this.retire(o, 'loot'); this.lootObjs.delete(id); }
@@ -1963,14 +1967,14 @@ const R3 = {
         ud.torch.visible = on;
         if (on) {
           animateFlames(ud.torch.userData.flame, time + v.id, 1);
-          this.lightSrc.push({ x: v.x, y: 1.2, z: v.z, r: 4.2, c: 0xffa040, k: 1.1 });
+          this.lightSrc.push({ x: v.x, y: 1.0, z: v.z, r: 4.2, c: 0xffa040, k: 1.1 });
         }
       }
       if (ud.toolFlame) ud.toolFlame.scale.setScalar(0.8 + 0.3 * Math.sin(time * 12 + v.id));
-      if ((v.power || 0) >= 100) this.lightSrc.push({ x: v.x, y: 0.9, z: v.z, r: 2.2, c: 0xffd27a, k: 0.55 + 0.25 * Math.sin(time * 6 + v.id) }); // Shakti ready: a golden glow
+      if ((v.power || 0) >= 100) this.lightSrc.push({ x: v.x, y: 0.75, z: v.z, r: 2.2, c: 0xffd27a, k: 0.55 + 0.25 * Math.sin(time * 6 + v.id) }); // Shakti ready: a golden glow
       o.born = Math.min(1, (o.born == null ? 0 : o.born) + dt * 3);
       const hs = (v.hurtT > 0 ? 1 + Math.sin(v.hurtT * 40) * 0.08 : 1) * (0.6 + 0.4 * easeOutBack(o.born));
-      obj.scale.set(hs, hs, hs);
+      obj.scale.setScalar(hs * V_SCALE);
     }
     for (const [id, o] of this.vObjs) if (!seen.has(id)) { this.retire(o.obj, 'villager'); this.vObjs.delete(id); }
   },
@@ -2074,6 +2078,7 @@ const R3 = {
     while (this.aObjs.length < s.ambient.length) {
       const a = s.ambient[this.aObjs.length];
       const o = a.kind === 'cow' ? Models.cow() : Models.peacock();
+      o.scale.setScalar(a.kind === 'cow' ? COW_SCALE : PEACOCK_SCALE); // (the models are cut at villager scale; the beasts stand lower than the people)
       this.scene.add(o);
       this.aObjs.push(o);
     }
@@ -2511,8 +2516,8 @@ const R3 = {
     const sel = UI.selected;
     for (const v of s.villagers) {
       if (v.inside) continue;
-      if (v.hp < v.maxHp - 0.5 || (sel && sel.ref === v)) bar(v.x, 1.55, v.z, v.hp / v.maxHp, 'hp', 26);
-      if ((v.power || 0) > 1 && isDefender(v)) bar(v.x, 1.47, v.z, v.power / 100, v.power >= 100 ? 'pow full' : 'pow', 26); // Shakti
+      if (v.hp < v.maxHp - 0.5 || (sel && sel.ref === v)) bar(v.x, 1.3, v.z, v.hp / v.maxHp, 'hp', 26);
+      if ((v.power || 0) > 1 && isDefender(v)) bar(v.x, 1.22, v.z, v.power / 100, v.power >= 100 ? 'pow full' : 'pow', 26); // Shakti
     }
     for (const e of s.enemies) if (e.hp < e.maxHp) { const d = ENEMIES[e.type]; bar(e.x, e.y + d.h + 0.35, e.z, e.hp / e.maxHp, 'ehp', d.boss ? 70 : 28); }
     for (const b of s.buildings) {
@@ -2568,7 +2573,7 @@ const R3 = {
       let html = '', key = 'c';
       if (v.carryAmt > 0 && v.carry) { const cap = carryCap(s, v.carry); html += chip(v.carry, v.carryAmt, cap); key += v.carry + v.carryAmt + '/' + cap; }
       if (v.gold > 0) { html += chip('gold', v.gold, Infinity); key += 'g' + v.gold; }
-      label(v.x, 1.72, v.z, key, html, 'carry', picked ? 1 : carryA);
+      label(v.x, 1.45, v.z, key, html, 'carry', picked ? 1 : carryA);
     }
     const hide = (els, from) => { for (let i = from; i < els.length; i++) if (els[i]._d !== 0) { els[i].style.display = 'none'; els[i]._d = 0; } };
     hide(this.stockEls, si); hide(this.floatEls, fi); hide(this.barEls, bi);

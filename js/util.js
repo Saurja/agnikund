@@ -5,7 +5,7 @@
    ========================================================= */
 
 /** Shown on the title screen and in the pause menu. Bump with each release. */
-const GAME_VERSION = '1.14.0';
+const GAME_VERSION = '1.15.0';
 const VIEW_H = 270;           // internal (pixel-art) resolution height
 const GROUND_Y = 208;       // screen-space y of the ground surface
 const WORLD_MIN = -2600, WORLD_MAX = 2600;
@@ -279,7 +279,7 @@ const weaponBase = (w) => (WEAPONS[w] && WEAPONS[w].base) || 'warrior';
 /* ---------------- Buildings ---------------- */
 // fw × fd = footprint in grid cells, ht = model height (for bars and selection)
 const BUILDINGS = {
-  hut:      { name: 'Jhopdi',        en: 'Hut',           fw: 2, fd: 2, ht: 2.2, cost: { wood: 20 },                      hp: 120, lvl: 1, time: 12, housing: 3, merge: 'bighouse', desc: 'Mud cottage with a steep thatched roof. Houses 3 villagers. Build two side by side and they join into a Bada Ghar; two Bada Ghar side by side become a Haveli.' },
+  hut:      { name: 'Jhopdi',        en: 'Hut',           fw: 2, fd: 2, ht: 2.4, cost: { wood: 20 },                      hp: 120, lvl: 1, time: 12, housing: 3, merge: 'bighouse', desc: 'Mud cottage with a steep thatched roof. Houses 3 villagers. Build two side by side and they join into a Bada Ghar; two Bada Ghar side by side become a Haveli.' },
   woodcamp: { name: 'Lakdi Taal',    en: 'Woodcutter Camp', fw: 2, fd: 2, ht: 1.9, cost: { wood: 15 },                    hp: 150, lvl: 1, time: 8, slots: { wood: 3 }, drop: ['wood'], desc: 'Timber yard for 3 Lakadhara. They chop the trees nearest the camp and drop wood here.' },
   minecamp: { name: 'Khadaan',       en: 'Mining Camp',   fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                      hp: 150, lvl: 1, time: 10, slots: { stone: 3 }, drop: ['stone', 'gold', 'ore'], desc: 'Stone camp for 3 Khanik. Build it next to boulders; miners drop stone here. From Agnikund level 2 it can dig iron ore from the rusty boulders instead.' },
   buildyard: { name: 'Mistri Adda',  en: "Builders' Yard", fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                     hp: 150, lvl: 1, time: 10, slots: { build: 3 }, desc: 'Workshop for 3 more Mistri (builders).' },
@@ -418,29 +418,31 @@ const FIRE_LEVELS = [
 
 /* ---------------- Demons ---------------- */
 const ENEMIES = {
-  // r = body radius, h = body height, scale = model scale (all in grid units)
-  bhoot:    { name: 'Bhoot',    en: 'Ghost',         hp: 16,  dmg: 2.5, speed: 1.6,  atkCd: 1.0, gold: 1,  r: 0.35, h: 1.2, scale: 1,    reach: 0.75, cost: 1, ghost: true },
-  rakshasa: { name: 'Rakshasa', en: 'Demon',         hp: 46,  dmg: 7,   speed: 1.2,  atkCd: 1.3, gold: 2,  r: 0.4,  h: 1.6, scale: 1,    reach: 0.85, cost: 2 },
-  vetala:   { name: 'Vetala',   en: 'Flying Spirit', hp: 22,  dmg: 4,   speed: 2.2,  atkCd: 1.0, gold: 2,  r: 0.4,  h: 0.6, scale: 1,    reach: 0.8,  cost: 2, fly: true },
-  danav:    { name: 'Danav',    en: 'Giant Demon',   hp: 150, dmg: 15,  speed: 0.85, atkCd: 1.8, gold: 6,  r: 0.6,  h: 2.3, scale: 1.45, reach: 1.15, cost: 6 },
-  boss:     { name: 'Mahasura', en: 'Demon King',    hp: 500, dmg: 28,  speed: 0.7,  atkCd: 2.2, gold: 40, r: 0.95, h: 3.8, scale: 2.4,  reach: 1.7,  cost: 0, boss: true, summons: true },
+  // r = body radius, h = body height as drawn, scale = model scale (all in grid units). Sizes climb with
+  // the threat: a villager stands about 0.9 tall, the lesser ghosts and beasts a little over that, the
+  // rakshasa half as tall again, the danav twice and more, the great asuras four times.
+  bhoot:    { name: 'Bhoot',    en: 'Ghost',         hp: 16,  dmg: 2.5, speed: 1.6,  atkCd: 1.0, gold: 1,  r: 0.35, h: 1.0,  scale: 0.66, reach: 0.75, cost: 1, ghost: true },
+  rakshasa: { name: 'Rakshasa', en: 'Demon',         hp: 46,  dmg: 7,   speed: 1.2,  atkCd: 1.3, gold: 2,  r: 0.4,  h: 1.35, scale: 0.87, reach: 0.85, cost: 2 },
+  vetala:   { name: 'Vetala',   en: 'Flying Spirit', hp: 22,  dmg: 4,   speed: 2.2,  atkCd: 1.0, gold: 2,  r: 0.4,  h: 0.6,  scale: 0.85, reach: 0.8,  cost: 2, fly: true },
+  danav:    { name: 'Danav',    en: 'Giant Demon',   hp: 150, dmg: 15,  speed: 0.85, atkCd: 1.8, gold: 6,  r: 0.6,  h: 2.2,  scale: 1.23, reach: 1.15, cost: 6 },
+  boss:     { name: 'Mahasura', en: 'Demon King',    hp: 500, dmg: 28,  speed: 0.7,  atkCd: 2.2, gold: 40, r: 0.95, h: 3.8,  scale: 2.0,  reach: 1.7,  cost: 0, boss: true, summons: true },
   // more great asuras: each comes on its own night, foretold by an omen two days before (see BOSS_NIGHTS)
-  bakasura:  { name: 'Bakasura',  en: 'Devourer of Grain',  hp: 560, dmg: 22, speed: 0.72, atkCd: 2.0, gold: 40, r: 0.95, h: 3.5, scale: 2.25, reach: 1.6, cost: 0, boss: true, devour: true },
-  raktabija: { name: 'Raktabija', en: 'Blood-seed Asura',   hp: 520, dmg: 19, speed: 0.9,  atkCd: 1.6, gold: 40, r: 0.8,  h: 3.1, scale: 2.0,  reach: 1.4, cost: 0, boss: true, bloodseed: true },
-  kalanemi:  { name: 'Kalanemi',  en: 'Lord of Illusions',  hp: 470, dmg: 17, speed: 1.0,  atkCd: 1.5, gold: 40, r: 0.72, h: 3.0, scale: 1.9,  reach: 1.3, cost: 0, boss: true, illusion: true, glow: 0xb48cff },
-  rakta:     { name: 'Rakta Bindu', en: 'Blood-born Demon', hp: 20, dmg: 4,  speed: 1.7,  atkCd: 1.0, gold: 0,  r: 0.3,  h: 1.0, scale: 0.62, reach: 0.7, cost: 0, minion: true },
+  bakasura:  { name: 'Bakasura',  en: 'Devourer of Grain',  hp: 560, dmg: 22, speed: 0.72, atkCd: 2.0, gold: 40, r: 0.95, h: 3.3,  scale: 2.0,  reach: 1.6, cost: 0, boss: true, devour: true },
+  raktabija: { name: 'Raktabija', en: 'Blood-seed Asura',   hp: 520, dmg: 19, speed: 0.9,  atkCd: 1.6, gold: 40, r: 0.8,  h: 3.1,  scale: 1.83, reach: 1.4, cost: 0, boss: true, bloodseed: true },
+  kalanemi:  { name: 'Kalanemi',  en: 'Lord of Illusions',  hp: 470, dmg: 17, speed: 1.0,  atkCd: 1.5, gold: 40, r: 0.72, h: 3.2,  scale: 1.55, reach: 1.3, cost: 0, boss: true, illusion: true, glow: 0xb48cff },
+  rakta:     { name: 'Rakta Bindu', en: 'Blood-born Demon', hp: 20, dmg: 4,  speed: 1.7,  atkCd: 1.0, gold: 0,  r: 0.3,  h: 0.65, scale: 0.46, reach: 0.7, cost: 0, minion: true },
   // ghosts of Bengali folklore (bhoot-pret of Bangla tales)
-  aleya:       { name: 'Aleya',       en: 'Marsh Light',     hp: 9,   dmg: 1.5, speed: 2.6,  atkCd: 0.9, gold: 1, r: 0.25, h: 0.5, scale: 1,    reach: 0.6,  cost: 2, fly: true, swarm: 3, glow: 0xd4ff7a, bengali: true, from: 2 },
-  shakchunni:  { name: 'Shakchunni',  en: 'Bride Ghost',     hp: 30,  dmg: 4,   speed: 1.9,  atkCd: 1.0, gold: 2, r: 0.35, h: 1.4, scale: 1,    reach: 0.8,  cost: 2, ghost: true, float: true, drain: 0.6, glow: 0xffd6d6, bengali: true, from: 3 },
-  mechho:      { name: 'Mechho Bhoot', en: 'Fish-thief Ghost', hp: 26, dmg: 2,  speed: 1.75, atkCd: 1.2, gold: 2, r: 0.35, h: 1.2, scale: 1,    reach: 0.75, cost: 2, ghost: true, thief: 'food', steal: 10, bengali: true, from: 3 },
-  nishi:       { name: 'Nishi Dak',   en: 'Deadly Night Caller', hp: 40, dmg: 3, speed: 1.05, atkCd: 1.2, gold: 4, r: 0.35, h: 1.7, scale: 1,    reach: 0.8,  cost: 3, ghost: true, float: true, caller: true, glow: 0x9fb4ff, bengali: true, from: 5 },
-  mamdo:       { name: 'Mamdo Bhoot', en: 'Neck-twister',    hp: 72,  dmg: 6,   speed: 1.4,  atkCd: 1.4, gold: 4, r: 0.38, h: 1.95, scale: 1.05, reach: 0.9, cost: 4, bengali: true, from: 6 },
-  skondhokata: { name: 'Skondhokata', en: 'Headless Ghost',  hp: 110, dmg: 11,  speed: 0.95, atkCd: 1.5, gold: 4, r: 0.5,  h: 1.9, scale: 1.25, reach: 1.0,  cost: 4, wrecker: 2.2, bengali: true, from: 7 },
+  aleya:       { name: 'Aleya',       en: 'Marsh Light',     hp: 9,   dmg: 1.5, speed: 2.6,  atkCd: 0.9, gold: 1, r: 0.25, h: 0.45, scale: 0.85, reach: 0.6,  cost: 2, fly: true, swarm: 3, glow: 0xd4ff7a, bengali: true, from: 2 },
+  shakchunni:  { name: 'Shakchunni',  en: 'Bride Ghost',     hp: 30,  dmg: 4,   speed: 1.9,  atkCd: 1.0, gold: 2, r: 0.35, h: 1.25, scale: 0.82, reach: 0.8,  cost: 2, ghost: true, float: true, drain: 0.6, glow: 0xffd6d6, bengali: true, from: 3 },
+  mechho:      { name: 'Mechho Bhoot', en: 'Fish-thief Ghost', hp: 26, dmg: 2,  speed: 1.75, atkCd: 1.2, gold: 2, r: 0.35, h: 1.0,  scale: 0.9,  reach: 0.75, cost: 2, ghost: true, thief: 'food', steal: 10, bengali: true, from: 3 },
+  nishi:       { name: 'Nishi Dak',   en: 'Deadly Night Caller', hp: 40, dmg: 3, speed: 1.05, atkCd: 1.2, gold: 4, r: 0.35, h: 1.5,  scale: 0.85, reach: 0.8,  cost: 3, ghost: true, float: true, caller: true, glow: 0x9fb4ff, bengali: true, from: 5 },
+  mamdo:       { name: 'Mamdo Bhoot', en: 'Neck-twister',    hp: 72,  dmg: 6,   speed: 1.4,  atkCd: 1.4, gold: 4, r: 0.38, h: 1.45, scale: 0.95, reach: 0.9, cost: 4, bengali: true, from: 6 },
+  skondhokata: { name: 'Skondhokata', en: 'Headless Ghost',  hp: 110, dmg: 11,  speed: 0.95, atkCd: 1.5, gold: 4, r: 0.5,  h: 1.85, scale: 1.06, reach: 1.0,  cost: 4, wrecker: 2.2, bengali: true, from: 7 },
   // spirit beasts: animals that died wronged in the forest and came back hungry
-  shiyal: { name: 'Shiyal Pret', en: 'Ghost Jackals',  hp: 14, dmg: 2.5, speed: 2.5,  atkCd: 0.8, gold: 1, r: 0.28, h: 0.6,  scale: 1,    reach: 0.6,  cost: 3, ghost: true, swarm: 3, glow: 0x9fe8c8, animal: true, from: 3 },
-  naag:   { name: 'Naag Pret',   en: 'Ghost Cobra',    hp: 38, dmg: 4,   speed: 1.5,  atkCd: 1.1, gold: 2, r: 0.32, h: 1.0,  scale: 1.1,  reach: 0.9,  cost: 3, ghost: true, venom: { dps: 2.5, dur: 5 }, glow: 0x8affa0, animal: true, from: 4 },
-  bagh:   { name: 'Bagh Bhoot',  en: 'Ghost Tiger',    hp: 70, dmg: 9,   speed: 1.9,  atkCd: 1.1, gold: 4, r: 0.45, h: 0.95, scale: 1.15, reach: 0.95, cost: 4, ghost: true, glow: 0xffb060, animal: true, from: 5 },
-  shuar:  { name: 'Kanta Shuar', en: 'Thorn Boar',     hp: 95, dmg: 8,   speed: 1.15, atkCd: 1.4, gold: 4, r: 0.5,  h: 1.0,  scale: 1.2,  reach: 0.95, cost: 4, thorns: 0.3, wrecker: 1.8, animal: true, from: 6 },
+  shiyal: { name: 'Shiyal Pret', en: 'Ghost Jackals',  hp: 14, dmg: 2.5, speed: 2.5,  atkCd: 0.8, gold: 1, r: 0.28, h: 0.5,  scale: 0.8,  reach: 0.6,  cost: 3, ghost: true, swarm: 3, glow: 0x9fe8c8, animal: true, from: 3 },
+  naag:   { name: 'Naag Pret',   en: 'Ghost Cobra',    hp: 38, dmg: 4,   speed: 1.5,  atkCd: 1.1, gold: 2, r: 0.32, h: 1.0,  scale: 1.0,  reach: 0.9,  cost: 3, ghost: true, venom: { dps: 2.5, dur: 5 }, glow: 0x8affa0, animal: true, from: 4 },
+  bagh:   { name: 'Bagh Bhoot',  en: 'Ghost Tiger',    hp: 70, dmg: 9,   speed: 1.9,  atkCd: 1.1, gold: 4, r: 0.45, h: 0.9,  scale: 1.05, reach: 0.95, cost: 4, ghost: true, glow: 0xffb060, animal: true, from: 5 },
+  shuar:  { name: 'Kanta Shuar', en: 'Thorn Boar',     hp: 95, dmg: 8,   speed: 1.15, atkCd: 1.4, gold: 4, r: 0.5,  h: 1.05, scale: 1.02, reach: 0.95, cost: 4, thorns: 0.3, wrecker: 1.8, animal: true, from: 6 },
 };
 DEMON_POWERS.bagh = { key: 'charge', name: 'Jhapat', en: 'Pounce', cd: 7, wind: 0.45, range: 6, dur: 0.4, speed: 11, dmg: 16, wreck: 0, desc: 'crouches low and pounces on someone from afar' };
 DEMON_POWERS.shuar = { key: 'charge', name: 'Danta Dhakka', en: 'Tusk Charge', cd: 10, wind: 0.8, range: 8, dur: 0.7, speed: 8, dmg: 18, wreck: 80, desc: 'lowers its tusks and rushes, through walls if it must' };
