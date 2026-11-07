@@ -37,7 +37,7 @@ function newState(seed) {
     day: 1, t: 6, time: 0,
     res: { wood: 65, stone: 20, food: 45, gold: 10, clay: 0, ore: 0, brick: 0, charcoal: 0, iron: 0 },
     fire: { level: 1, hp: FIRE_LEVELS[1].hp, fuel: FIRE_LEVELS[1].fuelMax, dim: false, intensity: 1, hurtT: 0, feedT: 0 },
-    villagers: [], buildings: [], trees: [], rocks: [], enemies: [],
+    villagers: [], buildings: [], trees: [], rocks: [], enemies: [], ponds: [],
     projectiles: [], particles: [], floaters: [], fx: [], shake: 0, hitStop: 0, ambient: [], loot: [], armory: {},
     spawnQueue: [], fronts: [], upgrades: {}, nextId: 1,
     stats: { killed: 0, lost: 0, built: 0, maxPop: 0, bosses: 0 },
@@ -99,10 +99,38 @@ function genWorld(s) {
       s.trees.push(t);
     }
   });
+  genPonds(s, rnd);
   s.ambient.push({ kind: 'cow', x: -4, z: 5, rot: 0, t: 0, tx: -4, tz: 5, sit: false });
   s.ambient.push({ kind: 'cow', x: 5, z: -4, rot: 2, t: 3, tx: 5, tz: -4, sit: false });
   s.ambient.push({ kind: 'peacock', x: 15, z: 8, rot: 0, t: 0, tx: 15, tz: 8, fan: 0 });
 }
+/*
+ * Ponds lie out in the meadows: nobody walks or builds on the water (see navGrid and canPlace), and a
+ * Machhli Ghat on the bank lets Machhuare fish there. The first lies just past the first clearing, within
+ * reach once the Agnikund reaches level 2; the rest further out (claim them with towers or a bigger fire).
+ */
+function genPonds(s, rnd) {
+  s.ponds = s.ponds || [];
+  for (let tries = 0; tries < 500 && s.ponds.length < 4; tries++) {
+    const first = s.ponds.length === 0;
+    const a = rnd() * Math.PI * 2, d = first ? 12.2 + rnd() * 2.8 : 17 + rnd() * 26;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d, r = first ? 2.4 + rnd() * 0.5 : 2.2 + rnd() * 1.3;
+    if (d + r > islandR(x, z) - 9) continue;
+    if (s.grove && distXZ(x, z, s.grove.x, s.grove.z) < s.grove.r + r + 3) continue;
+    if (s.ponds.some((p) => distXZ(x, z, p.x, p.z) < p.r + r + 6)) continue;
+    let clash = false;
+    for (let i = Math.floor(x - r - 1); i <= Math.ceil(x + r + 1) && !clash; i++) for (let j = Math.floor(z - r - 1); j <= Math.ceil(z + r + 1); j++) { const k = cellIdx(i, j); if (k >= 0 && s.grid[k]) { clash = true; break; } }
+    if (clash) continue;
+    s.ponds.push({ id: s.nextId++, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100, r: Math.round(r * 100) / 100, rot: Math.round(rnd() * 314) / 100 });
+    s.trees = s.trees.filter((t) => distXZ(t.x, t.z, x, z) > r + 1.1);
+    s.rocks = s.rocks.filter((k) => distXZ(k.x, k.z, x, z) > r + 1.4);
+  }
+  s.treeVer++; s.rockVer++;
+}
+/** The pond whose water covers this point (m widens it), if any. */
+function pondAt(s, x, z, m) { for (const p of s.ponds || []) if (distXZ(x, z, p.x, p.z) < p.r + (m || 0)) return p; return null; }
+/** The pond with the nearest bank, if its bank is within reach. */
+function pondNear(s, x, z, reach) { let best = null, bd = reach == null ? Infinity : reach; for (const p of s.ponds || []) { const d = distXZ(x, z, p.x, p.z) - p.r; if (d < bd) { bd = d; best = p; } } return best; }
 function makeTree(s, x, z, type, variant, rnd) {
   const info = TREE_INFO[type];
   const r = rnd || Math.random;
@@ -328,9 +356,10 @@ function setJob(s, v, job) {
   if (v.carryAmt > 0) deliver(s, v);
   const old = JOBS[v.job];
   if (old && old.weapon && v.job !== job) s.armory[old.weapon] = (s.armory[old.weapon] || 0) + 1; // the weapon goes back to the armoury
+  if (v.armour && slotKey(job) !== 'army') takeOffArmour(s, v); // only soldiers wear armour
   v.job = job; v.target = null; v.workplace = null; v.workT = 0; v.foe = null; v.atk = null; v.patient = null; v.healTo = null; v.abilT = 3;
   const st = SOLDIERS[job];
-  const newMax = st ? st.hp + (job === 'warrior' && s.upgrades.talwar ? 30 : 0) : 40;
+  const newMax = (st ? st.hp + (job === 'warrior' && s.upgrades.talwar ? 30 : 0) : 40) + (armourOf(v) ? armourOf(v).hp : 0);
   v.hp = Math.min(newMax, v.hp + Math.max(0, newMax - v.maxHp));
   v.maxHp = newMax;
 }
@@ -399,6 +428,64 @@ function craftWeapon(s, key, n) {
   tip('equip', `${W.name} ready! In Kaam, press + next to ${JOBS[W.job].name} to hand it to a ${JOBS[weaponBase(key)].name}.`);
   return made;
 }
+/* ---------- armour ---------- */
+const armourOf = (v) => (v && v.armour && ARMOURS[v.armour]) || null;
+const armourTier = (v) => (armourOf(v) ? armourOf(v).tier : 0);
+/** Can the Lohar forge this armour now (a finished Lohar of high enough level)? */
+function armourReady(s, key) { const A = ARMOURS[key]; return s.buildings.some((x) => x.type === 'forge' && x.done && bLevel(x) >= A.lvl); }
+function craftArmour(s, key, n) {
+  const A = ARMOURS[key];
+  const b = s.buildings.find((x) => x.type === 'forge' && x.done && bLevel(x) >= A.lvl);
+  if (!b) return 0;
+  if (!canAfford(s, A.cost)) { notAfford(s, A.cost, `forge a ${A.name}`); return 0; }
+  let made = 0;
+  for (let i = 0; i < (n || 1) && canAfford(s, A.cost); i++) { spend(s, A.cost, b.x, b.z); made++; }
+  s.armory[key] = (s.armory[key] || 0) + made;
+  floater(s, b.x, 2.6, b.z, '+' + made + ' ' + A.name, '#e2e7ec', 'tag');
+  sfx('anvil', b.x, b.z);
+  emit(s, b.x, 1.2, b.z, 12, { spread: 0.5, vx: 1.2, vyMin: 1, vyMax: 3, life: 0.6, colors: ['#ffcc33', '#ff8a1f', '#e2e7ec'], g: -0.5, add: true });
+  tip('armour', `${A.name} ready! Press “Fit armour” at the Lohar to dress your soldiers in the best armour you have, or fit it to one soldier from their panel.`);
+  return made;
+}
+/** Put a piece from the armoury on a soldier (their old piece goes back). */
+function wearArmour(s, v, key, quiet) {
+  const A = ARMOURS[key];
+  if (!A || !isDefender(v) || !(s.armory[key] > 0) || v.armour === key) return false;
+  if (v.armour) takeOffArmour(s, v);
+  s.armory[key]--;
+  v.armour = key; v.maxHp += A.hp; v.hp += A.hp;
+  if (!quiet) {
+    toast(`${v.name} puts on the ${A.name} (${A.en}).`, 'good');
+    sfx('anvil', v.x, v.z);
+    emit(s, v.x, 1.0, v.z, 10, { spread: 0.3, vx: 1, vyMin: 1, vyMax: 2.5, life: 0.8, colors: ['#e2e7ec', '#fff3b0', '#b9c3cf'], g: -0.5, add: true });
+  }
+  return true;
+}
+function takeOffArmour(s, v) {
+  const A = armourOf(v);
+  if (!A) { v.armour = null; return; }
+  s.armory[v.armour] = (s.armory[v.armour] || 0) + 1;
+  v.armour = null;
+  v.maxHp = Math.max(1, v.maxHp - A.hp); v.hp = Math.min(v.hp, v.maxHp);
+}
+/** The Lohar dresses the soldiers: the best pieces go to whoever wears the least, until the armoury runs out. */
+function fitArmour(s, quiet) {
+  let n = 0;
+  for (let t = ARMOUR_ORDER.length - 1; t >= 0; t--) {
+    const key = ARMOUR_ORDER[t], tier = ARMOURS[key].tier;
+    while (s.armory[key] > 0) {
+      let best = null;
+      for (const v of s.villagers) if (isDefender(v) && armourTier(v) < tier && (!best || armourTier(v) < armourTier(best))) best = v;
+      if (!best) break;
+      wearArmour(s, best, key, true); n++;
+    }
+  }
+  if (!quiet) {
+    if (n) { toast(`The Lohar fitted ${n} soldier${n > 1 ? 's' : ''} with armour.`, 'good'); sfx('anvil'); }
+    else toast(s.villagers.some(isDefender) ? 'Every soldier already wears the best armour in the armoury. Forge more at the Lohar.' : 'No soldiers to fit: train Sainik or Dhanurdhar first.', 'info');
+  }
+  return n;
+}
 /** Upgrade the Lohar or Aara Mill to its next level (a Mistri does the work). */
 function startUpgrade(s, b) {
   const def = BUILDINGS[b.type];
@@ -455,13 +542,24 @@ function canPlace(s, type, cx, cz, ignoreCost) {
       if (r > R - 0.3 && !(tower && r <= R + TOWER_EDGE) && !posts.some((o) => distXZ(px, pz, o.x, o.z) <= o.r - 0.3)) return { ok: false, why: tower ? 'Too far out: a tower can stand at most a step past the village edge' : 'Outside village land: upgrade the Agnikund, or put up a tower (Burj) to claim land round it' };
       if (r < fireClear) return { ok: false, why: 'Too close to the Agnikund' };
       if (s.grove && distXZ(px, pz, s.grove.x, s.grove.z) < s.grove.r + 0.9) return { ok: false, why: 'This is the Pavitra Van — the sacred grove cannot be built on' };
+      if (pondAt(s, px, pz, 0.35)) return { ok: false, why: 'That is a pond: nothing can be built on the water' };
       const k = cellIdx(cx + i, cz + j);
       if (k < 0) return { ok: false, why: 'Out of bounds' };
       if (s.grid[k]) { const o = s.bById.get(s.grid[k]); if (!(o && BUILDINGS[o.type].road && !def.road)) return { ok: false, why: o && BUILDINGS[o.type].road ? 'There is already a road here' : 'Something is already built here' }; } // a building may go over a road
     }
   }
+  if (def.pond) { // a fishing hut has to stand on the bank
+    const c = bCenterOf(type, cx, cz), pd = pondNear(s, c.x, c.z);
+    if (!pd || distXZ(c.x, c.z, pd.x, pd.z) - pd.r > Math.max(def.fw, def.fd) / 2 + 0.9) return { ok: false, why: 'A Machhli Ghat must stand on the bank of a pond' };
+  }
   if (!ignoreCost && !canAfford(s, def.cost)) return { ok: false, why: 'Not enough resources', afford: false };
   return { ok: true };
+}
+/** Which way a building faces when placed: the Agnikund, except a fishing hut, which looks out over its pond. */
+function autoRotFor(s, type, c) {
+  const def = BUILDINGS[type];
+  if (def.pond) { const pd = pondNear(s, c.x, c.z); if (pd) return Math.round(Math.atan2(pd.x - c.x, pd.z - c.z) / (Math.PI / 2)) * (Math.PI / 2); }
+  return def.fw !== def.fd ? (c.z > 0 ? Math.PI : 0) : faceFireRot(c.x, c.z); // long buildings only turn 180°
 }
 function clearFootprint(s, type, cx, cz) {
   const def = BUILDINGS[type];
@@ -487,7 +585,7 @@ function placeBuilding(s, type, cx, cz, rot, quiet) {
   const c = bCenterOf(type, cx, cz);
   spend(s, def.cost, c.x, c.z);
   clearFootprint(s, type, cx, cz);
-  const autoRot = def.fw !== def.fd ? (c.z > 0 ? Math.PI : 0) : faceFireRot(c.x, c.z); // long buildings only turn 180°
+  const autoRot = autoRotFor(s, type, c);
   const b = { id: s.nextId++, type, cx, cz, x: c.x, z: c.z, rot: rot != null ? rot : autoRot, done: false, progress: 0, hp: 1, maxHp: def.hp, grow: 0, cd: 0, offerT: 0 };
   if (def.instant) { b.done = true; b.progress = def.time; b.hp = def.hp; } // a road is laid at once
   addBuilding(s, b);
@@ -658,6 +756,12 @@ function navGrid(s) {
     if (NAV_WALK(b.type)) continue;
     const d = BUILDINGS[b.type];
     for (let i = 0; i < d.fw; i++) for (let j = 0; j < d.fd; j++) { const k = cellIdx(b.cx + i, b.cz + j); if (k >= 0) g[k] = b.id; }
+  }
+  for (const p of s.ponds || []) { // the water: everyone walks round it (marked -1, no building)
+    for (let i = Math.floor(p.x - p.r); i <= Math.floor(p.x + p.r); i++) for (let j = Math.floor(p.z - p.r); j <= Math.floor(p.z + p.r); j++) {
+      const k = cellIdx(i, j);
+      if (k >= 0 && !g[k] && distXZ(i + 0.5, j + 0.5, p.x, p.z) < p.r - 0.15) g[k] = -1;
+    }
   }
   s._nav = { ver: s.buildVer, g, rd, roads };
   return s._nav;
@@ -1031,11 +1135,12 @@ function farmAI(s, v, dt, spd) {
   if (!f) { v.task = 'Needs a Khet (field)'; return idleAI(s, v, dt, spd); }
   const i = workplaceIndex(s, v), cap = bSlots(f, 'farm');
   const sw = Math.sin(s.time * 0.25 + i * 2) * 0.6;
-  const p = localToWorld(f, (i - (cap - 1) / 2) * (cap > 2 ? 1.1 : 1.2), sw);
+  const wide = cap > 6; // the Vishal Khet: two rows of farmers
+  const p = wide ? localToWorld(f, ((i % 6) - 2.5) * 0.95, (Math.floor(i / 6) % 2 ? 1.3 : -1.3) + sw * 0.5) : localToWorld(f, (i - (cap - 1) / 2) * (cap > 2 ? 1.1 : 1.2), sw);
   if (!moveTo(v, p.x, p.z, spd, dt) && distXZ(v.x, v.z, p.x, p.z) > 0.6) { v.task = 'Walking to the Khet'; return; }
   v.anim = 'work';
   faceTo(v, f.x, f.z);
-  let rate = workRate(s) * (f.type === 'field' ? 1 : 1.15);
+  let rate = workRate(s) * (f.type === 'field' ? 1 : f.type === 'vishalkhet' ? 1.3 : 1.15);
   if (s.buildings.some((b) => b.type === 'well' && b.done && dist(b, f) < 9 + (bLevel(b) - 1) * 2)) rate *= 1.5;
   rate *= 1 + 0.2 * (bLevel(f) - 1); // upgraded fields grow faster
   if (s.weather === 'rain') rate *= 1.5;
@@ -1047,6 +1152,35 @@ function farmAI(s, v, dt, spd) {
     v.carry = 'food';
     sfx('harvest', v.x, v.z);
     emit(s, f.x, 0.5, f.z, 14, { spread: 1.2, vx: 0.8, vyMin: 1, vyMax: 3, life: 0.9, colors: ['#f2d16b', '#e0b84a', '#a6cc4a'], g: 8 });
+  }
+}
+/**
+ * Machhuara: sit on the bank of the pond by the Machhli Ghat and fish; every few seconds a catch goes in
+ * the basket, and a full basket is carried to the hut (or any store that takes food).
+ */
+function fishAI(s, v, dt, spd) {
+  const cap = carryCap(s, 'food');
+  if (v.carryAmt >= cap || (v.carryAmt > 0 && v.carry !== 'food')) return deliverAI(s, v, dt, spd);
+  const hut = validWorkplace(s, v);
+  const pd = hut && pondNear(s, hut.x, hut.z, 3.5);
+  if (!hut || !pd) { if (v.carryAmt > 0) return deliverAI(s, v, dt, spd); v.task = hut ? 'The Machhli Ghat has no pond' : 'Needs a Machhli Ghat (fishing hut)'; return idleAI(s, v, dt, spd); }
+  const i = workplaceIndex(s, v);
+  // each fisher has their own spot on the bank, either side of the hut's jetty
+  const a = Math.atan2(hut.z - pd.z, hut.x - pd.x) + (i % 2 ? 0.55 : -0.55) * (1 + Math.floor(i / 2) * 0.8);
+  const p = { x: pd.x + Math.cos(a) * (pd.r + 0.78), z: pd.z + Math.sin(a) * (pd.r + 0.78) };
+  if (!moveTo(v, p.x, p.z, spd, dt) && distXZ(v.x, v.z, p.x, p.z) > 0.45) { v.task = 'Walking to the pond'; return; }
+  faceTo(v, pd.x, pd.z);
+  v.anim = 'work';
+  v.workT += dt * workRate(s) * workBonus(hut) * (s.weather === 'rain' ? 1.2 : 1);
+  v.task = `Fishing (${v.carryAmt} / ${cap} in the basket)`;
+  if (v.workT >= 4.2) {
+    v.workT = 0;
+    v.carryAmt = Math.min(cap, v.carryAmt + 1); v.carry = 'food';
+    const fx0 = v.x + Math.sin(v.rot) * 1.2, fz0 = v.z + Math.cos(v.rot) * 1.2;
+    emit(s, fx0, 0.05, fz0, 8, { spread: 0.15, vx: 0.9, vyMin: 1, vyMax: 2.4, life: 0.6, colors: ['#bfeaf2', '#ffffff', '#7fd0e0'], g: 9 }); // the splash as the fish comes out
+    floater(s, v.x, 1.7, v.z, '+1 fish', '#9fe0ff', 'tag');
+    sfx('harvest', v.x, v.z);
+    tip('fish', 'The Machhuare bring fish home as food. A full basket goes to the Machhli Ghat; Kisan and fishers together keep everyone fed.');
   }
 }
 /* ---------- materials: clay, bricks, charcoal, iron ---------- */
@@ -1202,7 +1336,11 @@ function completeBuilding(s, b) {
   b.popT = 0.5;
   tryMerge(s, b);
 }
-/** Two finished huts (or fields) touching side by side join into one bigger building. */
+/**
+ * Two finished huts (or fields) touching side by side join into one bigger building; and two of those,
+ * laid side by side along their long sides, join again into a square one: four huts make a Haveli, four
+ * fields a Vishal Khet.
+ */
 function tryMerge(s, b) {
   const def = BUILDINGS[b.type];
   if (!def.merge || !b.done) return false;
@@ -1212,7 +1350,11 @@ function tryMerge(s, b) {
     if (n.cz === b.cz && Math.abs(n.cx - b.cx) === def.fw) horiz = true;
     else if (n.cx === b.cx && Math.abs(n.cz - b.cz) === def.fd) horiz = false;
     if (horiz === null) continue;
-    const type = def.merge + (horiz ? '' : 'V');
+    let type = def.merge + (horiz ? '' : 'V');
+    if (def.joined) { // already a pair: only a pair beside it along the long side makes a square
+      if ((def.fw > def.fd) === horiz) continue; // end to end would be a long strip
+      type = def.merge;
+    }
     const nd = BUILDINGS[type];
     const cx = Math.min(n.cx, b.cx), cz = Math.min(n.cz, b.cz);
     const ids = [b.id, n.id];
@@ -1224,7 +1366,7 @@ function tryMerge(s, b) {
     removeBuilding(s, b);
     removeBuilding(s, n);
     const c = bCenterOf(type, cx, cz);
-    const rot = horiz ? (c.z > 0 ? Math.PI : 0) : (c.x > 0 ? -Math.PI / 2 : Math.PI / 2);
+    const rot = nd.square ? faceFireRot(c.x, c.z) : horiz ? (c.z > 0 ? Math.PI : 0) : (c.x > 0 ? -Math.PI / 2 : Math.PI / 2);
     const nb = { id: s.nextId++, type, cx, cz, x: c.x, z: c.z, rot, done: true, progress: nd.time, hp: nd.hp, maxHp: nd.hp, grow, cd: 0, offerT: 0, popT: 0.7 };
     addBuilding(s, nb);
     for (const old of [b, n]) for (const r in old.stock || {}) putStock(s, nb, r, old.stock[r]); // the grain sacks move over too
@@ -1234,6 +1376,8 @@ function tryMerge(s, b) {
     toast(`Two ${def.name}s joined into a ${nd.name} (${nd.en})! ${isHome(type) ? `It homes ${nd.housing} villagers.` : `Room for ${nd.slots.farm} Kisan.`}`, 'good', 6);
     sfx('upgrade', nb.x, nb.z);
     if (wasSel) UI.select({ kind: 'building', ref: nb });
+    if (!nd.square && nd.merge) tip('merge4_' + nd.merge, `Join two more ${def.name}s right beside this ${nd.name}, along its long side, and the two ${nd.name}s become a ${BUILDINGS[nd.merge].name} (${BUILDINGS[nd.merge].en}).`);
+    tryMerge(s, nb); // and the new pair may join the one beside it
     return true;
   }
   return false;
@@ -1634,11 +1778,12 @@ const WEAPON_FX = { warrior: 0xf4f6ff, brute: 0xffb347, spear: 0x9fd0ff, archer:
  * damage a second, reach or range, how many demons one blow can hit, crit and block chance, armour.
  */
 const TARGETS = { warrior: 'one demon; every third blow is a heavy thrust', brute: 'the target and everything around it', spear: 'one demon from far off, double damage to giants and asuras', khadgi: 'every demon in a wide arc in front', urumi: 'up to 3 demons in a wide arc', archer: 'one demon', longbow: 'a line of up to 3 demons (the arrow goes through)', chakri: 'up to 4 demons, the ring bouncing between them' };
-function soldierStats(s, job) {
+function soldierStats(s, job, v) {
   const st = SOLDIERS[job] || SOLDIERS.warrior, M = SOLDIER_MOVES[job] || {}, ranged = RANGED_JOBS.has(job);
   const fest = s.festival ? 1.5 : 1, crit = M.crit || 0;
+  const A = armourOf(v), armour = A ? A.def : 0, aHp = A ? A.hp : 0; // a particular soldier's armour (none for the job in general)
   let dmg, rate, reach;
-  if (job === 'medic') return { heal: st.heal * workRate(s), hp: st.hp + 0, block: 0, armour: s.upgrades.kavach ? 0.35 : 0, crit: 0, special: M.ability, ult: ULTIMATES[job] };
+  if (job === 'medic') return { heal: st.heal * workRate(s), hp: st.hp + aHp, block: 0, armour, armourName: A && A.name, crit: 0, special: M.ability, ult: ULTIMATES[job] };
   if (ranged) {
     dmg = (st.dmg || 6) * (job === 'chakri' ? (s.upgrades.talwar ? 1.3 : 1) : s.upgrades.bow ? 1.5 : 1) * fest;
     rate = 1 / (st.cd || 1.35);
@@ -1650,8 +1795,8 @@ function soldierStats(s, job) {
     if (job === 'warrior') dmg *= (2 + 1.5) / 3; // the heavy thrust that ends the combo
     reach = st.reach;
   }
-  const hp = (st.hp || 40) + (job === 'warrior' && s.upgrades.talwar ? 30 : 0);
-  return { dmg, rate, dps: dmg * rate * (1 + crit * 0.8), reach, ranged, crit, block: M.block || 0, armour: s.upgrades.kavach ? 0.35 : 0, hp, speed: st.speed || 1, targets: TARGETS[job] || '', special: M.ability, ult: ULTIMATES[job] };
+  const hp = (st.hp || 40) + (job === 'warrior' && s.upgrades.talwar ? 30 : 0) + aHp;
+  return { dmg, rate, dps: dmg * rate * (1 + crit * 0.8), reach, ranged, crit, block: M.block || 0, armour, armourName: A && A.name, hp, speed: st.speed || 1, targets: TARGETS[job] || '', special: M.ability, ult: ULTIMATES[job] };
 }
 function soldierDmg(s, v) {
   const st = SOLDIERS[v.job] || SOLDIERS.warrior;
@@ -2138,6 +2283,11 @@ function updateVillager(s, v, dt, phase) {
   if (v.combatT > 0) v.combatT -= dt;
   if (v.blockT > 0) v.blockT -= dt;
   if (v.abilT > 0) v.abilT -= dt;
+  if (v.poisonT > 0) { // the Naag Pret's venom
+    v.poisonT -= dt; v.hp -= (v.poisonDps || 2) * dt; v.combatT = Math.max(v.combatT || 0, 1);
+    if (Math.random() < dt * 3) emit(s, v.x, 1.0, v.z, 1, { spread: 0.15, vx: 0.2, vyMin: 0.4, vyMax: 0.9, life: 0.7, colors: ['#8aff8a', '#4fd06a'], g: -0.5, add: true });
+    if (v.hp <= 0) { killVillager(s, v); return; }
+  }
   naturalHealing(s, v, dt);
   if (v.power > 0 && phase === 'day' && !(v.combatT > 0) && !s.enemies.length) v.power = Math.max(0, v.power - 3 * dt); // Shakti fades in peacetime
   v.task = '';
@@ -2188,6 +2338,7 @@ function updateVillager(s, v, dt, phase) {
     case 'wood': return gatherAI(s, v, dt, spd, 'wood');
     case 'stone': return gatherAI(s, v, dt, spd, 'stone');
     case 'farm': return farmAI(s, v, dt, spd);
+    case 'fish': return fishAI(s, v, dt, spd);
     case 'clay': return clayAI(s, v, dt, spd);
     case 'kiln': case 'smelt': return processAI(s, v, dt, spd);
     case 'build': builderAI(s, v, dt, spd); return;
@@ -2197,7 +2348,8 @@ function updateVillager(s, v, dt, phase) {
   }
 }
 function damageVillager(s, v, dmg, from) {
-  if (isDefender(v) && s.upgrades.kavach) dmg *= 0.65;
+  const A = isDefender(v) && armourOf(v);
+  if (A) dmg *= 1 - A.def; // armour takes its share off every blow
   v.combatT = 4; // no natural recovery until a few seconds after the last blow
   const M = SOLDIER_MOVES[v.job];
   if (M && M.block && !v.atk && Math.random() < M.block) { // a Sainik catches the blow on the dhaal
@@ -2341,6 +2493,7 @@ function killVillager(s, v) {
   if (i < 0) return;
   s.villagers.splice(i, 1);
   s.stats.lost++;
+  if (v.armour) s.armory[v.armour] = (s.armory[v.armour] || 0) + 1; // the fallen soldier's armour is carried back to the armoury
   emit(s, v.x, 0.6, v.z, 14, { spread: 0.2, vx: 0.4, vyMin: 1.2, vyMax: 3, life: 1.8, colors: ['#e8eef8', '#c8d4ea', '#fff3b0'], g: -0.3, add: true });
   toast(`${v.name} the ${JOBS[v.job].en} has fallen. Their spirit returns to the stars.`, 'danger');
   sfx('death', v.x, v.z);
@@ -2432,9 +2585,16 @@ function updateProjectiles(s, dt) {
 }
 
 /* ---------- demons ---------- */
+const WAVE_CAP = 150;
+/** How much tougher every demon is on a night when the host has hit WAVE_CAP (1 until then). */
+function nightMight(d) { const raw = 3 + (d - 1) * 2.7 + Math.pow(Math.max(0, d - 6), 2) * 0.45; return raw > WAVE_CAP ? Math.sqrt(raw / WAVE_CAP) : 1; }
 function makeWave(s) {
   const d = s.day;
   let budget = 3 + (d - 1) * 2.7 + Math.pow(Math.max(0, d - 6), 2) * 0.45;
+  // endless nights: past a point the host stops growing in number (the village could not hold the crowd)
+  // and grows in strength instead (see spawnEnemy and enemyStrike); a red moon brings a third more
+  budget = Math.min(budget, WAVE_CAP);
+  if (moonOf(d) === 'red') budget *= 1.3;
   const types = [];
   while (budget >= 1) {
     const opts = [['bhoot', Math.max(1, 6 - d * 0.5)]];
@@ -2445,6 +2605,11 @@ function makeWave(s) {
     for (const k of ['aleya', 'shakchunni', 'mechho', 'nishi', 'mamdo', 'skondhokata']) {
       const E = ENEMIES[k];
       if (d >= E.from && budget >= E.cost) opts.push([k, k === 'skondhokata' ? 0.7 + d * 0.08 : k === 'nishi' ? 0.9 : k === 'mamdo' ? 0.8 + d * 0.06 : 1.6 + d * 0.12]);
+    }
+    // and the spirit beasts: a jackal pack, the ghost cobra, the ghost tiger, the thorn boar
+    for (const [k, w] of [['shiyal', 1.3 + d * 0.1], ['naag', 1.0 + d * 0.08], ['bagh', 0.8 + d * 0.08], ['shuar', 0.7 + d * 0.07]]) {
+      const E = ENEMIES[k];
+      if (d >= E.from && budget >= E.cost) opts.push([k, w]);
     }
     const tot = opts.reduce((a, o) => a + o[1], 0);
     let r = Math.random() * tot, ch = opts[0][0];
@@ -2473,8 +2638,8 @@ function makeWave(s) {
 }
 function spawnEnemy(s, type, a) {
   const def = ENEMIES[type];
-  const scale = 1 + (s.day - 1) * 0.07;
-  const hp = Math.round(def.boss ? def.hp * 0.84 + s.day * 70 : def.minion ? def.hp : def.hp * scale);
+  const scale = (1 + (s.day - 1) * 0.07) * nightMight(s.day);
+  const hp = Math.round(def.boss ? (def.hp * 0.84 + s.day * 70) * (moonOf(s.day) === 'red' && type === 'boss' ? 1.25 : 1) : def.minion ? def.hp : def.hp * scale);
   const aa = a + rand(-0.3, 0.3);
   const dd = dirXZ(aa);
   let r = territory(s) + 12 + rand(0, 4);
@@ -2489,7 +2654,7 @@ function spawnEnemy(s, type, a) {
   s.enemies.push(e);
   const ES = ENEMY_SFX[type];
   if (ES && Math.random() < 0.6) sfx(ES.voice, e.x, e.z);
-  if (def.bengali && !s.demo) tip('ghost_' + type, `${def.name} — ${def.en}! ${ENEMY_LORE[type]}`); // introduce each new ghost once
+  if ((def.bengali || def.animal) && !s.demo) tip('ghost_' + type, `${def.name} — ${def.en}! ${ENEMY_LORE[type]}`); // introduce each new ghost once
   return e;
 }
 /**
@@ -2503,6 +2668,11 @@ function hitEnemy(s, e, dmg, src, o) {
   if (e.fake) { vanishFake(s, e, true); return dmg; } // one of Kalanemi's copies: smoke at the first blow
   const dealt = dmg * (e.vuln || 1);
   e.hp -= dealt;
+  // the Kanta Shuar's spines: whoever strikes it up close is pricked in turn
+  if (def.thorns && src && src.job && isDefender(src) && !RANGED_JOBS.has(src.job) && dealt >= 2 && distXZ(src.x, src.z, e.x, e.z) < def.r + 2.2 && s.villagers.includes(src)) {
+    damageVillager(s, src, dealt * def.thorns, e);
+    if (Math.random() < 0.3) floater(s, src.x, 1.95, src.z, 'Thorns!', '#e8a0a8', 'tag');
+  }
   if (def.bloodseed && dealt >= 4 && e.hp > 0) { // Raktabija: where his blood falls, a demon rises (unless fire scorches it)
     if (o.fire || e.fireT > 0) { if (Math.random() < 0.15) floater(s, e.x, def.h + 0.4, e.z, 'Blood scorched!', '#ffb347', 'tag'); }
     else {
@@ -2643,10 +2813,10 @@ function usePower(s, e, w) {
       shake(s, 0.12); sfx('boom', e.x, e.z);
       break;
     }
-    case 'charge': { // Mahish Dhakka: he lowers his horns and charges
-      const d = distXZ(w.tx, w.tz, e.x, e.z) || 1;
-      e.charge = { t: 0, dur: 0.75, dx: (w.tx - e.x) / d, dz: (w.tz - e.z) / d, hit: new Set() };
-      sfx('roar', e.x, e.z); sfx('stomp', e.x, e.z);
+    case 'charge': { // Mahish Dhakka: he lowers his horns and charges (the tiger's pounce and the boar's rush are shorter charges)
+      const d = distXZ(w.tx, w.tz, e.x, e.z) || 1, P = DEMON_POWERS[e.type] || {};
+      e.charge = { t: 0, dur: P.dur || 0.75, sp: P.speed || 9, dmg: P.dmg || 26, wreck: P.wreck == null ? 60 : P.wreck, dx: (w.tx - e.x) / d, dz: (w.tz - e.z) / d, hit: new Set() };
+      sfx('roar', e.x, e.z); if (def.boss || P.wreck) sfx('stomp', e.x, e.z);
       break;
     }
     case 'bleed': { // Rakta Varsha: Raktabija tears his own skin and his blood rains round him
@@ -2778,18 +2948,22 @@ function devourAI(s, e, def, spd, dt) {
 function tickCharge(s, e, dt) {
   const c = e.charge, def = ENEMIES[e.type];
   c.t += dt;
-  const sp = 9;
+  const sp = c.sp || 9;
+  if (pondAt(s, e.x + c.dx * 0.6, e.z + c.dz * 0.6)) { e.charge = null; return; } // pulls up at the water's edge
   e.x += c.dx * sp * dt; e.z += c.dz * sp * dt; e.vx = c.dx * sp; e.vz = c.dz * sp; e.rot = Math.atan2(c.dx, c.dz);
   if (Math.random() < 0.6) emit(s, e.x, 0.1, e.z, 2, { spread: 0.6, vx: 1.2, vyMin: 0.3, vyMax: 1.2, life: 0.6, colors: ['#8a7a66', '#6b5a48'], g: 4 });
   for (const v of s.villagers) {
     if (v.inside || c.hit.has(v.id) || distXZ(v.x, v.z, e.x, e.z) > def.r + 0.6) continue;
     c.hit.add(v.id);
-    damageVillager(s, v, 26, e);
+    damageVillager(s, v, c.dmg || 26, e);
     v.x += c.dx * 0.9; v.z += c.dz * 0.9; v.stunT = 0.9;
-    shake(s, 0.2);
+    shake(s, def.boss ? 0.2 : 0.1);
   }
   const b = buildingAtPoint(s, e.x + c.dx * 0.8, e.z + c.dz * 0.8);
-  if (b && b.hp > 0 && !isGround(b.type)) { b.hp -= 60; sfx('crash', b.x, b.z); shake(s, 0.35); if (b.hp <= 0) destroyBuilding(s, b); e.charge = null; e.stunT = 0.6; return; }
+  if (b && b.hp > 0 && !isGround(b.type)) {
+    if (!c.wreck) { e.charge = null; return; } // a pounce stops short of a wall
+    b.hp -= c.wreck; sfx('crash', b.x, b.z); shake(s, 0.35); if (b.hp <= 0) destroyBuilding(s, b); e.charge = null; e.stunT = 0.6; return;
+  }
   if (c.t >= c.dur) e.charge = null;
 }
 /* Mamdo Bhoot: seizes someone and twists their neck, unless they are freed in time. */
@@ -2834,7 +3008,7 @@ function enemyStrike(s, e, target, kind) {
   if (kind === 'villager' && (!target || !s.villagers.includes(target) || target.inside || distXZ(target.x, target.z, e.x, e.z) > def.reach + def.r * 0.5 + 0.7)) { sfx('whoosh', e.x, e.z); return; } // it dodged
   const ES = ENEMY_SFX[e.type];
   if (ES && ES.attack) sfx(ES.attack, e.x, e.z);
-  const dmg = def.dmg * (s.festival ? 0.75 : 1) * (e.frenzyT > 0 ? 1.3 : 1); // a roar's rage hits harder
+  const dmg = def.dmg * (s.festival ? 0.75 : 1) * (e.frenzyT > 0 ? 1.3 : 1) * (def.boss ? 1 : 1 + Math.max(0, s.day - 20) * 0.025 * nightMight(s.day)); // a roar's rage hits harder; endless nights hit harder too
   if (e.frenzyT > 0) e.atkCd *= 0.75;
   if (def.boss || e.type === 'danav') { // giants pound the ground: everyone close by is caught in it
     e.pounds = (e.pounds || 0) + 1;
@@ -2849,6 +3023,10 @@ function enemyStrike(s, e, target, kind) {
   }
   if (kind === 'villager') {
     damageVillager(s, target, dmg, e);
+    if (def.venom && s.villagers.includes(target)) { // the cobra's bite: poison works on for a few seconds
+      if (!(target.poisonT > 0)) floater(s, target.x, 1.9, target.z, 'Poisoned!', '#8aff8a', 'tag');
+      target.poisonT = def.venom.dur; target.poisonDps = def.venom.dps;
+    }
     if (def.drain) { // Shakchunni feeds on the blow
       e.hp = Math.min(e.maxHp, e.hp + dmg * def.drain * 2);
       emit(s, e.x, 1.0, e.z, 4, { spread: 0.2, vx: 0.4, vyMin: 0.5, vyMax: 1.5, life: 0.7, colors: ['#ff6b6b', '#ffd6d6'], g: -1, add: true });
@@ -3077,8 +3255,8 @@ function updateEnemy(s, e, dt) {
     const blockedDir = (ux, uz) => navBlock(nav, e.x + ux * look, e.z + uz * look, 0, e.tb ? e.tb.id : 0);
     let ux = dx / dl, uz = dz / dl;
     const hit = blockedDir(ux, uz);
-    if (hit && !def.ghost) { const hb = s.bById.get(hit); if (hb && hb.hp > 0) return enemyAttack(s, e, hb, 'building'); }
-    if (hit && def.ghost) {
+    if (hit > 0 && !def.ghost) { const hb = s.bById.get(hit); if (hb && hb.hp > 0) return enemyAttack(s, e, hb, 'building'); }
+    if (hit && (def.ghost || hit < 0)) { // (and everyone goes round a pond: -1 in the nav grid)
       const sg = e.slide || (e.slide = Math.random() < 0.5 ? 1 : -1);
       let ok = false;
       for (const turn of [0.6, 1.1, 1.57, 2.1]) for (const k of [sg, -sg]) {
@@ -3193,8 +3371,12 @@ function onNewDay(s) {
   }
   s.weather = s.day >= 3 && s.weather !== 'rain' && Math.random() < 0.22 ? 'rain' : 'clear';
   if (s.weather === 'rain') toast('Monsoon rains! The fields flourish, but the Agnikund burns wood faster.', 'info', 7);
-  s.festival = s.day % 7 === 0;
-  if (s.festival) toast('Deepavali! Diyas light every home. Tonight demons are weaker and villagers stronger.', 'good', 8);
+  const moon = moonOf(s.day), lastMoon = moonOf(s.day - 1);
+  if (lastMoon === 'red') { s.stats.redMoons = (s.stats.redMoons || 0) + 1; toast(`The Rakt Chandra has set and the Agnikund still burns! ${s.stats.redMoons > 1 ? `That is ${s.stats.redMoons} red moons your village has outlasted.` : 'Bards will sing of this night.'} The next rises on day ${nextMoonNight(s.day, 'red')}.`, 'good', 9); }
+  s.festival = moon === 'new'; // Deepavali falls on Amavasya, the new moon
+  if (s.festival) toast('Amavasya: Deepavali! Diyas light every home. Tonight demons are weaker and villagers stronger.', 'good', 8);
+  if (moon === 'full') toast('Purnima: the moon rises full tonight, and a great asura comes with it. Watch the land for his omens.', 'danger', 9);
+  if (moon === 'red') toast('Rakt Chandra: tonight the moon rises red as blood, and Mahasura, the Demon King, leads a great host. Ready every fighter.', 'danger', 10);
   if (s.day > 2 && Math.random() < 0.14) {
     s.res.gold += 8;
     s.fire.hp = Math.min(fireLv(s).hp, s.fire.hp + 60);
@@ -3202,10 +3384,7 @@ function onNewDay(s) {
   }
   s.fronts = [];
   arrivals(s);
-  if (s.day - 1 >= WIN_DAY && !s.won) {
-    s.won = true;
-    if (typeof UI !== 'undefined') UI.victory();
-  }
+  s.stats.bestDay = Math.max(s.stats.bestDay || 0, s.day); // endless: there is no last night, only how long the flame lasts
   if (s.day === 2) tip('day2', 'Build an Akhara to train Sainik (warriors). Drag Bamboo Walls (Baad) around the edge of your land to hold demons back.');
   if (s.day === 4) tip('day4', 'Vetala — flying spirits — fly over walls. Dhanurdhar (archers) can shoot them down.');
   updateOmen(s);
@@ -3300,7 +3479,8 @@ const Game = {
         fire: { level: s.fire.level, hp: s.fire.hp, fuel: s.fire.fuel },
         upgrades: s.upgrades, stats: s.stats, weather: s.weather, festival: s.festival, hungry: s.hungry, won: s.won,
         tips: s.tips, nextId: s.nextId, spawnQueue: s.spawnQueue, fronts: s.fronts, grove: s.grove,
-        villagers: s.villagers.map((v) => ({ id: v.id, name: v.name, look: v.look, x: r2(v.x), z: r2(v.z), job: v.job, hp: v.hp, maxHp: v.maxHp, carry: v.carry, carryAmt: v.carryAmt, gold: v.gold, workplace: v.workplace, arriving: v.arriving, ax: v.ax, az: v.az, home: v.home, inside: v.inside, shelter: v.shelter, fearT: v.fearT })),
+        ponds: s.ponds,
+        villagers: s.villagers.map((v) => ({ id: v.id, name: v.name, look: v.look, x: r2(v.x), z: r2(v.z), job: v.job, hp: v.hp, maxHp: v.maxHp, armour: v.armour || null, carry: v.carry, carryAmt: v.carryAmt, gold: v.gold, workplace: v.workplace, arriving: v.arriving, ax: v.ax, az: v.az, home: v.home, inside: v.inside, shelter: v.shelter, fearT: v.fearT })),
         buildings: s.buildings.map((b) => ({ id: b.id, type: b.type, cx: b.cx, cz: b.cz, rot: b.rot, done: b.done, progress: b.progress, hp: b.hp, maxHp: b.maxHp, grow: b.grow, level: b.level, upgrading: b.upgrading, upProg: b.upProg, stock: b.stock, bays: b.bays, hopper: b.hopper, recipe: b.recipe, batch: b.batch, mine: b.mine })),
         fireStock: s.fireStock,
         armory: s.armory,
@@ -3348,6 +3528,13 @@ const Game = {
     if (s.armory.dhanush) { s.res.wood = (s.res.wood || 0) + 14 * s.armory.dhanush; delete s.armory.dhanush; } // archers need no crafted bow any more: old bows go back as wood
     s.fireStock = data.fireStock || {};
     rebuildGrid(s);
+    if (data.ponds) s.ponds = data.ponds;
+    else genPonds(s, mulberry32((s.seed ^ 0x90d5) >>> 0)); // older saves: ponds appear where there is open land
+    if (s.upgrades.kavach) { // the old blanket Kavach upgrade becomes a suit of steel plate for every soldier
+      delete s.upgrades.kavach;
+      s.armory.kavach = (s.armory.kavach || 0) + s.villagers.filter((v) => slotKey(v.job) === 'army').length;
+      fitArmour(s, true);
+    }
     syncStock(s); // older saves: everything starts on the Agnikund heap
     S = s;
     fixJobOverflow(s); // older saves: jobs now need their workplace buildings

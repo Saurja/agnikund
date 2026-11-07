@@ -64,7 +64,15 @@ function heightAt(x, z) {
   const inland = clamp((r - 30) / 8, 0, 1);
   let h = terrainBump(x, z) * inland;
   if (r > edge - 3) h = lerp(h, -1.3, clamp((r - (edge - 3)) / 5, 0, 1));
-  return h;
+  return h + pondDip(x, z);
+}
+/** Ponds sit in a soft basin: the ground dips under the water and rises back to the bank (0 elsewhere). */
+function pondDip(x, z) {
+  const ps = typeof S !== 'undefined' && S && S.ponds;
+  if (!ps || !ps.length) return 0;
+  let k = 0;
+  for (const p of ps) { const dx = x - p.x, dz = z - p.z; if (Math.abs(dx) < p.r + 1 && Math.abs(dz) < p.r + 1) k = Math.max(k, clamp((p.r + 0.7 - Math.hypot(dx, dz)) / 1.3, 0, 1)); }
+  return k ? -0.45 * k * k * (3 - 2 * k) : 0;
 }
 
 /* ---------- villager poses ----------
@@ -88,6 +96,7 @@ const TOOL_CARRY = {
   gada:   { toolR: -2.55, armR: -0.45, elbR: 2.15, armRz: 0.18 }, // resting on the shoulder
   khanda: { toolR: -2.4, armR: -0.4, elbR: 2.05, armRz: 0.16 }, // the broadsword on the shoulder
   urumi:  { toolR: 1.35 }, chakram: { toolR: 0, armR: -0.25, elbR: 0.7 },
+  rod:    { toolR: -1.25, armR: -0.3, elbR: 0.9, armRz: 0.1 }, // the fishing rod held up at the side
 };
 const lerpN = (a, b, t) => a + (b - a) * t;
 /** A work stroke: slow wind-up to 1 by h, a quick strike back to 0, then a short follow-through. */
@@ -234,6 +243,10 @@ function workPose(v, J, t) {
     Object.assign(J, { armR: -0.9, elbR: 0.85, toolR: 0, armL: -0.55 + Math.sin(t * 1.6 + id) * 0.3, elbL: 1.2, armLz: 0.25, headY: Math.sin(t * 0.7 + id) * 0.4, twist: Math.sin(t * 0.7 + id) * 0.15 });
   } else if (tool === 'herbs' || tool === 'potli') { // kneeling by a patient, rubbing in the herbs
     Object.assign(J, { hipY: 0.27, legL: -1.45, kneeL: 1.45, legR: 0.12, kneeR: 1.9, lean: 0.35, armR: -0.95 + Math.sin(t * 3) * 0.12, armL: -0.95 - Math.sin(t * 3) * 0.12, elbR: 0.5, elbL: 0.5, armLz: -0.12, armRz: -0.05, toolR: 0, headX: 0.35 });
+  } else if (tool === 'rod') { // sitting on the bank, both hands on the rod held out over the water; now and then a bite and a tug
+    const bite = Math.max(0, Math.sin(t * 0.9 + id * 1.3) - 0.88) * 8, bob = Math.sin(t * 1.7 + id) * 0.03;
+    Object.assign(J, { hipY: 0.16, legL: -1.35, legR: -1.3, kneeL: 1.25, kneeR: 1.15, legLz: 0.22, legRz: 0.2, lean: 0.12 - bite * 0.1,
+      armR: -0.9 - bite * 0.35 + bob, armRz: 0.05, elbR: 0.6, armL: -0.82 - bite * 0.3 + bob, armLz: -0.22, elbL: 0.75, toolR: -0.5 - bite * 0.3, headX: 0.18 + Math.sin(t * 0.4 + id) * 0.05 });
   } else { // a helping hand: lift, carry and set down materials
     const w = Math.sin(((t * 0.75 + id * 0.27) % 1) * Math.PI * 2) * 0.5 + 0.5;
     Object.assign(J, { armR: lerpN(-1.4, -0.65, w), armL: lerpN(-1.4, -0.65, w), elbR: lerpN(0.3, 1.4, w), elbL: lerpN(0.3, 1.4, w), armRz: -0.1, armLz: -0.1, lean: lerpN(0.38, 0.05, w), kneeL: lerpN(0.55, 0.12, w), kneeR: lerpN(0.55, 0.12, w), hipY: V_HIP - lerpN(0.06, 0, w), headX: 0.2 });
@@ -361,10 +374,8 @@ const R3 = {
     sc.add(this.fireLight);
     this.pool = [];
     for (let i = 0; i < 6; i++) { const L = new THREE.PointLight(0xffa050, 0, 6, 2); sc.add(L); this.pool.push(L); }
-    // sea
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(700, 700), new THREE.MeshPhongMaterial({ color: 0x4aaebf, shininess: 70, specular: 0xcfeae6 }));
-    sea.rotation.x = -Math.PI / 2; sea.position.y = -0.38; sea.receiveShadow = true;
-    sc.add(sea); this.sea = sea;
+    this.buildSea(sc);
+    this.buildSky(sc);
     // dynamic containers
     this.bObjs = new Map(); this.vObjs = new Map(); this.eObjs = new Map(); this.aObjs = [];
     this.arrows = [];
@@ -379,6 +390,91 @@ const R3 = {
     this.resize();
     this.ok = true;
     return true;
+  },
+  /*
+   * Low-poly sea: a faceted sheet that heaves in slow waves (in the vertex shader, on the shared wind clock),
+   * turquoise over the shallows by the beach and deepening to blue out at sea, over a plain deep-blue floor
+   * that runs to the horizon.
+   */
+  buildSea(sc) {
+    const deep = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshLambertMaterial({ color: 0x2c7fb4 }));
+    deep.rotation.x = -Math.PI / 2; deep.position.y = -0.62; deep.userData.noAO = true;
+    sc.add(deep);
+    const N = 70, SZ = 280, rnd = mulberry32(77);
+    const base = new THREE.PlaneGeometry(SZ, SZ, N, N);
+    base.rotateX(-Math.PI / 2);
+    const bp = base.attributes.position, step = SZ / N;
+    for (let i = 0; i < bp.count; i++) {
+      const x = bp.getX(i), z = bp.getZ(i);
+      if (Math.abs(x) < SZ / 2 - 0.1 && Math.abs(z) < SZ / 2 - 0.1) bp.setXYZ(i, x + (rnd() - 0.5) * step * 0.6, 0, z + (rnd() - 0.5) * step * 0.6);
+    }
+    const geo = base.toNonIndexed(); base.dispose();
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 3), 3));
+    geo.computeVertexNormals();
+    this.seaShade = new Float32Array(geo.attributes.position.count / 3).map(() => (rnd() - 0.5) * 0.06);
+    const mat = new THREE.MeshPhongMaterial({ vertexColors: true, flatShading: true, shininess: 55, specular: 0x9fd8e8, transparent: true, opacity: 0.94 });
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = MAT.windU;
+      sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+        transformed.y += 0.09 * sin(wp.x * 0.33 + uTime * 0.9) + 0.07 * sin(wp.z * 0.41 - uTime * 0.7) + 0.04 * sin((wp.x + wp.z) * 0.9 + uTime * 1.6);`);
+    };
+    mat.customProgramCacheKey = () => 'sea';
+    const sea = new THREE.Mesh(geo, mat);
+    sea.position.y = -0.38; sea.receiveShadow = true; sea.userData.noAO = true;
+    sc.add(sea); this.sea = sea;
+    this.colorSea();
+  },
+  /** Shallows by the beach, deep water further out (redone with each world, as the island's size can differ). */
+  colorSea() {
+    const geo = this.sea.geometry, pos = geo.attributes.position, col = geo.attributes.color, a = pos.array, c = new THREE.Color();
+    for (let f = 0; f < pos.count / 3; f++) {
+      const o = f * 9, x = (a[o] + a[o + 3] + a[o + 6]) / 3, z = (a[o + 2] + a[o + 5] + a[o + 8]) / 3;
+      const d = Math.hypot(x, z) - islandR(x, z); // distance out from the beach
+      c.setHex(lerpHex(lerpHex(0x5fd6cf, 0x37a9cf, clamp(d / 10, 0, 1)), 0x2a7db6, clamp((d - 10) / 45, 0, 1))).multiplyScalar(1 + this.seaShade[f]);
+      for (let k = 0; k < 3; k++) col.setXYZ(f * 3 + k, c.r, c.g, c.b);
+    }
+    col.needsUpdate = true;
+  },
+  /** Each pond: a faceted water surface that ripples gently, and its banks (reeds, lily pads, stones). */
+  buildPonds(s) {
+    if (!MAT.pond) {
+      MAT.pond = new THREE.MeshPhongMaterial({ color: 0x4fb8c4, flatShading: true, shininess: 70, specular: 0xbfe8f0, transparent: true, opacity: 0.88 });
+      MAT.pond.onBeforeCompile = (sh) => {
+        sh.uniforms.uTime = MAT.windU;
+        sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+          vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+          transformed.y += 0.025 * sin(wp.x * 1.7 + uTime * 1.3) + 0.02 * sin(wp.z * 2.1 - uTime * 1.1);`);
+      };
+      MAT.pond.customProgramCacheKey = () => 'pond';
+    }
+    for (const p of s.ponds || []) {
+      const y = heightAt(p.x, p.z + p.r + 3) - 0.16; // the water stands a little below the surrounding ground
+      const geo = new THREE.CircleGeometry(p.r + 0.2, 14, 0, Math.PI * 2);
+      const pos = geo.attributes.position, rnd = mulberry32(p.id * 31 + 5);
+      for (let i = 1; i < pos.count - 1; i++) { const k = 1 + (rnd() - 0.5) * 0.12; pos.setXY(i, pos.getX(i) * k, pos.getY(i) * k); } // a less perfect shore
+      pos.setXY(pos.count - 1, pos.getX(1), pos.getY(1));
+      geo.rotateX(-Math.PI / 2);
+      const w = new THREE.Mesh(geo, MAT.pond);
+      w.position.set(p.x, y, p.z); w.rotation.y = p.rot || 0; w.receiveShadow = true; w.userData.noAO = true; w.raycast = () => {};
+      const bank = new THREE.Mesh(Models.pondGeo(p.r, p.id), MAT.std);
+      bank.position.set(p.x, y, p.z); bank.castShadow = true; bank.receiveShadow = true;
+      this.worldGroup.add(w, bank);
+      still(w); still(bank);
+    }
+  },
+  /** A gradient sky dome that follows the camera: deep blue overhead, pale and hazy at the horizon (the fog colour). */
+  buildSky(sc) {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uTop: { value: new THREE.Color(0x4f92dc) }, uHor: { value: new THREE.Color(SKY_DAY) } },
+      vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `uniform vec3 uTop; uniform vec3 uHor; varying vec3 vDir;
+        void main() { float h = clamp(vDir.y, 0.0, 1.0); gl_FragColor = vec4(mix(uHor, uTop, pow(h, 0.55)), 1.0); }`,
+      side: THREE.BackSide, depthWrite: false, fog: false,
+    });
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(440, 24, 12), mat);
+    sky.renderOrder = -10; sky.frustumCulled = false; sky.userData.noAO = true; sky.raycast = () => {};
+    sc.add(sky); this.sky = sky;
   },
   resize() {
     if (!this.renderer) return;
@@ -421,6 +517,8 @@ const R3 = {
     sc.matrixAutoUpdate = false; g.matrixAutoUpdate = false;
     sc.add(g);
     this.buildTerrain(s);
+    this.colorSea();
+    this.buildPonds(s);
     this.buildTrees(s);
     this.rockVer = -1;
     this.rockMeshes = null; // old ones belonged to the previous world group — rebuild them
@@ -439,13 +537,27 @@ const R3 = {
       if (c.material && c.material.userData && c.material.userData.own) c.material.dispose();
     });
   },
+  /*
+   * Low-poly ground: a coarse grid whose inner vertices are nudged off their grid lines and lifted a hair,
+   * cut into triangles that each keep one face normal and one colour (with a little shade of its own),
+   * so the land reads as hand-cut facets like everything standing on it.
+   */
   buildTerrain(s) {
-    const geo = new THREE.PlaneGeometry(190, 190, 124, 124);
-    geo.rotateX(-Math.PI / 2);
+    const N = 104, SZ = 190, step = SZ / N, rnd = mulberry32(911);
+    const base = new THREE.PlaneGeometry(SZ, SZ, N, N);
+    base.rotateX(-Math.PI / 2);
+    const bp = base.attributes.position;
+    for (let i = 0; i < bp.count; i++) {
+      let x = bp.getX(i), z = bp.getZ(i);
+      if (Math.abs(x) < SZ / 2 - 0.1 && Math.abs(z) < SZ / 2 - 0.1) { x += (rnd() - 0.5) * step * 0.6; z += (rnd() - 0.5) * step * 0.6; }
+      const lift = (rnd() - 0.5) * 0.07 * clamp((Math.hypot(x, z) - 5) / 10, 0, 1); // no relief at the fire
+      bp.setXYZ(i, x, heightAt(x, z) + lift, z);
+    }
+    const geo = base.toNonIndexed(); base.dispose();
+    geo.computeVertexNormals(); // unindexed: one normal per facet
     const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
     geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3));
-    geo.computeVertexNormals();
+    this.terrainShade = new Float32Array(pos.count / 3).map(() => (rnd() - 0.5) * 0.075);
     if (!MAT.terrain || MAT.terrain.userData.tier !== MAT.tier) { MAT.terrain = surfaceMat({ vertexColors: true, roughness: 1 }); MAT.terrain.userData.tier = MAT.tier; }
     const m = new THREE.Mesh(geo, MAT.terrain);
     m.receiveShadow = true;
@@ -469,25 +581,30 @@ const R3 = {
     return i < 0 || j < 0 || i >= 76 || j >= 76 ? 0 : clamp(FD[j * 76 + i] / 3.2, 0, 1);
   },
   colorTerrain(R) {
-    const geo = this.terrain.geometry, pos = geo.attributes.position, col = geo.attributes.color;
-    const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), z = pos.getZ(i), y = pos.getY(i);
+    const geo = this.terrain.geometry, pos = geo.attributes.position, col = geo.attributes.color, sh = this.terrainShade;
+    const c = new THREE.Color(), a = pos.array;
+    for (let f = 0, o = 0; f < pos.count / 3; f++, o += 9) {
+      // each facet takes the colour at its middle
+      const x = (a[o] + a[o + 3] + a[o + 6]) / 3, y = (a[o + 1] + a[o + 4] + a[o + 7]) / 3, z = (a[o + 2] + a[o + 5] + a[o + 8]) / 3;
       const r = Math.hypot(x, z), edge = islandR(x, z);
       const n = Math.sin(x * 0.21 + z * 0.13) * 0.5 + Math.sin(x * 0.09 - z * 0.23) * 0.5;
       let hex;
-      // palette: warm sage meadow, dusty khaki village ground, shady olive forest floor, cream beach
-      if (y < -0.5) hex = 0xd2bc8c;
-      else if (r > edge - 3.4) hex = lerpHex(0xf0ddb0, 0xe2c996, clamp((r - edge + 3.4) / 3, 0, 1));
+      // palette: sunny meadow green, warm trodden earth in the village, deep shady green under the trees, golden beach
+      if (y < -0.5) hex = 0xd9bd84;
+      else if (r > edge - 3.4) hex = lerpHex(0xf3dca6, 0xe6c68a, clamp((r - edge + 3.4) / 3, 0, 1));
       else {
-        hex = lerpHex(0x86a352, 0x96ad5f, n * 0.5 + 0.5);
-        if (r > 30) hex = lerpHex(hex, 0x76944c, clamp((r - 30) / 12, 0, 1));
-        hex = lerpHex(hex, 0x62763f, this.forestAt(x, z) * 0.6);
-        if (r < R + 0.5) hex = lerpHex(hex, 0xb7b276, 0.42);
-        if (r > edge - 4.6) hex = lerpHex(hex, 0xe2d3a0, clamp((r - edge + 4.6) / 1.2, 0, 1));
+        hex = lerpHex(0x86b843, 0x9cc54e, n * 0.5 + 0.5);
+        if (r > 30) hex = lerpHex(hex, 0x7aad40, clamp((r - 30) / 12, 0, 1));
+        hex = lerpHex(hex, 0x5e8f38, this.forestAt(x, z) * 0.65);
+        if (r < R + 0.5) hex = lerpHex(hex, 0xc9b073, 0.5 + 0.12 * n);
+        if (r > edge - 4.6) hex = lerpHex(hex, 0xe8d29a, clamp((r - edge + 4.6) / 1.2, 0, 1));
+        for (const p of (typeof S !== 'undefined' && S && S.ponds) || []) { // muddy banks round a pond, darker under its water
+          const pd = Math.hypot(x - p.x, z - p.z) - p.r;
+          if (pd < 1.1) hex = lerpHex(hex, pd < 0 ? 0x6f6a48 : 0xb09464, clamp((1.1 - pd) / 0.8, 0, 1));
+        }
       }
-      c.setHex(hex);
-      col.setXYZ(i, c.r, c.g, c.b);
+      c.setHex(hex).multiplyScalar(1 + (sh ? sh[f] : 0));
+      for (let k = 0; k < 3; k++) col.setXYZ(f * 3 + k, c.r, c.g, c.b);
     }
     col.needsUpdate = true;
   },
@@ -644,6 +761,7 @@ const R3 = {
       comp.setPixelRatio(pr); comp.setSize(w, h);
       if (THREE.SSAOPass && THREE.SimplexNoise) {
         const ao = new THREE.SSAOPass(this.scene, this.camera, w, h);
+        ao.beautyRenderTarget.stencilBuffer = true; // (the see-through silhouettes use the stencil to draw as one shape)
         ao.kernelRadius = 0.55; ao.minDistance = 0.0004; ao.maxDistance = 0.02;
         // 16 samples instead of 32: the same soft contact shadows for half the work
         ao.kernelSize = 16; ao.generateSampleKernel();
@@ -866,8 +984,9 @@ const R3 = {
       const x = Math.cos(a) * r, z = Math.sin(a) * r;
       if (r > islandR(x, z) - 4) continue;
       if (r < 27 && rnd() < 0.7) continue;
+      if (pondAt(s, x, z, 0.7)) continue; // nothing grows in the ponds
       const y = heightAt(x, z);
-      if (nt < 2600) { this.setInst(tufts, nt, x, y, z, rnd() * 6, 0.7 + rnd() * 0.7, 0); tufts.setColorAt(nt, cc.setHex(pick([0x6f8f45, 0x7f9c4e, 0x8ea457, 0xa9a65e]))); nt++; } // a few sun-dried golden tufts warm the meadow
+      if (nt < 2600) { this.setInst(tufts, nt, x, y, z, rnd() * 6, 0.7 + rnd() * 0.7, 0); tufts.setColorAt(nt, cc.setHex(pick([0x6fa83a, 0x82b843, 0x94c24c, 0xc4b85a]))); nt++; } // a few sun-dried golden tufts warm the meadow
       if (nf < 500 && rnd() < 0.2) { this.setInst(flowers, nf, x + 0.2, y + 0.06, z, 0, 1, 0); flowers.setColorAt(nf, cc.setHex(grade(pick([0xffb31a, 0xff7a1a, 0xf4ecd8, 0xe03c31, 0xc2185b, 0x9b7fd0])))); nf++; }
     }
     tufts.count = nt; flowers.count = nf; tufts.frustumCulled = false; flowers.frustumCulled = false;
@@ -875,6 +994,23 @@ const R3 = {
     this.decor = [tufts, flowers];
     tufts.visible = flowers.visible = this.quality !== 'low';
     g.add(tufts, flowers);
+    // low-poly bushes dotted over the meadow (outside the village, off the beach); four shapes, one draw each
+    this._bushGeos = this._bushGeos || [0, 1, 2, 3].map((k) => { const b = Models.bushGeo(k); b.userData.shared = true; return b; });
+    for (let k = 0; k < 4; k++) {
+      const bm = new THREE.InstancedMesh(this._bushGeos[k], MAT.std, 80);
+      let nb = 0;
+      for (let i = 0; i < 400 && nb < 80; i++) {
+        const a = rnd() * Math.PI * 2, r = 30 + rnd() * 40, x = Math.cos(a) * r, z = Math.sin(a) * r;
+        if (r > islandR(x, z) - 5 || pondAt(s, x, z, 0.9)) continue;
+        this.setInst(bm, nb++, x, heightAt(x, z) - 0.04, z, rnd() * 6, 0.75 + rnd() * 0.6, 0);
+      }
+      bm.count = nb; bm.castShadow = true; bm.receiveShadow = true; bm.frustumCulled = false; bm.visible = this.quality !== 'low';
+      g.add(bm); still(bm);
+      this.decor.push(bm);
+    }
+    // what grows where a building now stands is hidden (see syncDecor)
+    this.decorSets = this.decor.map((m) => ({ m, src: m.instanceMatrix.array.slice() }));
+    this._decorVer = -1;
     // shoreline foam
     const seg = 160, fv = [];
     for (let i = 0; i < seg; i++) {
@@ -1168,6 +1304,7 @@ const R3 = {
     for (const f of this.fireObj.userData.lampFlames) f.scale.setScalar(0.85 + 0.25 * Math.sin(time * 13 + f.position.x * 5));
     for (const d of this.diyas) { d.userData.flame.visible = lit; d.userData.flame.scale.setScalar(0.8 + 0.3 * Math.sin(time * 12 + d.position.x * 9)); }
     this.syncBuildings(s, time, dark, lit);
+    this.syncDecor(s);
     this.syncVillagers(s, time, dark, dt);
     this.syncZzz(s, dt);
     this.syncEnemies(s, time, dt);
@@ -1253,6 +1390,19 @@ const R3 = {
    * neighbours, and kerbs (stones and grass for a dirt path, a stone kerb for a brick road) run along any
    * side where the road ends. Bricks are laid along the way the road runs.
    */
+  /** Grass, flowers and bushes under a building (or a road) are tucked away; they grow back if it goes. */
+  syncDecor(s) {
+    if (!this.decorSets || this._decorVer === s.buildVer) return;
+    this._decorVer = s.buildVer;
+    for (const D of this.decorSets) {
+      const a = D.m.instanceMatrix.array, src = D.src;
+      for (let i = 0, o = 0; i < D.m.count; i++, o += 16) {
+        const under = !!buildingAtPoint(s, src[o + 12], src[o + 14]);
+        for (let j = 0; j < 16; j++) a[o + j] = under ? 0 : src[o + j];
+      }
+      D.m.instanceMatrix.needsUpdate = true;
+    }
+  },
   syncRoads(s) {
     const key = s.buildVer;
     if (this.roadKey === key) return;
@@ -1295,6 +1445,9 @@ const R3 = {
   syncBuildings(s, time, dark, lit) {
     const seen = new Set();
     this.syncRoads(s);
+    // the emblems: clear when close, gone when the camera pulls far back, softer by night (they are unlit)
+    const eA = (this._emblemA = clamp((42 - this.cam.dist) / 9, 0, 1));
+    for (const k in MAT.emblems || {}) { const m = MAT.emblems[k]; m.opacity = eA; m.color.setScalar(1 - dark * 0.5); }
     for (const b of s.buildings) {
       if (BUILDINGS[b.type].road) continue; // drawn with the road network
       seen.add(b.id);
@@ -1357,6 +1510,7 @@ const R3 = {
         if (ud.bays) this.syncBays(b, ud.piles);
         else if (ud.piles) this.syncPiles(ud.piles, b.stock || {}, (r) => stockCap(b, r));
       }
+      if (ud.emblem) ud.emblem.visible = b.done && eA > 0.02;
       if (isFieldType(b.type) && ud.crops) {
         const g = clamp(b.grow / 30, 0, 1);
         ud.crops.scale.set(1, 0.15 + g * 0.85, 1);
@@ -1748,12 +1902,12 @@ const R3 = {
     for (const v of s.villagers) {
       seen.add(v.id);
       let o = this.vObjs.get(v.id);
-      if (!o || o.job !== v.job) {
+      if (!o || o.job !== v.job || o.armour !== (v.armour || null)) { // (new clothes: a new job, or armour put on or taken off)
         if (o) this.removeObj(o.obj);
-        const obj = Models.villager(v.look, v.job);
+        const obj = Models.villager(v.look, v.job, v.armour);
         addSilhouette(obj, slotKey(v.job) === 'army' ? 0x8fd0ff : 0xfff0c8, 0.5); // seen through trees and huts
         this.scene.add(obj);
-        o = { obj, job: v.job, rot: v.rot };
+        o = { obj, job: v.job, armour: v.armour || null, rot: v.rot, pose: o && o.pose, lx: o && o.lx, lz: o && o.lz, born: o ? 1 : undefined };
         this.vObjs.set(v.id, o);
       }
       const obj = o.obj, ud = obj.userData;
@@ -1791,7 +1945,7 @@ const R3 = {
       // the tokri: gatherers always wear one; its contents show the good and how full it is (3 steps)
       let pk = null;
       if (v.carryAmt > 0 && v.carry) pk = v.carry + clamp(Math.ceil((v.carryAmt / carryCap(s, v.carry)) * 3), 1, 3);
-      else if (v.job === 'wood' || v.job === 'stone' || v.job === 'farm' || v.job === 'clay') pk = 'empty';
+      else if (v.job === 'wood' || v.job === 'stone' || v.job === 'farm' || v.job === 'clay' || v.job === 'fish') pk = 'empty';
       if (o.lastAmt !== undefined && v.carryAmt > o.lastAmt) o.packPop = 0.25; // a bounce for every log or stone added
       o.lastAmt = v.carryAmt;
       if (pk !== o.pk) {
@@ -1887,11 +2041,17 @@ const R3 = {
       if (e.charge) { tLean = 0.45; tArmR = 0.4; tArmL = 0.4; } // head down, charging
       if (stun) { tArmR = 0.35; tArmL = 0.35; tLean = 0.12; }
       P.legs += (tLegs - P.legs) * k; P.armR += (tArmR - P.armR) * (atk > 0 ? 0.6 : k); P.armL += (tArmL - P.armL) * k; P.lean += (tLean - P.lean) * k;
-      if (ud.legs.length) { ud.legs[0].rotation.x = P.legs; ud.legs[1].rotation.x = -P.legs; }
+      if (ud.legs.length === 4) { // a beast's trot: diagonal pairs move together, a little faster than a biped's stride
+        const q = moving ? Math.sin(t * 11) * 0.6 : 0;
+        ud.legs[0].rotation.x = q; ud.legs[3].rotation.x = q; ud.legs[1].rotation.x = -q; ud.legs[2].rotation.x = -q;
+      } else if (ud.legs.length) { ud.legs[0].rotation.x = P.legs; ud.legs[1].rotation.x = -P.legs; }
+      if (ud.head) ud.head.rotation.x = atk > 0 ? Math.sin(atk * Math.PI) * 0.55 : wind > 0 ? -0.3 * wind : Math.sin(t * 2.2 + e.id) * 0.06; // the bite (and rearing back to pounce)
+      if (ud.tail) ud.tail.rotation.y = Math.sin(t * (moving ? 9 : 3) + e.id) * (moving ? 0.5 : 0.25);
+      for (let i = 0; i < ud.wisps.length; i++) { const w = ud.wisps[i]; w.rotation.z = Math.sin(t * 3 + i * 0.9 + e.id) * 0.25; w.rotation.x = Math.cos(t * 2.4 + i * 0.7) * 0.18; } // the ghost's coil ripples
       if (ud.arms.length) { const base = ud.armBase || 0; ud.arms[1].rotation.x = P.armR * (base ? 0.4 : 1) + base; ud.arms[0].rotation.x = P.armL * (base ? 0.4 : 1) + base + (base ? Math.sin(t * 2) * 0.12 : 0); }
       if (ud.hips) {
         ud.hips.rotation.z = stun ? Math.sin(time * 9 + e.id) * 0.22 : moving ? Math.sin(t * 8) * 0.05 : Math.sin(t * 1.8) * 0.02;
-        ud.hips.rotation.x = P.lean;
+        ud.hips.rotation.x = P.lean * (ud.legs.length === 4 ? 0.35 : 1); // (a beast only dips its shoulders)
         ud.hips.position.y = (ud.hipY || 0.5) + (moving ? Math.abs(Math.cos(t * 8)) * 0.04 : 0);
       }
       if (ud.neckFlame) ud.neckFlame.scale.set(1, 0.8 + 0.3 * Math.sin(t * 13 + e.id) + 0.1 * Math.sin(t * 29), 1);
@@ -2065,7 +2225,8 @@ const R3 = {
     const el = Math.sin(frac * Math.PI);
     const az = lerp(-2.0, 2.0, frac);
     const sun = this.sun;
-    sun.position.set(c.x + Math.cos(az) * 40 * (1 - el * 0.6), 12 + el * 50, c.z + Math.sin(az) * 30 - 20);
+    // a sun that never climbs too high: long, sculpting shadows all day, like late-morning light
+    sun.position.set(c.x + Math.cos(az) * 40 * (1 - el * 0.5), 13 + el * 34, c.z + Math.sin(az) * 30 - 20);
     sun.target.position.set(c.x, 0, c.z);
     const du = duskAmt(t);
     const modern = MAT.tier !== 'low';
@@ -2085,11 +2246,17 @@ const R3 = {
     this.hemi.intensity = lerp(modern ? 0.5 : 0.6, modern ? 0.2 : 0.17, dark) * (rain ? 0.85 : 1);
     this.hemi.color.setHex(lerpHex(lerpHex(HEMI_SKY, 0xffd0a8, du), 0x4a5aa8, dark));
     this.hemi.groundColor.setHex(lerpHex(HEMI_GROUND, 0x141830, dark));
-    this.moon.intensity = 0.24 * dark;
+    // the moon calendar shows in the night: a full moon floods the village with cold light, the red moon
+    // stains everything the colour of blood, the new moon (Deepavali) leaves it to the diyas
+    const moon = moonOf(s.day), red = moon === 'red' ? dark : 0;
+    this.moon.intensity = 0.24 * dark * (moon === 'full' ? 2.6 : moon === 'red' ? 2.8 : moon === 'new' ? 0.5 : 1);
+    this.moon.color.setHex(moon === 'red' ? 0xff2a1a : moon === 'full' ? 0xc8d6ff : 0x7f8cff);
     this.moon.position.set(c.x - 25, 40, c.z + 15);
     this.moon.target.position.set(c.x, 0, c.z);
+    if (red) { this.hemi.color.setHex(lerpHex(this.hemi.color.getHex(), 0xc41414, red * 0.95)); this.hemi.groundColor.setHex(lerpHex(this.hemi.groundColor.getHex(), 0x3a0606, red)); this.hemi.intensity *= 1 + red * 0.6; }
+    else if (moon === 'full') { this.hemi.color.setHex(lerpHex(this.hemi.color.getHex(), 0x8a9ae0, dark * 0.7)); this.hemi.intensity *= 1 + dark * 0.5; }
     let bg = lerpHex(SKY_DAY, 0xf0a878, du);
-    bg = lerpHex(bg, 0x0b1030, dark);
+    bg = lerpHex(bg, moon === 'red' ? 0x4a0810 : moon === 'full' ? 0x1e2c60 : 0x0b1030, dark);
     if (rain) bg = lerpHex(bg, 0x6a7484, 0.5);
     this.scene.background.setHex(bg);
     this.scene.fog.color.setHex(bg);
@@ -2097,6 +2264,12 @@ const R3 = {
     this.scene.fog.near = c.dist + lerp(lowQ ? 14 : 40, 6, dark);
     this.scene.fog.far = c.dist + lerp(lowQ ? 34 : 130, lowQ ? 30 : 45, dark);
     this.omens(s, time, du, dark, bg);
+    if (this.sky) { // the dome: its horizon is the haze colour (after the omens have tinted it), deep blue overhead
+      const u = this.sky.material.uniforms;
+      u.uHor.value.copy(this.scene.background);
+      u.uTop.value.setHex(lerpHex(lerpHex(lerpHex(0x4a8edc, 0x6a78b8, du), 0x060b26, dark), 0x5a6474, rain ? 0.65 : 0));
+      this.sky.position.copy(this.camera.position);
+    }
     const F = s.fire, FL = fireLv(s);
     const flick = 1 + Math.sin(time * 10) * 0.06 + Math.sin(time * 23) * 0.04;
     this.fireLight.intensity = (0.12 + 1.15 * dark) * (0.35 + 0.65 * F.intensity) * flick * (s.omen && s.omen.type === 'boss' ? 1 - 0.22 * (s.omen.ramp || 0) * (0.6 + 0.4 * Math.sin(time * 0.9)) : 1); // the flame cowers before Mahasura
@@ -2427,6 +2600,7 @@ const R3 = {
     const d = BUILDINGS[type];
     const o = Models.building(type);
     for (const p of o.userData.piles || []) { const geo = Models.pileGeo(p.res, 3); setGeo(p.mesh, geo); p.mesh.visible = true; } // look stocked in the build menu
+    if (o.userData.emblem) o.userData.emblem.visible = false; // (the plaque is for the village, not the card)
     const sz = Math.max(d.fw, d.fd, d.ht * 0.8);
     return this.thumb(o, 128, 88, [sz * 1.5, sz * 1.25 + d.ht * 0.3, sz * 1.9], [0, d.ht * 0.38, 0]);
   },

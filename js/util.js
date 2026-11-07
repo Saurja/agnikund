@@ -5,7 +5,7 @@
    ========================================================= */
 
 /** Shown on the title screen and in the pause menu. Bump with each release. */
-const GAME_VERSION = '1.10.3';
+const GAME_VERSION = '1.14.0';
 const VIEW_H = 270;           // internal (pixel-art) resolution height
 const GROUND_Y = 208;       // screen-space y of the ground surface
 const WORLD_MIN = -2600, WORLD_MAX = 2600;
@@ -14,7 +14,7 @@ const DUSK_T = 140;           // work ends, villagers head to the fire
 const NIGHT_T = 156;          // demons arrive
 const DAWN_T = 212;           // sunrise — demons burn away
 const GRAV = 230;
-const WIN_DAY = 15;           // survive this many nights to win
+const WIN_DAY = Infinity;     // endless: there is no last night (see the moon calendar)
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -95,7 +95,8 @@ const STOCK_CAP = {
   minecamp: { stone: 50, gold: 20, ore: 30 },
   store: { wood: 80, stone: 80, food: 80, gold: 40 },
   field: { food: 25 },
-  bigfield: { food: 50 }, bigfieldV: { food: 50 },
+  bigfield: { food: 50 }, bigfieldV: { food: 50 }, vishalkhet: { food: 100 },
+  fishhut: { food: 30 },
   claypit: { clay: 40 },
   kiln: { brick: 45, charcoal: 30 },
   smelter: { iron: 25 },
@@ -122,6 +123,7 @@ const JOBS = {
   wood:    { name: 'Lakadhara',  en: 'Woodcutter', tool: 'axe',    desc: 'Chops trees near their Lakdi Taal. The fire eats wood!', building: 'woodcamp' },
   stone:   { name: 'Khanik',     en: 'Miner',      tool: 'pick',   desc: 'Breaks rocks near their Khadaan. Sometimes finds gold.', building: 'minecamp' },
   farm:    { name: 'Kisan',      en: 'Farmer',     tool: 'sickle', desc: 'Grows grain on a Khet.', building: 'field' },
+  fish:    { name: 'Machhuara',  en: 'Fisher',     tool: 'rod',    desc: 'Sits on the bank of the pond by a Machhli Ghat with a bamboo rod, and brings the catch back as food.', building: 'fishhut' },
   build:   { name: 'Mistri',     en: 'Builder',    tool: 'hammer', desc: 'Builds three times as fast as an idle helper, is the only one who repairs (at night too, when no demon is near), and must lead every level 3 building and level 3 upgrade. The Agnikund has room for 2; a Mistri Adda adds more.', building: 'buildyard' },
   clay:    { name: 'Beldar',     en: 'Clay Digger', tool: 'spade', desc: 'Digs wet clay at a Mitti Khaan. The Eent Bhatta fires it into bricks.', building: 'claypit' },
   kiln:    { name: 'Kumhar',     en: 'Kiln Worker', tool: 'mould', desc: 'Brings clay and wood to the Eent Bhatta and fires bricks, or burns wood into charcoal.', building: 'kiln' },
@@ -141,7 +143,7 @@ const JOBS = {
   trader:  { name: 'Vyapari',    en: 'Trader',     tool: 'sack',   desc: 'Sells grain for gold at the Bazaar.', building: 'bazaar' },
 };
 const AGNI_SLOTS = { build: 2 }; // work places the Agnikund itself provides
-const JOB_ORDER = ['wood', 'stone', 'farm', 'clay', 'kiln', 'smelt', 'build', 'vaidya', 'warrior', 'brute', 'spear', 'khadgi', 'urumi', 'archer', 'longbow', 'chakri', 'medic', 'priest', 'trader'];
+const JOB_ORDER = ['wood', 'stone', 'farm', 'fish', 'clay', 'kiln', 'smelt', 'build', 'vaidya', 'warrior', 'brute', 'spear', 'khadgi', 'urumi', 'archer', 'longbow', 'chakri', 'medic', 'priest', 'trader'];
 /** Soldiers who fight from a distance (they hold the second line, behind the melee fighters). */
 const RANGED_JOBS = new Set(['archer', 'longbow', 'chakri', 'medic']);
 const slotKey = (job) => (JOBS[job] && JOBS[job].slot) || job;
@@ -218,9 +220,30 @@ const BOSS_SUMMON = { cd: 26, name: 'Asura Sena', en: 'Demon Host' };
  * Boss nights. Each great asura comes on his own night (and, after the fifteenth, they return in turn
  * every fourth night). On his day the land itself warns of him, more clearly as the day goes on (see tickOmen).
  */
-const BOSS_NIGHTS = { 4: 'bakasura', 8: 'raktabija', 12: 'kalanemi', 15: 'boss' };
-const BOSS_CYCLE = ['bakasura', 'raktabija', 'kalanemi', 'boss'];
-function bossForDay(d) { if (BOSS_NIGHTS[d]) return BOSS_NIGHTS[d]; return d > 15 && d % 4 === 3 ? BOSS_CYCLE[Math.floor((d - 15) / 4) % BOSS_CYCLE.length] : null; }
+/*
+ * The moon calendar (the game never ends: keep the flame alive as long as you can). Every 7th night the
+ * moon is full (Purnima) and one of the lesser great asuras comes, in turn; every 15th night the moon
+ * rises red (Rakt Chandra) and Mahasura himself comes, which outranks a full moon on the same night.
+ * Deepavali falls on the new moon (Amavasya), halfway between full moons.
+ */
+const FULL_MOON_EVERY = 7, RED_MOON_EVERY = 15;
+const SMALL_BOSSES = ['bakasura', 'raktabija', 'kalanemi'];
+function moonOf(d) {
+  if (d % RED_MOON_EVERY === 0) return 'red';
+  if (d % FULL_MOON_EVERY === 0) return 'full';
+  if (d % FULL_MOON_EVERY === 4) return 'new';
+  return (d % FULL_MOON_EVERY) < 4 ? 'waning' : 'waxing'; // shrinking after the full moon, growing after the new
+}
+/** How far through the month the moon is, 0 new … 0.5 full … 1 new again (for drawing its phase). */
+function moonPhase(d) { return ((d % FULL_MOON_EVERY) / FULL_MOON_EVERY + 0.5) % 1; }
+/** The next night (from day d on) with a full or a red moon. */
+function nextMoonNight(d, kind) { for (let k = d; k < d + 200; k++) { const m = moonOf(k); if (kind === 'red' ? m === 'red' : m === 'full' || m === 'red') return k; } return d; }
+function bossForDay(d) {
+  const m = moonOf(d);
+  if (m === 'red') return 'boss';
+  if (m === 'full') return SMALL_BOSSES[(Math.floor(d / FULL_MOON_EVERY) - 1) % SMALL_BOSSES.length]; // in turn: Bakasura, Raktabija, Kalanemi
+  return null;
+}
 const OMENS = {
   bakasura:  { sign: 'The crows have gone quiet. A great flock circles over the forest and will not settle, and the cattle will not graze.', counter: 'He hunts grain: guard the grain heap by the fire and the stores, and keep fighters near the food.', kind: 'crows', smoke: 0xb89c70 },
   raktabija: { sign: 'The sky has a red tinge this morning, and the water in the wells looks dark, like old blood.', counter: 'Fire scorches his blood before it falls: Agni Burj towers, Agni Baan arrows and fire pots stop new demons rising.', kind: 'blood', smoke: 0xc0303a },
@@ -239,13 +262,24 @@ const WEAPONS = {
   chakram: { name: 'Chakram', en: 'Throwing Rings', at: 'forge', lvl: 2, cost: { iron: 4, gold: 3 }, job: 'chakri', base: 'archer' },
 };
 const WEAPON_ORDER = ['gada', 'khanda', 'urumi', 'bhala', 'potli', 'longbow', 'chakram'];
+/*
+ * Armour, forged at the Lohar and kept in the armoury like the weapons. Each tier needs a higher Lohar
+ * level. Any soldier can wear one piece: it takes a share off every blow (def) and adds health (hp).
+ * Fit it from a soldier's panel, or let the Lohar fit the best armour to everyone at once.
+ */
+const ARMOURS = {
+  chamda: { name: 'Chamda Kavach', en: 'Leather Armour', tier: 1, lvl: 1, cost: { wood: 6, food: 8, gold: 4 }, def: 0.15, hp: 10, desc: 'Hardened buffalo-hide jerkin and shoulder guards.' },
+  zirah:  { name: 'Zirah Bakhtar', en: 'Chainmail',      tier: 2, lvl: 2, cost: { iron: 6, charcoal: 3, gold: 6 }, def: 0.27, hp: 20, desc: 'A shirt of riveted iron rings over a padded coat, with steel shoulders.' },
+  kavach: { name: 'Char-aina',     en: 'Steel Plate',    tier: 3, lvl: 3, cost: { iron: 12, charcoal: 6, gold: 12 }, def: 0.4, hp: 35, desc: 'The "four mirrors": polished steel plates over mail, a spiked khud helmet and bracers.' },
+};
+const ARMOUR_ORDER = ['chamda', 'zirah', 'kavach'];
 /** Who a weapon is handed to: melee weapons and kits to a Sainik, ranged ones to a Dhanurdhar. */
 const weaponBase = (w) => (WEAPONS[w] && WEAPONS[w].base) || 'warrior';
 
 /* ---------------- Buildings ---------------- */
 // fw × fd = footprint in grid cells, ht = model height (for bars and selection)
 const BUILDINGS = {
-  hut:      { name: 'Jhopdi',        en: 'Hut',           fw: 2, fd: 2, ht: 2.2, cost: { wood: 20 },                      hp: 120, lvl: 1, time: 12, housing: 3, merge: 'bighouse', desc: 'Round mud hut with a thatched roof. Houses 3 villagers. Build two side by side and they join into a Bada Ghar.' },
+  hut:      { name: 'Jhopdi',        en: 'Hut',           fw: 2, fd: 2, ht: 2.2, cost: { wood: 20 },                      hp: 120, lvl: 1, time: 12, housing: 3, merge: 'bighouse', desc: 'Mud cottage with a steep thatched roof. Houses 3 villagers. Build two side by side and they join into a Bada Ghar; two Bada Ghar side by side become a Haveli.' },
   woodcamp: { name: 'Lakdi Taal',    en: 'Woodcutter Camp', fw: 2, fd: 2, ht: 1.9, cost: { wood: 15 },                    hp: 150, lvl: 1, time: 8, slots: { wood: 3 }, drop: ['wood'], desc: 'Timber yard for 3 Lakadhara. They chop the trees nearest the camp and drop wood here.' },
   minecamp: { name: 'Khadaan',       en: 'Mining Camp',   fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                      hp: 150, lvl: 1, time: 10, slots: { stone: 3 }, drop: ['stone', 'gold', 'ore'], desc: 'Stone camp for 3 Khanik. Build it next to boulders; miners drop stone here. From Agnikund level 2 it can dig iron ore from the rusty boulders instead.' },
   buildyard: { name: 'Mistri Adda',  en: "Builders' Yard", fw: 2, fd: 2, ht: 1.8, cost: { wood: 25 },                     hp: 150, lvl: 1, time: 10, slots: { build: 3 }, desc: 'Workshop for 3 more Mistri (builders).' },
@@ -261,8 +295,8 @@ const BUILDINGS = {
   well:     { name: 'Kuan',          en: 'Well',          fw: 2, fd: 2, ht: 1.8, cost: { stone: 10, brick: 12 },          hp: 160, lvl: 2, time: 10, desc: 'Fields within 9 steps grow 50% faster.' },
   bazaar:   { name: 'Bazaar',        en: 'Market',        fw: 3, fd: 2, ht: 1.9, cost: { wood: 30, brick: 15 },           hp: 150, lvl: 2, time: 16, slots: { trader: 2 }, desc: 'Spice stall. 2 Vyapari trade grain for gold.' },
   lamp:     { name: 'Deep Stambh',   en: 'Lamp Pillar',   fw: 1, fd: 1, ht: 2.7, cost: { stone: 10, brick: 6, gold: 5 },  hp: 140, lvl: 2, time: 8,  desc: 'Holy lamps light the night. Demons nearby are slowed and burn.' },
-  forge:    { name: 'Lohar',         en: 'Blacksmith',    fw: 2, fd: 2, ht: 2.0, cost: { wood: 25, brick: 20, gold: 10 }, hp: 180, lvl: 2, time: 16, desc: 'Forges Gada maces for Gadadhari, iron tools and steel upgrades.',
-    levels: [null, null, { cost: { brick: 30, iron: 10, gold: 20 }, time: 62, unlocks: 'Talwar steel swords for Sainik' }, { cost: { brick: 40, iron: 30, gold: 45 }, time: 98, unlocks: 'Kavach armour for all fighters' }] },
+  forge:    { name: 'Lohar',         en: 'Blacksmith',    fw: 2, fd: 2, ht: 2.0, cost: { wood: 25, brick: 20, gold: 10 }, hp: 180, lvl: 2, time: 16, desc: 'Forges Gada maces for Gadadhari, iron tools, steel upgrades and armour for your soldiers.',
+    levels: [null, null, { cost: { brick: 30, iron: 10, gold: 20 }, time: 62, unlocks: 'Talwar steel swords, Khanda, Chakrams and Zirah chainmail' }, { cost: { brick: 40, iron: 30, gold: 45 }, time: 98, unlocks: 'Urumi whip-swords and Char-aina steel plate armour' }] },
   sawmill:  { name: 'Aara Mill',     en: 'Sawmill',       fw: 3, fd: 2, ht: 2.1, cost: { wood: 35, brick: 10 },           hp: 180, lvl: 2, time: 14, desc: 'Saw pit and bow-maker. Crafts Dhanush bows for archers.',
     levels: [null, null, { cost: { wood: 50, brick: 20, gold: 15 }, time: 58, unlocks: 'Bhala spears for Bhaladhari, and Longbows' }, { cost: { wood: 70, brick: 30, iron: 15, gold: 35 }, time: 92, unlocks: 'Agni Baan fire arrows' }] },
   wall:     { name: 'Qila Deewar',   en: 'Fort Wall',     fw: 1, fd: 1, ht: 1.7, cost: { stone: 8, brick: 3 },            hp: 600, lvl: 3, time: 5,  wall: true, desc: 'Sandstone and brick fort wall, very sturdy. Click and drag to build a line.' },
@@ -272,17 +306,22 @@ const BUILDINGS = {
   cannontower: { name: 'Tope Burj',  en: 'Cannon Tower',  fw: 2, fd: 2, ht: 3.6, cost: { stone: 40, brick: 40, iron: 30, gold: 40 }, hp: 520, lvl: 5, time: 26, desc: 'A heavy iron fort cannon. Slow, but every shot smashes even giant demons. Claims a small circle of land round it: you can build there, even past the village edge.' },
   temple:   { name: 'Mandir',        en: 'Temple',        fw: 3, fd: 3, ht: 5.6, cost: { stone: 40, brick: 20, iron: 4, gold: 20 }, hp: 320, lvl: 3, time: 24, slots: { priest: 2 }, desc: 'Trains 2 Pujari, who heal villagers and collect offerings.' },
   // made by joining two of the same building side by side (not built directly)
-  bighouse:  { name: 'Bada Ghar', en: 'Big House', fw: 4, fd: 2, ht: 2.4, cost: { wood: 40 }, hp: 280, lvl: 1, time: 1, housing: 7, joined: true, desc: 'Two Jhopdis joined into one family house. Homes 7 villagers (one more than two huts).' },
-  bighouseV: { name: 'Bada Ghar', en: 'Big House', fw: 2, fd: 4, ht: 2.4, cost: { wood: 40 }, hp: 280, lvl: 1, time: 1, housing: 7, joined: true, model: 'bighouse', desc: 'Two Jhopdis joined into one family house. Homes 7 villagers (one more than two huts).' },
-  bigfield:  { name: 'Bada Khet', en: 'Big Field', fw: 6, fd: 3, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster.' },
-  bigfieldV: { name: 'Bada Khet', en: 'Big Field', fw: 3, fd: 6, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, model: 'bigfield', desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster.' },
+  bighouse:  { name: 'Bada Ghar', en: 'Big House', fw: 4, fd: 2, ht: 2.4, cost: { wood: 40 }, hp: 280, lvl: 1, time: 1, housing: 7, joined: true, merge: 'haveli', desc: 'Two Jhopdis joined into one family house. Homes 7 villagers (one more than two huts). Two Bada Ghar side by side become a Haveli.' },
+  bighouseV: { name: 'Bada Ghar', en: 'Big House', fw: 2, fd: 4, ht: 2.4, cost: { wood: 40 }, hp: 280, lvl: 1, time: 1, housing: 7, joined: true, merge: 'haveli', model: 'bighouse', desc: 'Two Jhopdis joined into one family house. Homes 7 villagers (one more than two huts). Two Bada Ghar side by side become a Haveli.' },
+  bigfield:  { name: 'Bada Khet', en: 'Big Field', fw: 6, fd: 3, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, merge: 'vishalkhet', desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster. Two Bada Khet side by side become a Vishal Khet.' },
+  bigfieldV: { name: 'Bada Khet', en: 'Big Field', fw: 3, fd: 6, ht: 0.8, cost: { wood: 30 }, hp: 160, lvl: 1, time: 1, slots: { farm: 5 }, drop: ['food'], joined: true, merge: 'vishalkhet', model: 'bigfield', desc: 'Two fields joined into one. Room for 5 Kisan, and they work it 15% faster. Two Bada Khet side by side become a Vishal Khet.' },
+  // and four: two joined buildings side by side make a square one
+  haveli:     { name: 'Haveli', en: 'Mansion', fw: 4, fd: 4, ht: 3.3, cost: { wood: 80 }, hp: 620, lvl: 1, time: 1, housing: 16, joined: true, square: true, desc: 'Four Jhopdis grown into a two-storey haveli round a courtyard. Homes 16 villagers (four more than four huts), and its walls are very strong.' },
+  vishalkhet: { name: 'Vishal Khet', en: 'Great Field', fw: 6, fd: 6, ht: 0.8, cost: { wood: 60 }, hp: 300, lvl: 1, time: 1, slots: { farm: 11 }, drop: ['food'], joined: true, square: true, desc: 'Four fields joined into one great field with a well-fed irrigation channel. Room for 11 Kisan, and they work it 30% faster.' },
+  // fishing: a hut on the bank of a pond (see game.js ponds)
+  fishhut:    { name: 'Machhli Ghat', en: 'Fishing Hut', fw: 2, fd: 2, ht: 2.0, cost: { wood: 20 }, hp: 130, lvl: 1, time: 9, slots: { fish: 2 }, drop: ['food'], pond: true, desc: 'A fisher’s hut with a little jetty, built on the bank of a pond. 2 Machhuare catch fish there and keep the catch here as food. Must touch a pond.' },
 };
 // roads: laid at once along a dragged line, no builder needed; people walk faster on them (road = speed factor)
 BUILDINGS.path = { name: 'Kachcha Rasta', en: 'Dirt Path', fw: 1, fd: 1, ht: 0.05, cost: { stone: 1 }, hp: 400, lvl: 1, time: 1, line: true, road: 1.25, instant: true, desc: 'A beaten earth path edged with stones. Villagers walk a quarter faster on it and take it when it saves them time. Buildings can go over it. Click and drag to lay a line.' };
 BUILDINGS.road = { name: 'Pakki Sadak', en: 'Brick Road', fw: 1, fd: 1, ht: 0.06, cost: { brick: 1, stone: 1 }, hp: 600, lvl: 2, time: 1, line: true, road: 1.5, instant: true, desc: 'A paved road of fired brick between stone kerbs. Villagers move half again as fast on it. Buildings can go over it. Click and drag to lay a line.' };
 BUILDINGS.palisade.line = true; BUILDINGS.wall.line = true;
 BUILDINGS.vaidyashala = { name: 'Vaidyashala', en: "Healer's Hut", fw: 2, fd: 2, ht: 2.0, cost: { wood: 25, food: 10 }, hp: 140, lvl: 1, time: 10, slots: { vaidya: 2 }, desc: 'Ayurvedic healer’s hut with a herb garden. Room for 2 Vaidya, who walk to the wounded and heal them. Also makes Aushadhi Potli kits: hand one to a Sainik for a Chikitsak field medic.' };
-const BUILD_ORDER = ['hut', 'woodcamp', 'minecamp', 'buildyard', 'field', 'store', 'path', 'claypit', 'kiln', 'vaidyashala', 'palisade', 'akhara', 'smelter', 'range', 'road', 'well', 'bazaar', 'lamp', 'forge', 'sawmill', 'wall', 'tower', 'belltower', 'temple', 'firetower', 'cannontower'];
+const BUILD_ORDER = ['hut', 'woodcamp', 'minecamp', 'buildyard', 'field', 'fishhut', 'store', 'path', 'claypit', 'kiln', 'vaidyashala', 'palisade', 'akhara', 'smelter', 'range', 'road', 'well', 'bazaar', 'lamp', 'forge', 'sawmill', 'wall', 'tower', 'belltower', 'temple', 'firetower', 'cannontower'];
 
 /*
  * Building levels. Every building except walls can be upgraded twice (the Lohar and Aara Mill keep their
@@ -299,7 +338,8 @@ function levelPerk(type, lv) {
   else if (d.drop) bits.push(`${Math.round((STOCK_MULT[lv] - 1) * 100)}% more storage`);
   if (d.housing) bits.push(`room for ${d.housing + (lv - 1) * (d.housing > 3 ? 2 : 1)} villagers`);
   if (d.slots) { const k = Object.keys(d.slots)[0]; bits.push(`${k === 'army' ? 2 : 1} more ${k === 'army' ? 'soldier places' : JOBS[k] ? JOBS[k].name : 'worker'}`); }
-  if (type === 'field' || type === 'bigfield' || type === 'bigfieldV') bits.push('crops grow 20% faster');
+  if (isFieldType(type)) bits.push('crops grow 20% faster');
+  if (type === 'fishhut') bits.push('fishers catch 25% faster');
   if (type === 'well') bits.push('waters fields 2 steps further');
   if (type === 'lamp') bits.push('a wider, hotter holy light');
   if (type === 'vaidyashala') bits.push('Vaidya heal 30% faster');
@@ -330,7 +370,7 @@ const TOWERS = {
 /** Which job a building gives places for (first one). */
 function jobOfBuilding(type) { const s = BUILDINGS[type].slots; if (!s) return null; const k = Object.keys(s)[0]; return k === 'army' ? (type === 'range' ? 'archer' : 'warrior') : k; } // the Dhanush Shala trains archers, the Akhara Sainik
 const isHome = (type) => !!BUILDINGS[type].housing;
-const isFieldType = (type) => type === 'field' || type === 'bigfield' || type === 'bigfieldV';
+const isFieldType = (type) => type === 'field' || type === 'bigfield' || type === 'bigfieldV' || type === 'vishalkhet';
 /** Flat ground anyone can cross and demons ignore: fields and roads. */
 const isGround = (type) => isFieldType(type) || !!BUILDINGS[type].road;
 
@@ -360,11 +400,10 @@ const UPGRADES = {
   pick:     { name: 'Loha Gainti',  en: 'Iron Pickaxes', at: 'forge',   lvl: 1, cost: { iron: 6, wood: 10, gold: 6 },  desc: 'Miners and clay diggers dig 60% faster.' },
   plough:   { name: 'Loha Hal',     en: 'Iron Ploughs',  at: 'forge',   lvl: 1, cost: { iron: 8, wood: 20, gold: 10 },  desc: 'Each harvest gives 50% more grain.' },
   talwar:   { name: 'Talwar',       en: 'Steel Swords',  at: 'forge',   lvl: 2, cost: { iron: 15, charcoal: 10, gold: 20 }, desc: 'Steel for every blade: Sainik, Khadgadhari and Urumidhari deal 60% more damage, chakrams 30% more, and Sainik get +30 HP.' },
-  kavach:   { name: 'Kavach',       en: 'Armour',        at: 'forge',   lvl: 3, cost: { iron: 30, gold: 30 }, desc: 'All fighters take 35% less damage.' },
   bow:      { name: 'Shringa Dhanush', en: 'Horn Bows',  at: 'sawmill', lvl: 2, cost: { wood: 40, gold: 28 },  desc: 'Archers and longbowmen deal 50% more damage and shoot further.' },
   agnibaan: { name: 'Agni Baan',    en: 'Fire Arrows',   at: 'sawmill', lvl: 3, cost: { wood: 30, charcoal: 20, iron: 6, gold: 30 },  desc: 'Archer and tower arrows set demons on fire.' },
 };
-const UPGRADE_ORDER = ['axe', 'pick', 'plough', 'talwar', 'kavach', 'bow', 'agnibaan'];
+const UPGRADE_ORDER = ['axe', 'pick', 'plough', 'talwar', 'bow', 'agnibaan']; // (armour is forged piece by piece now: see ARMOURS)
 
 /* ---------------- Agnikund (sacred fire) levels ---------------- */
 const FIRE_LEVELS = [
@@ -397,7 +436,14 @@ const ENEMIES = {
   nishi:       { name: 'Nishi Dak',   en: 'Deadly Night Caller', hp: 40, dmg: 3, speed: 1.05, atkCd: 1.2, gold: 4, r: 0.35, h: 1.7, scale: 1,    reach: 0.8,  cost: 3, ghost: true, float: true, caller: true, glow: 0x9fb4ff, bengali: true, from: 5 },
   mamdo:       { name: 'Mamdo Bhoot', en: 'Neck-twister',    hp: 72,  dmg: 6,   speed: 1.4,  atkCd: 1.4, gold: 4, r: 0.38, h: 1.95, scale: 1.05, reach: 0.9, cost: 4, bengali: true, from: 6 },
   skondhokata: { name: 'Skondhokata', en: 'Headless Ghost',  hp: 110, dmg: 11,  speed: 0.95, atkCd: 1.5, gold: 4, r: 0.5,  h: 1.9, scale: 1.25, reach: 1.0,  cost: 4, wrecker: 2.2, bengali: true, from: 7 },
+  // spirit beasts: animals that died wronged in the forest and came back hungry
+  shiyal: { name: 'Shiyal Pret', en: 'Ghost Jackals',  hp: 14, dmg: 2.5, speed: 2.5,  atkCd: 0.8, gold: 1, r: 0.28, h: 0.6,  scale: 1,    reach: 0.6,  cost: 3, ghost: true, swarm: 3, glow: 0x9fe8c8, animal: true, from: 3 },
+  naag:   { name: 'Naag Pret',   en: 'Ghost Cobra',    hp: 38, dmg: 4,   speed: 1.5,  atkCd: 1.1, gold: 2, r: 0.32, h: 1.0,  scale: 1.1,  reach: 0.9,  cost: 3, ghost: true, venom: { dps: 2.5, dur: 5 }, glow: 0x8affa0, animal: true, from: 4 },
+  bagh:   { name: 'Bagh Bhoot',  en: 'Ghost Tiger',    hp: 70, dmg: 9,   speed: 1.9,  atkCd: 1.1, gold: 4, r: 0.45, h: 0.95, scale: 1.15, reach: 0.95, cost: 4, ghost: true, glow: 0xffb060, animal: true, from: 5 },
+  shuar:  { name: 'Kanta Shuar', en: 'Thorn Boar',     hp: 95, dmg: 8,   speed: 1.15, atkCd: 1.4, gold: 4, r: 0.5,  h: 1.0,  scale: 1.2,  reach: 0.95, cost: 4, thorns: 0.3, wrecker: 1.8, animal: true, from: 6 },
 };
+DEMON_POWERS.bagh = { key: 'charge', name: 'Jhapat', en: 'Pounce', cd: 7, wind: 0.45, range: 6, dur: 0.4, speed: 11, dmg: 16, wreck: 0, desc: 'crouches low and pounces on someone from afar' };
+DEMON_POWERS.shuar = { key: 'charge', name: 'Danta Dhakka', en: 'Tusk Charge', cd: 10, wind: 0.8, range: 8, dur: 0.7, speed: 8, dmg: 18, wreck: 80, desc: 'lowers its tusks and rushes, through walls if it must' };
 /** One line of lore per demon, shown in the info panel and when it first appears. */
 const ENEMY_LORE = {
   bhoot: 'A restless ghost. Weak, but it drifts straight for your people.',
@@ -415,6 +461,10 @@ const ENEMY_LORE = {
   nishi: 'Nishi Dak, the deadly night caller, calls people by name in the voice of someone they love. Whoever answers her first or second call walks out to her, and if they reach her she takes their soul. Folk wisdom says answer only a third call. Click a called villager to hold them back; a Pujari, a Mandir or a soldier at their side also breaks her spell.',
   mamdo: 'In Bengali folk tales, the Mamdo Bhoot is the ghost of a man who died an unnatural death, said to be the restless spirit of a Muslim. Tall and bearded, it is feared for seizing people and twisting their necks. Strike or stun it hard to break its grip before it finishes.',
   skondhokata: 'A headless ghost that wanders the night. Huge and slow, he smashes walls and buildings twice as hard as a demon.',
+  shiyal: 'Ghost jackals that howl at the edge of the village and hunt as a pack. Each one is frail, but they are quick, they slip round walls, and there are always three.',
+  naag: 'The spirit of a cobra killed on its own path. It rears up and strikes, and its bite keeps poisoning for a few seconds after. Healers and the fire cure what it leaves behind.',
+  bagh: 'The ghost of a man-eating tiger. It stalks in and crouches, then pounces on someone from several steps away; it glides round walls like any ghost.',
+  shuar: 'A boar demon with a crest of bone spines. It charges straight through walls, and every blow struck at it up close pricks the striker on its thorns: archers and towers are the safe way to bring it down.',
 };
 
 /* ---------------- Villager looks & names ---------------- */

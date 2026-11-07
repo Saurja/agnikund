@@ -10,6 +10,7 @@ const SAMPLE_LOOKS = {
   wood:    { g: 'm', skin: '#8d5524', hair: '#1a1212', cloth: '#c8453c', lower: '#efe4c8', head: '#ff9933', head2: '#e8b830', stache: true, trim: '#d8cfb6' },
   stone:   { g: 'm', skin: '#7a4a2a', hair: '#1a1212', cloth: '#3d7cc9', lower: '#e6dbbf', head: '#78909c', head2: '#546e7a', stache: false, trim: '#d8cfb6' },
   farm:    { g: 'f', skin: '#b5784a', hair: '#1a1212', cloth: '#ffb31a', lower: '#2a9d6f', trim: '#e8b830', covered: true },
+  fish:    { g: 'm', skin: '#7a4a2a', hair: '#1a1212', cloth: '#2e86ab', lower: '#efe4c8', head: '#f4ecd8', head2: '#2e86ab', stache: true, trim: '#d8cfb6' },
   build:   { g: 'm', skin: '#9c6239', hair: '#2b1b14', cloth: '#5d9b4a', lower: '#f4ecd8', head: '#8d6e63', head2: '#5d4037', stache: true, trim: '#d8cfb6' },
   warrior: { g: 'm', skin: '#a0673a', hair: '#1a1212', cloth: '#5b4a3d', lower: '#6b1d24', head: '#a3161f', head2: '#e8b830', stache: true, trim: '#d8cfb6' },
   archer:  { g: 'f', skin: '#c68642', hair: '#1a1212', cloth: '#7b5a3a', lower: '#1f6f8b', trim: '#e8b830', covered: false },
@@ -66,6 +67,8 @@ const SVG_PATHS = {
   trash: '<path d="M4.5 7h15M9.5 7V4.5h5V7"/><path d="M6.5 7 7.5 20h9l1-13"/><path d="M10.5 11v5.5M13.5 11v5.5"/>',
   heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.2a4.3 4.3 0 0 1 7.5 2.6C19.5 15.4 12 20 12 20Z"/><path d="M12 10.5v4.5M9.75 12.75h4.5"/>',
   shrink: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+  shield: '<path d="M12 3.5 5 6v5.5c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6z"/><path d="M12 7.5v9M8.5 11h7"/>',
+  moon: '<path d="M19 14.5A7.5 7.5 0 1 1 9.5 5a6 6 0 0 0 9.5 9.5z"/>',
 };
 const svgIcon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${SVG_PATHS[name] || ''}</svg>`;
 const TOAST_ICON = { good: 'okc', warn: 'alert', danger: 'alert', tip: 'bulb', info: 'info' };
@@ -510,7 +513,7 @@ const UI = {
         html += this.meter('pow' + (full ? ' full' : ''), (v.power || 0) / 100, `Shakti · ${U.name}`, full ? 'Ready!' : `${Math.floor(v.power || 0)}%`);
         html += `<p><small><b>${U.name}</b> (${U.en}): ${U.desc}. Fills as they fight and take blows.</small></p>`;
       }
-      if (isDefender(v)) html += this.sec('Fighting', this.soldierStatsHTML(s, v.job));
+      if (isDefender(v)) html += this.sec('Fighting', this.soldierStatsHTML(s, v.job, v));
       if (v.entranced > 0 && v.callBy) html += `<div class="actions"><button data-action="holdback" class="primary" data-tip="Folk wisdom: never answer the first or second call">${svgIcon('alert')}Hold ${v.name} back from Nishi Dak</button></div>`;
       if (v.heldBy) html += `<p class="miss">Seized by a Mamdo Bhoot! Strike it hard or stun it to break its grip.</p>`;
       if (v.hp < v.maxHp - 0.5) { // hurt: natural recovery, a healer on the way, and herbs to heal them at once
@@ -538,6 +541,15 @@ const UI = {
         } else if (WEAPON_ORDER.some((w) => weaponBase(w) === v.job && weaponReady(s, w))) html += `<p><small>Craft a weapon at the Lohar or Aara Mill to make this ${JOBS[v.job].name} a special soldier.</small></p>`;
       }
       if (JOBS[v.job].weapon) html += `<div class="actions"><button data-action="disarm" data-tip="Return the ${WEAPONS[JOBS[v.job].weapon].name} to the armoury">Back to ${JOBS[weaponBase(JOBS[v.job].weapon)].name}</button></div>`;
+      if (isDefender(v)) { // armour: what they wear, and better pieces waiting in the armoury
+        const A = armourOf(v), tier = armourTier(v);
+        let b = `<p>${A ? `Wears <b>${A.name}</b> (${A.en}): ${Math.round(A.def * 100)}% less damage, +${A.hp} health.` : 'No armour.'}</p><div class="actions">`;
+        for (const k of ARMOUR_ORDER) if ((s.armory[k] || 0) > 0 && k !== v.armour) b += `<button data-action="weararmour" data-key="${k}" class="${ARMOURS[k].tier > tier ? 'primary' : ''}" data-tip="${ARMOURS[k].desc}">${svgIcon('shield')}${ARMOURS[k].name} <span class="tag">${s.armory[k]}</span></button>`;
+        if (A) b += `<button data-action="unarmour" data-tip="Put the ${A.name} back in the armoury">Take off</button>`;
+        b += '</div>';
+        if (!A && !ARMOUR_ORDER.some((k) => s.armory[k] > 0)) b += `<p><small>${s.buildings.some((o) => o.type === 'forge' && o.done) ? 'Forge armour at the Lohar.' : 'Build a Lohar (Blacksmith) to forge armour.'}</small></p>`;
+        html += this.sec('Armour', b);
+      }
       let g = '<div class="jobgrid">';
       for (const job of ['idle', ...JOB_ORDER]) {
         if (JOBS[job].weapon) continue; // special soldiers are made by handing a Sainik a weapon
@@ -620,6 +632,16 @@ const UI = {
             }
             html += this.sec(b.type === 'vaidyashala' ? 'Medicine kits' : 'Weapons', c + '</div>');
           }
+          if (b.type === 'forge') { // armour, tier by tier with the Lohar's level
+            let c = '<div class="uplist">';
+            for (const k of ARMOUR_ORDER) {
+              const A = ARMOURS[k], open = A.lvl <= lv, worn = s.villagers.filter((o) => o.armour === k).length;
+              c += `<div class="up ${open ? '' : 'locked'}"><div class="d"><b>${A.name} <small>${A.en}</small></b>${Math.round(A.def * 100)}% less damage, +${A.hp} health · in armoury <b>${s.armory[k] || 0}</b>${worn ? ` · worn by ${worn}` : ''}<br>${open ? this.costHTML(A.cost) + this.missHTML(A.cost, true) : `<small>Needs a level ${A.lvl} Lohar</small>`}</div>${open ? `<div class="bt2"><button data-action="craftarmour" data-key="${k}" data-n="1" class="${canAfford(s, A.cost) ? 'primary' : 'poorbtn'}" data-tip="Forge one ${A.name}: ${A.desc}">Make</button><button data-action="craftarmour" data-key="${k}" data-n="5" data-tip="Forge up to five">×5</button></div>` : ''}</div>`;
+            }
+            const spare = ARMOUR_ORDER.reduce((a, k) => a + (s.armory[k] || 0), 0);
+            c += `</div><div class="actions"><button data-action="fitarmour" class="${spare ? 'primary' : ''}" ${spare ? '' : 'disabled'} data-tip="Dress the soldiers: the best pieces go to whoever wears the least">${svgIcon('shield')}Fit armour${spare ? ` <span class="tag">${spare}</span>` : ''}</button></div>`;
+            html += this.sec('Armour', c, `<span class="tag">${s.villagers.filter((o) => o.armour).length} / ${s.villagers.filter(isDefender).length} armoured</span>`);
+          }
           const techs = UPGRADE_ORDER.filter((k) => UPGRADES[k].at === b.type && UPGRADES[k].lvl <= lv);
           if (techs.length) {
             let c = '<div class="uplist">';
@@ -701,6 +723,10 @@ const UI = {
       case 'equip': equipSoldier(S, btn.dataset.job, sel && sel.kind === 'villager' ? sel.ref : null); break;
       case 'disarm': if (sel && sel.ref && JOBS[sel.ref.job].weapon) { setJob(S, sel.ref, weaponBase(JOBS[sel.ref.job].weapon)); sfx('click'); } break;
       case 'craft': craftWeapon(S, btn.dataset.key, +btn.dataset.n || 1); break;
+      case 'craftarmour': craftArmour(S, btn.dataset.key, +btn.dataset.n || 1); break;
+      case 'fitarmour': fitArmour(S); break;
+      case 'weararmour': if (sel && sel.ref) wearArmour(S, sel.ref, btn.dataset.key); break;
+      case 'unarmour': if (sel && sel.ref && sel.ref.armour) { takeOffArmour(S, sel.ref); toast(`${sel.ref.name} takes off their armour.`, 'info'); sfx('click'); } break;
       case 'bupgrade': startUpgrade(S, sel.ref); break;
       case 'upfire': upgradeFire(S); break;
       case 'invite': inviteVillager(S); break;
@@ -854,7 +880,9 @@ const UI = {
     $('matBtn').querySelector('b').textContent = String(Math.floor(s.res.brick || 0));
     $('popRes').querySelector('b').textContent = `${s.villagers.length}/${housing(s)}`;
     const ph = phaseOf(s.t);
-    $('dayText').textContent = `Day ${s.day}${s.weather === 'rain' ? ' · Rain' : ''}${s.festival ? ' · Diwali' : ''}`;
+    const moon = moonOf(s.day);
+    $('dayText').textContent = `Day ${s.day}${s.weather === 'rain' ? ' · Rain' : ''}${s.festival ? ' · Diwali' : ''}${moon === 'full' ? ' · Purnima' : moon === 'red' ? ' · Rakt Chandra' : ''}`;
+    this.updateMoon(s, moon);
     const txt = ph === 'day' ? `Dusk in ${fmtTime(DUSK_T - s.t)}` : ph === 'dusk' ? `Demons in ${fmtTime(NIGHT_T - s.t)}` : ph === 'night' ? `Night · dawn in ${fmtTime(DAWN_T - s.t)}` : 'Dawn';
     $('phaseText').textContent = txt;
     const ck = $('clock').classList;
@@ -914,6 +942,7 @@ const UI = {
         let col = [52, 140, 190];
         if (r < edge - 3) col = [96, 158, 70];
         else if (r < edge + 0.5) col = [226, 204, 150];
+        if (r < edge - 3 && pondAt(s, wx, wz)) col = [70, 165, 200]; // ponds
         const k = (j * N + i) * 4;
         img.data[k] = col[0]; img.data[k + 1] = col[1]; img.data[k + 2] = col[2]; img.data[k + 3] = 255;
       }
@@ -943,21 +972,40 @@ const UI = {
     if (!B.classList.contains('fold-mats')) { if (tight) { B.classList.add('fold-mats'); this._foldW = innerWidth; } }
     else if (innerWidth > (this._foldW || 0) + 160) { B.classList.remove('fold-mats'); requestAnimationFrame(() => this.fitTopbar()); }
   },
+  /** The moon on the clock: tonight's phase (full white, red as blood), and when the next boss moons rise. */
+  updateMoon(s, moon) {
+    const el = $('moonBadge');
+    if (!el) return;
+    const key = s.day + moon;
+    if (el._k === key) return;
+    el._k = key;
+    // the lit part: a full disc, or a lens of it (the terminator is an ellipse whose width follows the phase)
+    const ph = moonPhase(s.day), lit = 1 - Math.abs(ph - 0.5) * 2, waxing = ph < 0.5, R = 8;
+    const col = moon === 'red' ? '#ff5a48' : '#eef2ff', dim = moon === 'red' ? '#5a1612' : '#3a4260';
+    const rx = Math.abs(1 - lit * 2) * R, sweep = lit > 0.5 ? 1 : 0, side = waxing ? 1 : 0;
+    const litPath = lit >= 0.98 ? `<circle cx="12" cy="12" r="${R}" fill="${col}"/>` : lit <= 0.02 ? '' : `<path d="M12 ${12 - R} A ${R} ${R} 0 0 ${side} 12 ${12 + R} A ${rx.toFixed(2)} ${R} 0 0 ${side ^ sweep ^ 1} 12 ${12 - R} Z" fill="${col}"/>`;
+    el.querySelector('svg').innerHTML = `<circle cx="12" cy="12" r="${R}" fill="${dim}"/>${litPath}`;
+    el.className = moon === 'red' ? 'red' : moon === 'full' ? 'full' : '';
+    const nf = nextMoonNight(s.day, 'full'), nr = nextMoonNight(s.day, 'red');
+    const nfType = bossForDay(nf), when = (d) => (d === s.day ? '<b>tonight</b>' : d === s.day + 1 ? 'tomorrow' : `in ${d - s.day} days (day ${d})`);
+    const head = moon === 'red' ? '<b>Rakt Chandra</b>: the red moon. Mahasura comes tonight with a great host.' : moon === 'full' ? `<b>Purnima</b>: the full moon. ${ENEMIES[bossForDay(s.day)].name} comes tonight.` : moon === 'new' ? '<b>Amavasya</b>: the new moon, and Deepavali.' : `<b>${waxing ? 'Waxing' : 'Waning'} moon</b>`;
+    el.dataset.tip = `${head}<br>Full moon ${when(nf)}${nf !== nr && nfType ? `: ${ENEMIES[nfType].name}` : ''}<br>Red moon ${when(nr)}: Mahasura<br><small>Every 7th night the moon is full and a great asura comes; every 15th it rises red and the Demon King leads the host. The nights never end: keep the flame alive as long as you can.</small>`;
+  },
   /** A soldier's numbers as a small stat grid: attack, speed, damage a second, reach, defence, and what they hit. */
-  soldierStatsHTML(s, job) {
-    const T = soldierStats(s, job), pct = (x) => Math.round(x * 100) + '%';
+  soldierStatsHTML(s, job, v) {
+    const T = soldierStats(s, job, v), pct = (x) => Math.round(x * 100) + '%';
     const cell = (label, value, f, tip) => `<div class="st"${tip ? ` data-tip="${tip}"` : ''}><span>${label}</span><b>${value}</b>${f != null ? `<i><em style="width:${Math.round(clamp(f, 0.04, 1) * 100)}%"></em></i>` : ''}</div>`;
     let g = '<div class="stats">';
     if (job === 'medic') {
       g += cell('Healing', `${T.heal.toFixed(0)}/s`, T.heal / 12, 'Health given to one wounded fighter every second');
-      g += cell('Health', T.hp, T.hp / 140) + cell('Armour', T.armour ? pct(T.armour) : '—', T.armour, 'Less damage taken (Kavach armour from the Lohar)');
+      g += cell('Health', T.hp, T.hp / 140) + cell('Armour', T.armour ? pct(T.armour) : '—', T.armour, T.armourName ? `${T.armourName}: ${pct(T.armour)} less damage` : 'Less damage taken: forge armour at the Lohar');
     } else {
       g += cell('Attack', T.dmg.toFixed(T.dmg < 10 ? 1 : 0), T.dmg / 20, 'Damage per blow or shot, with your upgrades');
       g += cell('Speed', `${T.rate.toFixed(2)}/s`, T.rate / 1.3, 'Blows or shots a second');
       g += cell('Damage/s', T.dps.toFixed(1), T.dps / 18, 'About how much damage they deal each second, crits included');
       g += cell(T.ranged ? 'Range' : 'Reach', `${T.reach.toFixed(1)} steps`, T.ranged ? T.reach / 15 : T.reach / 2, T.ranged ? 'How far they can shoot' : 'How far their weapon reaches');
       g += cell('Health', T.hp, T.hp / 140);
-      g += cell('Defence', T.block ? `${pct(T.block)} block` : T.armour ? pct(T.armour) : '—', Math.max(T.block, T.armour), `${T.block ? `Blocks ${pct(T.block)} of blows with the dhaal. ` : ''}${T.armour ? `Kavach armour: ${pct(T.armour)} less damage.` : 'Kavach armour (Lohar) cuts all damage by 35%.'}`);
+      g += cell('Defence', T.block ? `${pct(T.block)} block` : T.armour ? pct(T.armour) : '—', Math.max(T.block, T.armour), `${T.block ? `Blocks ${pct(T.block)} of blows with the dhaal. ` : ''}${T.armour ? `${T.armourName}: ${pct(T.armour)} less damage.` : 'Armour forged at the Lohar cuts the damage of every blow.'}`);
       g += cell('Crit', pct(T.crit), T.crit / 0.25, 'Chance of a critical hit for 1.8× damage');
       g += cell('Move', `${Math.round(T.speed * 100)}%`, T.speed / 1.1, 'Walking speed compared with a villager');
     }

@@ -159,6 +159,10 @@ body.mobile.mat-open #matBtn, body.fold-mats.mat-open #matBtn { background: var(
 #minimap { display: block; width: 100%; height: 100%; border-radius: 50%; cursor: crosshair; background: #2f6f8a; }
 
 /* an omen on the clock: an eye while the land shows its signs, the asura's name once the elders read them */
+#moonBadge { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: 2px; border-radius: 99px; background: rgba(160, 180, 255, 0.1); cursor: help; flex: none; }
+#moonBadge svg { width: 18px; height: 18px; }
+#moonBadge.full { background: rgba(220, 230, 255, 0.2); box-shadow: 0 0 10px rgba(220, 230, 255, 0.35); }
+#moonBadge.red { background: rgba(230, 60, 50, 0.28); box-shadow: 0 0 12px rgba(255, 70, 60, 0.55); animation: omenPulse 1.6s ease-in-out infinite; }
 #omenBadge { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px 0 7px; margin-left: 2px; border-radius: 99px; background: rgba(240, 195, 90, 0.14); color: var(--warn); font: 600 12px/1 var(--font); white-space: nowrap; cursor: help; }
 #omenBadge.hidden { display: none; }
 #omenBadge svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }

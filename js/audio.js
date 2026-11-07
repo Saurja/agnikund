@@ -101,6 +101,10 @@ const ENEMY_SFX = {
   nishi: { voice: 'v_nishi', die: 'd_ghost' },
   mamdo: { voice: 'v_mamdo', attack: 'a_club', die: 'd_ghost' },
   skondhokata: { voice: 'v_skondhokata', attack: 'a_club', die: 'd_giant', stomp: true },
+  shiyal: { voice: 'v_vetala', die: 'd_ghost' },
+  naag: { voice: 'v_nishi', die: 'd_ghost' },
+  bagh: { voice: 'v_rakshasa', die: 'd_ghost' },
+  shuar: { voice: 'v_danav', attack: 'a_club', die: 'demonDie', stomp: true },
 };
 
 const Sound = {

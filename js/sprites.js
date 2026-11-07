@@ -187,6 +187,7 @@ const JOB_LOOK = {
   spear:   { H: '#1565c0', G: '#e8b830', C: '#3e5f8a', c: '#c9962e', D: '#e6dbbf', d: '#3e5f8a' },
   priest:  { H: '#ff8f1f', G: '#ffb84d', C: '#ff8f1f', c: '#e07010', D: '#ffb84d', d: '#e07010' },
   farm:    { H: '#f4ecd8', G: '#c8453c' },
+  fish:    { H: '#f4ecd8', G: '#2e86ab', C: '#2e86ab', c: '#1f5f80' },
   build:   { H: '#8d6e63', G: '#5d4037' },
   vaidya:  { H: '#f4ecd8', G: '#2e7d32', C: '#f4ecd8', c: '#2e7d32', D: '#e6dbbf', d: '#2e7d32' },
   medic:   { H: '#f4ecd8', G: '#2e7d32', C: '#3f8a4a', c: '#f4ecd8', D: '#e6dbbf', d: '#2e7d32' },
